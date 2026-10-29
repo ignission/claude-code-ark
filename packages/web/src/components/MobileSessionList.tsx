@@ -20,15 +20,15 @@ type MobileSessionListProps = Omit<
   onNewSession: () => void;
   /** 画面の管理ダイアログを開く。画面が未登録でも一覧の見出しから登録できるようにする */
   onOpenScreenManager?: () => void;
-  /** ボード提案 (Jev 判定) の設定ダイアログを開く */
-  onOpenBoardSuggestSettings?: () => void;
+  /** 分岐TODO (Jev 判定) の設定ダイアログを開く */
+  onOpenBranchTodoSettings?: () => void;
   notificationControl?: ReactNode;
 };
 
 export function MobileSessionList({
   onNewSession,
   onOpenScreenManager,
-  onOpenBoardSuggestSettings,
+  onOpenBranchTodoSettings,
   notificationControl,
   ...listProps
 }: MobileSessionListProps) {
@@ -39,14 +39,14 @@ export function MobileSessionList({
           Ark
         </h1>
         {notificationControl}
-        {onOpenBoardSuggestSettings && (
+        {onOpenBranchTodoSettings && (
           <Button
             variant="ghost"
             size="icon"
             className="h-12 w-12"
-            onClick={onOpenBoardSuggestSettings}
-            aria-label="ボード提案と分岐TODOの設定"
-            title="ボード提案と分岐TODOの設定"
+            onClick={onOpenBranchTodoSettings}
+            aria-label="分岐TODOの設定"
+            title="分岐TODOの設定"
           >
             <SlidersHorizontal className="size-6" />
           </Button>

@@ -263,15 +263,8 @@ export function MobileSessionView({
   onUpdateShortcut,
   onDeleteShortcut,
   isConnected,
-  diagramCommentsUpdate,
   listDiagrams,
   deleteDiagram,
-  getDiagramComments,
-  createDiagramComment,
-  replyDiagramComment,
-  resolveDiagramComment,
-  deleteDiagramComment,
-  sendDiagramComment,
   onSelectDiagram,
   todoPane,
 }: MobileSessionViewProps) {
@@ -1197,15 +1190,8 @@ export function MobileSessionView({
             <DiagramPane
               socket={socket}
               isConnected={isConnected}
-              diagramCommentsUpdate={diagramCommentsUpdate}
               listDiagrams={listDiagrams}
               deleteDiagram={deleteDiagram}
-              getDiagramComments={getDiagramComments}
-              createDiagramComment={createDiagramComment}
-              replyDiagramComment={replyDiagramComment}
-              resolveDiagramComment={resolveDiagramComment}
-              deleteDiagramComment={deleteDiagramComment}
-              sendDiagramComment={sendDiagramComment}
               sessionId={session.id}
               worktreePath={session.worktreePath}
               openKey={tabs.find(tab => tab.type === "diagram")?.id}
@@ -1213,10 +1199,9 @@ export function MobileSessionView({
               onSelectDiagram={onSelectDiagram}
             />
           </div>
-          {/* 図モードの下部バーはセグメントと1タップの操作だけ。図の iframe は中に下端固定の UI
-            (diagram-harness.ts の .ark-harness-toolbar、コメント層の解決済みトグル) を持つので、
-            ガラスを重ねずに図の領域をバーの上端までにする。
-            端末の窓のバーと同じく罫線と紙の色で、図の下端 UI と分ける */}
+          {/* 図モードの下部バーはセグメントと1タップの操作だけ。図の中に下端固定の UI が
+            あっても隠れないよう、ガラスを重ねずに図の領域をバーの上端までにする。
+            端末の窓のバーと同じく罫線と紙の色で、図と分ける */}
           <div
             data-testid="mobile-board-bar"
             data-mobile-bottom-bar=""

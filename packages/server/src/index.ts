@@ -41,26 +41,21 @@ import {
   type BoardMcpDeps,
   BoardMcpServer,
   BoardSessionRegistry,
-  listDiagramCommentPaths,
-  readDiagramAuthoringGuide,
 } from "./lib/board-mcp-server.js";
 import {
   isSecretSettingKey,
-  readBoardSuggestConfig,
-  readBoardSuggestEnabled,
-  readBoardSuggestThreshold,
+  readBranchTodoConfig,
   readBranchTodoEnabled,
   readBranchTodoThreshold,
-  resolveBoardSuggestApiKey,
-  validateBoardSuggestPatch,
-} from "./lib/board-suggest-config.js";
+  resolveBranchTodoApiKey,
+  validateBranchTodoPatch,
+} from "./lib/branch-todo-config.js";
 import {
-  BOARD_SUGGEST_STOP_PATH,
-  BoardSuggestStopHandler,
+  BranchTodoStopHandler,
   parseStopHookInput,
   readTranscriptTail,
-} from "./lib/board-suggest-stop-hook.js";
-import { rememberFifoEntry } from "./lib/bounded-fifo-map.js";
+  STOP_HOOK_PATH,
+} from "./lib/branch-todo-stop-hook.js";
 import {
   buildTunnelEntries,
   collectBridgeSessions,
@@ -74,26 +69,13 @@ import {
 import { CDP_PORT, TTYD_PORT_END, TTYD_PORT_START } from "./lib/constants.js";
 import { db } from "./lib/database.js";
 import {
-  appendDiagramCommentMessage,
-  resolveDiagramCommentsPath,
-} from "./lib/diagram-comments.js";
-import {
-  createDiagramCommentsSocketHandlers,
-  diagramCommentsStore,
-  getDiagramCommentsForDoc,
-} from "./lib/diagram-comments-handler.js";
-import {
   createDiagramDeleteSocketHandler,
   deleteDiagramFile,
   isDiagramTracked,
 } from "./lib/diagram-delete.js";
-import { type DocBlock, extractDocBlocks } from "./lib/diagram-doc-blocks.js";
 import { handleDiagramListRequest, listDiagrams } from "./lib/diagram-list.js";
-import type { DiagramModel } from "./lib/diagram-model.js";
 import { resolveDiagramPath } from "./lib/diagram-path.js";
 import { readDiagram } from "./lib/diagram-reader.js";
-import { saveDiagramEdit } from "./lib/diagram-save.js";
-import { buildSubmitNotice } from "./lib/diagram-submit-notice.js";
 import { getErrorMessage } from "./lib/errors.js";
 import { createFileHandlers } from "./lib/file-handlers.js";
 import { readFileFromWorktree } from "./lib/file-manager.js";
@@ -115,10 +97,7 @@ import { createGitViewHandlers } from "./lib/git-view-handlers.js";
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
-import {
-  decideBoardSuggestion,
-  decideDeferredTopic,
-} from "./lib/jev-client.js";
+import { decideDeferredTopic } from "./lib/jev-client.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
   checkManagedWorktree,
@@ -197,8 +176,6 @@ export {
  * - `webStaticDir`: 本番モード時に静的配信する Web ビルド成果物のパス。
  *   未指定時は CLI 起動時の旧パス互換 (`<__dirname>/../../web/dist`) で解決する。
  *   Electron からは `app/web` のような同梱パスを渡す。
- * - `diagramAuthoringGuidePath`: `.diagram.html` 作図規約の同梱パス。
- *   Electron packaged 版から明示し、未指定時は server 側の既存解決に委ねる。
  */
 export interface StartServerOptions {
   port?: number;
@@ -208,7 +185,6 @@ export interface StartServerOptions {
   publicDomain?: string;
   allowedRepos?: string[];
   webStaticDir?: string;
-  diagramAuthoringGuidePath?: string;
   /**
    * 将来 Electron から実データ保存ディレクトリ (`app.getPath('userData')`)
    * を渡すための予約オプション。Phase 2 では未使用 (Phase 3 で本実装予定)。
@@ -245,10 +221,6 @@ export interface ServerHandle {
 const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ark-tunnel-state.json");
 
 const MANAGED_WORKTREE_CACHE_TTL_MS = 30_000;
-
-function diagramModelKey(worktreePath: string, relPath: string): string {
-  return `${worktreePath}\0${relPath}`;
-}
 
 /** トンネル状態をファイルに保存する */
 function saveTunnelState(port: number): void {
@@ -348,32 +320,6 @@ export async function startServer(
    */
   const managedWorktreeCache = new Map<string, { at: number }>();
   const MANAGED_WORKTREE_CACHE_MAX = 256;
-
-  /** 図ごとの、最後に Claude へ通知できたモデル。autosave では更新しない。 */
-  const lastNotifiedModels = new Map<string, DiagramModel>();
-  /**
-   * doc の図ごとの、最後に Claude へ通知できたブロック本文。
-   * doc は本文が正準 source でモデル差分からは本文の変更を読めないため、
-   * lastNotifiedModels と同じ寿命・同じ上限で並べて持つ。
-   */
-  const lastNotifiedDocBodies = new Map<string, Map<string, DocBlock>>();
-  const LAST_NOTIFIED_MODELS_MAX = 256;
-
-  function rememberNotifiedModel(key: string, model: DiagramModel): void {
-    rememberFifoEntry(lastNotifiedModels, key, model, LAST_NOTIFIED_MODELS_MAX);
-  }
-
-  function rememberNotifiedDocBodies(
-    key: string,
-    bodies: Map<string, DocBlock>
-  ): void {
-    rememberFifoEntry(
-      lastNotifiedDocBodies,
-      key,
-      bodies,
-      LAST_NOTIFIED_MODELS_MAX
-    );
-  }
 
   /**
    * 期限切れエントリを掃除し、なおサイズ上限を超えていれば最古（Map の挿入順
@@ -537,12 +483,12 @@ export async function startServer(
     );
   }
 
-  // JSON body parser（Settings API用）。ボード提案の Stop hook は返答の本文
+  // JSON body parser（Settings API用）。分岐TODOの Stop hook は返答の本文
   // (last_assistant_message) を載せてくるので、10kb では長い返答ほど 413 で落ちる。
   // その 1 経路だけ上限を広げた parser を route 側で当てる
   const smallJson = express.json({ limit: "10kb" });
   app.use((req, res, next) =>
-    req.path === BOARD_SUGGEST_STOP_PATH ? next() : smallJson(req, res, next)
+    req.path === STOP_HOOK_PATH ? next() : smallJson(req, res, next)
   );
 
   // ===== AskUserQuestion hook 受け口 =====
@@ -596,31 +542,26 @@ export async function startServer(
     res.status(204).end();
   });
 
-  // ===== ボード提案 (Jev 判定) の Stop hook 受け口 =====
+  // ===== 分岐TODO (Jev 判定) の Stop hook 受け口 =====
   // Claude が返答を終えるたびに Stop hook (auq-hook-bridge が注入) から POST される。
-  // Jev が「ボードのほうが読みやすい」と判定したら block を返し、Claude 自身に
-  // デッキを描かせる (tmux には何も送らない)。有効/閾値/鍵は設定画面
-  // (board-suggest:get/set) で変えられ、次のターンから効く。鍵が無い間は何もしない。
-  // 分岐TODOの判定も同じ受け口で行う。
-  const boardSuggestFeatureOn =
-    process.env.ARK_FEATURE_BOARD_SUGGEST !== "false";
-  const boardSuggestStop = new BoardSuggestStopHandler({
-    enabled: () => boardSuggestFeatureOn && readBoardSuggestEnabled(db),
-    apiKey: () => resolveBoardSuggestApiKey(db)?.key ?? null,
-    threshold: () => readBoardSuggestThreshold(db),
-    decide: (text, apiKey) => decideBoardSuggestion(text, apiKey),
-    todoEnabled: () => boardSuggestFeatureOn && readBranchTodoEnabled(db),
+  // Jev が「このターンに保留した話題がある」と判定したら block を返し、Claude 自身に
+  // todo_add させる (tmux には何も送らない)。有効/閾値/鍵は設定画面
+  // (branch-todo:get/set) で変えられ、次のターンから効く。鍵が無い間は何もしない。
+  const branchTodoFeatureOn = process.env.ARK_FEATURE_BRANCH_TODO !== "false";
+  const branchTodoStop = new BranchTodoStopHandler({
+    apiKey: () => resolveBranchTodoApiKey(db)?.key ?? null,
+    todoEnabled: () => branchTodoFeatureOn && readBranchTodoEnabled(db),
     todoThreshold: () => readBranchTodoThreshold(db),
     decideDeferred: (prompt, reply, apiKey) =>
       decideDeferredTopic(prompt, reply, apiKey),
     readTranscript: transcriptPath => readTranscriptTail(transcriptPath),
   });
   app.post(
-    BOARD_SUGGEST_STOP_PATH,
+    STOP_HOOK_PATH,
     // 大きい body を読む前に token を確かめる (tunnel 経由の偽装 POST に 4mb を読ませない)
     (req, res, next) => {
       if (!auqHookBridge.verifyToken(req.headers[AUQ_TOKEN_HEADER])) {
-        console.warn("[BoardSuggest] 403: token 不一致の hook を拒否しました");
+        console.warn("[BranchTodo] 403: token 不一致の hook を拒否しました");
         res.status(403).json({ error: "forbidden" });
         return;
       }
@@ -640,27 +581,27 @@ export async function startServer(
         return;
       }
       try {
-        const output = await boardSuggestStop.handle(session.id, input);
+        const output = await branchTodoStop.handle(session.id, input);
         if (output) res.json(output);
         else res.status(204).end();
       } catch (e) {
         console.error(
-          "[BoardSuggest] Stop hook の処理に失敗:",
+          "[BranchTodo] Stop hook の処理に失敗:",
           getErrorMessage(e)
         );
         res.status(204).end();
       }
     }
   );
-  if (boardSuggestFeatureOn) {
-    const startupConfig = readBoardSuggestConfig(db);
+  if (branchTodoFeatureOn) {
+    const startupConfig = readBranchTodoConfig(db);
     console.log(
       startupConfig.keyConfigured
-        ? `[BoardSuggest] 鍵あり (${startupConfig.keySource}) / ${startupConfig.enabled ? "有効" : "設定で無効"} / 閾値 ${startupConfig.threshold}`
-        : "[BoardSuggest] 鍵が無いので待機中 (設定画面「ボード提案と分岐TODOの設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
+        ? `[BranchTodo] 鍵あり (${startupConfig.keySource}) / ${startupConfig.todoEnabled ? "有効" : "設定で無効"} / 閾値 ${startupConfig.todoThreshold}`
+        : "[BranchTodo] 鍵が無いので待機中 (設定画面「分岐TODOの設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
     );
   } else {
-    console.log("[BoardSuggest] 無効 (ARK_FEATURE_BOARD_SUGGEST=false)");
+    console.log("[BranchTodo] 無効 (ARK_FEATURE_BRANCH_TODO=false)");
   }
 
   // セキュリティヘッダー
@@ -738,17 +679,15 @@ export async function startServer(
    * 図をセッションのボードで開く (board_open の経路)。
    * 「開いた」と嘘をつかないよう、diagram:open を emit する前に実際に
    * readDiagram で読めることを確認する (/api/diagram と同じ検証 = 403 パス不正・
-   * worktree外・symlink脱出 / 404 不在 / 422 モデルブロック無し・壊れている)。
+   * worktree外・symlink脱出 / 404 不在)。
    * ファイル読み込みは realpath (worktreeReal) を使う規約。
    */
   const openDiagramForSession = async (
     sessionId: string,
     worktreeReal: string,
     relPath: string
-  ): Promise<
-    { ok: true; notices?: string[] } | { ok: false; error: string }
-  > => {
-    const result = await readDiagram(worktreeReal, relPath, { forOpen: true });
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const result = await readDiagram(worktreeReal, relPath);
     if (!result.ok) {
       return { ok: false, error: result.error };
     }
@@ -757,7 +696,7 @@ export async function startServer(
     // session:list 経由で lastDiagramPath を受け取り、クライアントが
     // 右ペインの図タブを復元できるようにするため。
     db.updateSessionLastDiagram(sessionId, relPath);
-    return { ok: true, notices: result.notices };
+    return { ok: true };
   };
   // TODO が変わったら全クライアントに読み直させる (一覧は小さいので差分は配らない)
   const emitTodoChanged = () => io.emit("todo:changed");
@@ -772,42 +711,6 @@ export async function startServer(
     },
     async listTodos(worktreePath) {
       return db.listTodos({ worktreePath, includeDone: false });
-    },
-    readAuthoringGuide: () =>
-      readDiagramAuthoringGuide(undefined, options.diagramAuthoringGuidePath),
-    async listDiagramPaths(worktreePath) {
-      const resolved = resolveManagedWorktreeDetailed(worktreePath);
-      if (!resolved.ok) {
-        throw new Error(`worktree を解決できません: ${resolved.reason}`);
-      }
-      return listDiagramCommentPaths(resolved.path);
-    },
-    async getDiagramComments(worktreePath, relPath) {
-      const resolved = resolveManagedWorktreeDetailed(worktreePath);
-      if (!resolved.ok) {
-        return {
-          ok: false,
-          code: "FORBIDDEN",
-          error: `worktree を解決できません: ${resolved.reason}`,
-        };
-      }
-      return getDiagramCommentsForDoc(resolved.path, relPath);
-    },
-    async replyDiagramComment(worktreePath, relPath, threadId, input) {
-      const resolved = resolveManagedWorktreeDetailed(worktreePath);
-      if (!resolved.ok) {
-        return {
-          ok: false,
-          code: "FORBIDDEN",
-          error: `worktree を解決できません: ${resolved.reason}`,
-        };
-      }
-      return appendDiagramCommentMessage(
-        resolved.path,
-        relPath,
-        threadId,
-        input
-      );
     },
     async openDiagram(worktreePath, relPath) {
       const resolved = resolveManagedWorktreeDetailed(worktreePath);
@@ -951,21 +854,6 @@ export async function startServer(
     if (!result.ok) {
       res.status(result.status).json({ error: result.error });
       return;
-    }
-    // 初回配信時のモデルは Claude が生成済みの状態として通知 baseline にする。
-    // 既存値は未通知の autosave 差分を含み得るため上書きしない。
-    // doc は編集が必ずこの配信の後に来るので、本文 baseline もここで仕込む。
-    // モデル baseline と本文 baseline は別々の Map なので、それぞれ自分の
-    // 未登録判定で独立して初期化する（どちらかが既に登録済みでも、もう片方が
-    // 未登録なら仕込む。#463 で発覚: 両方を同じ if にまとめると、モデル
-    // baseline だけ先に登録された経路で本文 baseline が永久に仕込まれず、
-    // 図タブを開いてからの1回目の送信が無言になる）。
-    const modelKey = diagramModelKey(resolved, relPath);
-    if (!lastNotifiedModels.has(modelKey)) {
-      rememberNotifiedModel(modelKey, result.model);
-    }
-    if (result.model.type === "doc" && !lastNotifiedDocBodies.has(modelKey)) {
-      rememberNotifiedDocBodies(modelKey, extractDocBlocks(result.raw));
     }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     // 本文に meta CSP を注入済み。クライアントは srcDoc で描画するため
@@ -1168,7 +1056,7 @@ export async function startServer(
         return;
       }
       for (const key of keys) {
-        // 秘密の設定は専用の socket イベント (board-suggest:set) からだけ書く
+        // 秘密の設定は専用の socket イベント (branch-todo:set) からだけ書く
         if (!isValidSettingKey(key) || isSecretSettingKey(key)) {
           res.status(400).json({ error: "Invalid setting key" });
           return;
@@ -2053,18 +1941,6 @@ export async function startServer(
 
     // ===== 図解キャンバス（board_open による表示 + 更新監視） =====
     const diagramUnsubs = new Map<string, () => void>();
-    // autosave の自己書き込みで、この socket の iframe だけを再読込しない。
-    // O_TRUNC と本文書き込みが別々に見える環境もあるため短い期間で抑制する。
-    const suppressedDiagramUpdates = new Map<string, NodeJS.Timeout>();
-
-    const suppressNextDiagramUpdate = (absPath: string) => {
-      const previous = suppressedDiagramUpdates.get(absPath);
-      if (previous) clearTimeout(previous);
-      const timeout = setTimeout(() => {
-        suppressedDiagramUpdates.delete(absPath);
-      }, 2_500);
-      suppressedDiagramUpdates.set(absPath, timeout);
-    };
 
     socket.on("diagram:list", (data: unknown, callback: unknown) => {
       if (typeof callback !== "function") return;
@@ -2105,33 +1981,10 @@ export async function startServer(
           if (session) io.emit("session:updated", session);
         },
         onDeleted: data => {
-          const session = sessionOrchestrator.getSession(data.sessionId);
-          const resolved = session
-            ? resolveManagedWorktreePath(session.worktreePath)
-            : null;
-          if (resolved) {
-            const modelKey = diagramModelKey(resolved, data.relPath);
-            lastNotifiedModels.delete(modelKey);
-            lastNotifiedDocBodies.delete(modelKey);
-          }
           io.emit("diagram:deleted", data);
         },
       })
     );
-
-    const diagramCommentsHandlers = createDiagramCommentsSocketHandlers({
-      getSession: sessionId => sessionOrchestrator.getSession(sessionId),
-      resolveManagedWorktreePath,
-      sendMessage: (sessionId, message) =>
-        sessionOrchestrator.sendMessage(sessionId, message),
-      ...diagramCommentsStore,
-    });
-    socket.on("diagram:comments:get", diagramCommentsHandlers.get);
-    socket.on("diagram:comment:create", diagramCommentsHandlers.create);
-    socket.on("diagram:comment:reply", diagramCommentsHandlers.reply);
-    socket.on("diagram:comment:resolve", diagramCommentsHandlers.resolve);
-    socket.on("diagram:comment:delete", diagramCommentsHandlers.delete);
-    socket.on("diagram:comment:send", diagramCommentsHandlers.send);
 
     socket.on("diagram:subscribe", (data: unknown) => {
       // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や
@@ -2156,10 +2009,10 @@ export async function startServer(
 
       // watcher を張る条件は「パスが worktree の DIAGRAM_DIR 配下に収まって
       // いるか」だけにする（resolveDiagramPath は文字列上の解決のみで FS I/O
-      // を行わないため同期）。ファイルが読めるか（403/404/422）を条件にすると、
+      // を行わないため同期）。ファイルが読めるか（403/404）を条件にすると、
       // FileWatcher は「ファイルが未作成でも polling が後から拾う」設計
-      // なのに、Claude が Edit で図を書き換えている最中（モデルブロック未
-      // 書き込み等で readDiagram が一時的に失敗する）にタブを開き直すと
+      // なのに、Claude が図を書き換えている最中（一時的に readDiagram が
+      // 失敗する）にタブを開き直すと
       // watcher が張られないまま終わり、書き込み完了後も diagram:updated が
       // 届かなくなる。DiagramPane の購読はマウント時 1 回きりで再試行もない
       // ため、タブを閉じて開き直すまで永久にエラー表示のままになってしまう。
@@ -2168,7 +2021,6 @@ export async function startServer(
       if (!pathResolved.ok) return; // パス自体が不正 (403 相当) なら購読しない
 
       const offDiagram = fileWatcher.subscribe(pathResolved.absPath, () => {
-        if (suppressedDiagramUpdates.has(pathResolved.absPath)) return;
         // クライアントへは購読要求で送られてきた worktreePath（生パス）を
         // そのままエコーバックする。サーバー内部の購読キー・ファイル解決は
         // realpath（resolved）で行うが、クライアント（DiagramPane）は
@@ -2178,19 +2030,7 @@ export async function startServer(
         // エラーも出さず無言で機能しなくなる。
         socket.emit("diagram:updated", { worktreePath, relPath });
       });
-      const commentsResolved = resolveDiagramCommentsPath(resolved, relPath);
-      const offComments = commentsResolved.ok
-        ? fileWatcher.subscribe(commentsResolved.commentsAbsPath, () => {
-            socket.emit("diagram:comments-updated", {
-              worktreePath,
-              relPath,
-            });
-          })
-        : null;
-      diagramUnsubs.set(key, () => {
-        offDiagram();
-        offComments?.();
-      });
+      diagramUnsubs.set(key, offDiagram);
     });
 
     socket.on("diagram:unsubscribe", (data: unknown) => {
@@ -2212,167 +2052,6 @@ export async function startServer(
       const key = JSON.stringify([resolved, relPath]);
       diagramUnsubs.get(key)?.();
       diagramUnsubs.delete(key);
-    });
-
-    /** 図の編集結果をファイルへ保存する。会話への通知と baseline 更新はしない。 */
-    socket.on("diagram:autosave", async (data: unknown, callback: unknown) => {
-      if (typeof callback !== "function") return;
-      const reply = callback as (response: {
-        ok: boolean;
-        error?: string;
-      }) => void;
-      const d = data as {
-        sessionId?: unknown;
-        worktreePath?: unknown;
-        relPath?: unknown;
-        model?: unknown;
-        html?: unknown;
-      } | null;
-      if (
-        !d ||
-        typeof d !== "object" ||
-        typeof d.sessionId !== "string" ||
-        typeof d.worktreePath !== "string" ||
-        typeof d.relPath !== "string" ||
-        typeof d.html !== "string"
-      ) {
-        reply({ ok: false, error: "不正なリクエストです" });
-        return;
-      }
-
-      try {
-        const resolved = resolveManagedWorktreePath(d.worktreePath);
-        if (!resolved) {
-          reply({ ok: false, error: "worktree を解決できません" });
-          return;
-        }
-        const saved = await saveDiagramEdit(
-          resolved,
-          d.relPath,
-          d.model,
-          d.html,
-          suppressNextDiagramUpdate
-        );
-        if (!saved.ok) {
-          reply(saved);
-          return;
-        }
-        // 未登録時だけ保存前モデルを初期 baseline にする。以後の autosave は
-        // baseline を進めず、明示 submit まで未通知差分を蓄積する。
-        // 通常は配信時に登録済みなので、ここが走るのはサーバー再起動を
-        // またいで図タブが開いたままだった場合。
-        // モデル baseline と本文 baseline は独立して初期化する（GET /api/diagram
-        // と同じ理由。#463）。
-        const modelKey = diagramModelKey(resolved, d.relPath);
-        if (!lastNotifiedModels.has(modelKey)) {
-          rememberNotifiedModel(modelKey, saved.previousModel);
-        }
-        if (
-          saved.savedModel.type === "doc" &&
-          !lastNotifiedDocBodies.has(modelKey)
-        ) {
-          rememberNotifiedDocBodies(
-            modelKey,
-            extractDocBlocks(saved.previousHtml)
-          );
-        }
-        reply({ ok: true });
-      } catch (error) {
-        reply({ ok: false, error: getErrorMessage(error) });
-      }
-    });
-
-    /** 図を保存し、最後に通知したモデルからの意味差分を会話へ還流する。 */
-    socket.on("diagram:submit", async (data: unknown, callback: unknown) => {
-      if (typeof callback !== "function") return;
-      const reply = callback as (response: {
-        ok: boolean;
-        sent?: string[];
-        error?: string;
-      }) => void;
-      const d = data as {
-        sessionId?: unknown;
-        worktreePath?: unknown;
-        relPath?: unknown;
-        model?: unknown;
-        html?: unknown;
-      } | null;
-      if (
-        !d ||
-        typeof d !== "object" ||
-        typeof d.sessionId !== "string" ||
-        typeof d.worktreePath !== "string" ||
-        typeof d.relPath !== "string" ||
-        typeof d.html !== "string"
-      ) {
-        reply({ ok: false, error: "不正なリクエストです" });
-        return;
-      }
-
-      try {
-        const resolved = resolveManagedWorktreePath(d.worktreePath);
-        if (!resolved) {
-          reply({ ok: false, error: "worktree を解決できません" });
-          return;
-        }
-        const saved = await saveDiagramEdit(
-          resolved,
-          d.relPath,
-          d.model,
-          d.html
-        );
-        if (!saved.ok) {
-          reply(saved);
-          return;
-        }
-
-        const modelKey = diagramModelKey(resolved, d.relPath);
-        const baseline =
-          lastNotifiedModels.get(modelKey) ?? saved.previousModel;
-
-        // doc は本文が正準 source なので、モデル差分ではなくブロック本文を送る
-        const notice = buildSubmitNotice({
-          relPath: d.relPath,
-          baselineModel: baseline,
-          savedModel: saved.savedModel,
-          // モデル側と同じく保存前の状態へ倒す。baseline 未登録を「差分なし」に
-          // 畳むと、変更を送らないまま baseline だけ進めて永久に失う
-          baselineBodies:
-            lastNotifiedDocBodies.get(modelKey) ??
-            extractDocBlocks(saved.previousHtml),
-          savedHtmlRaw: saved.savedHtml,
-        });
-        const sent = notice.lines;
-        if (notice.message !== null) {
-          try {
-            sessionOrchestrator.sendMessage(d.sessionId, notice.message);
-          } catch (error) {
-            console.error(
-              "[Diagram] sendMessage failed:",
-              getErrorMessage(error)
-            );
-            reply({
-              ok: false,
-              error: `図は保存しましたが、セッションへの通知に失敗しました: ${getErrorMessage(error)}`,
-            });
-            return;
-          }
-        }
-
-        // 通知が成功した（または送る差分が無かった）時だけ baseline を進める。
-        rememberNotifiedModel(modelKey, saved.savedModel);
-        if (saved.savedModel.type === "doc") {
-          rememberNotifiedDocBodies(modelKey, notice.savedBodies);
-        } else {
-          // graph として通知した以上、この modelKey に残っている本文
-          // baseline は古い doc 由来で、以後 doc へ戻ったときに誤って
-          // 使われる（独立初期化が「既に登録済み」と誤判定する）ので消す。
-          lastNotifiedDocBodies.delete(modelKey);
-        }
-        reply({ ok: true, sent });
-      } catch (error) {
-        reply({ ok: false, error: getErrorMessage(error) });
-      }
     });
 
     // ===== JSONL tail（チャットビューの会話データソース） =====
@@ -3181,19 +2860,19 @@ export async function startServer(
       );
     });
 
-    // ===== ボード提案の設定 (鍵は末尾 4 文字だけ返す) =====
-    socket.on("board-suggest:get", callback => {
+    // ===== 分岐TODOの設定 (鍵は末尾 4 文字だけ返す) =====
+    socket.on("branch-todo:get", callback => {
       if (typeof callback !== "function") return;
       try {
-        callback({ ok: true, config: readBoardSuggestConfig(db) });
+        callback({ ok: true, config: readBranchTodoConfig(db) });
       } catch (e) {
-        console.error("[BoardSuggest] 設定の取得に失敗:", getErrorMessage(e));
+        console.error("[BranchTodo] 設定の取得に失敗:", getErrorMessage(e));
         callback({ ok: false, error: "設定を読めませんでした" });
       }
     });
-    socket.on("board-suggest:set", (patch, callback) => {
+    socket.on("branch-todo:set", (patch, callback) => {
       if (typeof callback !== "function") return;
-      const validated = validateBoardSuggestPatch(patch);
+      const validated = validateBranchTodoPatch(patch);
       if (!validated.ok) {
         callback({ ok: false, error: validated.error });
         return;
@@ -3203,13 +2882,13 @@ export async function startServer(
           db.setSettings(validated.set);
         }
         for (const key of validated.remove) db.deleteSetting(key);
-        const config = readBoardSuggestConfig(db);
+        const config = readBranchTodoConfig(db);
         console.log(
-          `[BoardSuggest] 設定を更新: ${config.enabled ? "有効" : "無効"} / 閾値 ${config.threshold} / 分岐TODO ${config.todoEnabled ? "有効" : "無効"} (閾値 ${config.todoThreshold}) / 鍵 ${config.keyConfigured ? `あり (${config.keySource})` : "なし"}`
+          `[BranchTodo] 設定を更新: ${config.todoEnabled ? "有効" : "無効"} (閾値 ${config.todoThreshold}) / 鍵 ${config.keyConfigured ? `あり (${config.keySource})` : "なし"}`
         );
         callback({ ok: true, config });
       } catch (e) {
-        console.error("[BoardSuggest] 設定の保存に失敗:", getErrorMessage(e));
+        console.error("[BranchTodo] 設定の保存に失敗:", getErrorMessage(e));
         callback({ ok: false, error: "設定を保存できませんでした" });
       }
     });
@@ -3834,10 +3513,6 @@ export async function startServer(
       }
       diagramUnsubs.clear();
       fileHandlers.dispose();
-      for (const timeout of suppressedDiagramUpdates.values()) {
-        clearTimeout(timeout);
-      }
-      suppressedDiagramUpdates.clear();
 
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);

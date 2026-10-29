@@ -1,56 +1,39 @@
 /**
- * ボード提案: Claude が返答を終えるたびに (Stop hook)、Jev へ「チャットより
- * ボードのほうが読みやすいか」を問い、閾値を超えたら Claude 自身に図解させる。
+ * 分岐TODO: Claude が返答を終えるたびに (Stop hook)、Jev へ「このターンに保留した
+ * 話題があるか」を問い、閾値を超えたら Claude 自身に todo_add で足させる。
  *
  * 流れ:
  *   claude の Stop hook (auq-hook-bridge が --settings で注入) が hook の入力を
- *   Ark へ POST する → Ark が transcript から直前のターンの本文を組み立てて Jev に
- *   判定させる → 図解すべきなら `{ decision: "block", reason }` を返す → claude は
- *   止まらずに reason を受け取り、デッキを描いて board_open で開く。
+ *   Ark へ POST する → Ark が transcript から直前のターン (人の発話と返答) を組み立てて
+ *   Jev に判定させる → 足すべきなら `{ decision: "block", reason }` を返す → claude は
+ *   止まらずに reason を受け取り、todo_list で既存を確かめてから todo_add する。
  *
  * - tmux には 1 バイトも送らない。send-keys で頼むと、端末で入力中の下書きを
  *   C-u で消しうる (bridgeStatus は入力中を IDLE と報告する) ため
- * - Ark 自身は図を描けない。返答の文章をボードへ機械変換しても、チャットと同じ
- *   文章が別のペインに出るだけで読み手には何も足さない。描けるのは Claude だけ
- *   (以前は返答の markdown を doc 型ボードへ機械変換していたが、この理由で撤去した)
- * - Claude への入力に足すのは「外部の分類器がこの返答を図にすべきと判定した」
- *   という、Claude 自身が持っていない情報だけ。SessionStart hook の作図規約を
- *   読み上げ直すものではない (CLAUDE.md の「コンテキスト機構は持たない」)。
- *   実測では規約だけだと、1,500 文字を超える返答で Claude が自分で board_open
- *   したのは直近 14 日の 192 件中 17 件だった
- *
- * 分岐TODO: 同じ Stop hook で、Jev へ別の呼び出しで「このターンに保留した話題があるか」も
- * 問う (ボードの質問は返答だけで検証したので、人の発話を混ぜない)。閾値を超えたら Claude に
- * todo_add で足させる。TODO の一覧はセッションへ渡さない (Claude が todo_list で自分で読む)。
- * block は 1 ターン 1 回しか効かないので、両方を超えたら reason を連結する
+ * - Claude への入力に足すのは「外部の分類器がこのターンに保留した話題があると判定した」
+ *   という、Claude 自身が持っていない情報だけ (CLAUDE.md の「コンテキスト機構は持たない」)。
+ *   TODO の一覧はセッションへ渡さない (Claude が todo_list で自分で読む)
  *
  * 止める条件 (block しない):
  *   - `stop_hook_active` (block で続けたターンの終わり。ここで止めないと無限に続く)
- *   - そのターンで Claude が既に board_open している (ボードの判定だけ止める)
- *   - そのターンで Claude が既に todo_add している (TODO の判定だけ止める)
- *   - 無効・鍵なし・本文なし・Jev の失敗・閾値未満
+ *   - そのターンで Claude が既に todo_add している
+ *   - 無効・鍵なし・本文なし・人の発話が読めない・Jev の失敗・閾値未満
  *
  * transcript は種別 (type / isMeta / isSidechain / content block の種別) だけを見る。
  * 画面テキストの解釈はしない (CLAUDE.md の情報源分離の原則)。
  */
 
 import fs from "node:fs";
-import type { BoardDecision, DeferredDecision } from "./jev-client.js";
+import type { DeferredDecision } from "./jev-client.js";
 
-export const BOARD_SUGGEST_STOP_PATH = "/api/internal/board-suggest-stop";
+/**
+ * 撤去したボード提案の時代の名前のまま。稼働中のセッションは起動時に注入された
+ * hook の設定にこの URL を持ち続けるので、変えるとそれらのセッションで判定が止まる
+ */
+export const STOP_HOOK_PATH = "/api/internal/board-suggest-stop";
 
 /** transcript は末尾だけ読む。直前のターンが収まれば足りる */
 const TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024;
-
-/**
- * block したときに Claude が受け取る指示。会話ビューには折りたたんだ
- * システムの行 (isMeta) として出る
- */
-export const BOARD_SUGGEST_REASON = [
-  "Ark のボード提案: この返答はチャットの文章よりボードの図のほうが読みやすいと判定された。",
-  "board_authoring_guide の「説明図（デッキ）」に従い、直前の返答の内容を 1 ページに 1 つのことを置くデッキにして、board_open で開くこと。",
-  "新しい調査やコードの変更はしない。チャットには同じ説明を繰り返さず、開いたことを 1 行で伝えるだけにする。",
-].join("\n");
 
 /** 保留した話題があると判定されたときに Claude が受け取る指示 */
 export const BRANCH_TODO_REASON = [
@@ -88,10 +71,9 @@ export function parseStopHookInput(body: unknown): StopHookInput | null {
   };
 }
 
-/** 直前のターン (最後の人の発話より後) の本文と、そのターンで board_open / todo_add したか */
+/** 直前のターン (最後の人の発話より後) の本文と、そのターンで todo_add したか */
 export interface LastTurn {
   text: string;
-  openedBoard: boolean;
   /** 区切りになった人の発話。読めなければ空文字 */
   prompt: string;
   /** そのターンで todo_add を呼んだか */
@@ -131,7 +113,6 @@ interface TranscriptRecord {
  */
 export function extractLastTurn(lines: Iterable<string>): LastTurn {
   let texts: string[] = [];
-  let openedBoard = false;
   let prompt = "";
   let addedTodo = false;
   for (const raw of lines) {
@@ -152,7 +133,6 @@ export function extractLastTurn(lines: Iterable<string>): LastTurn {
         content.some(block => (block as ContentBlock)?.type === "tool_result");
       if (!isToolResult) {
         texts = [];
-        openedBoard = false;
         prompt = userText(content);
         addedTodo = false;
       }
@@ -169,19 +149,13 @@ export function extractLastTurn(lines: Iterable<string>): LastTurn {
       } else if (
         block?.type === "tool_use" &&
         typeof block.name === "string" &&
-        /(^|__)board_open$/.test(block.name)
-      ) {
-        openedBoard = true;
-      } else if (
-        block?.type === "tool_use" &&
-        typeof block.name === "string" &&
         /(^|__)todo_add$/.test(block.name)
       ) {
         addedTodo = true;
       }
     }
   }
-  return { text: texts.join("\n\n").trim(), openedBoard, prompt, addedTodo };
+  return { text: texts.join("\n\n").trim(), prompt, addedTodo };
 }
 
 /** transcript の末尾を読み、行に分ける。途中から読んだ最初の欠けた行は捨てる */
@@ -203,11 +177,8 @@ export async function readTranscriptTail(
   }
 }
 
-export interface BoardSuggestStopDeps {
-  enabled(): boolean;
+export interface BranchTodoStopDeps {
   apiKey(): string | null;
-  threshold(): number;
-  decide(text: string, apiKey: string): Promise<BoardDecision>;
   todoEnabled(): boolean;
   todoThreshold(): number;
   decideDeferred(
@@ -228,14 +199,13 @@ export interface StopHookOutput {
  * Stop hook 1 回分の判定。block するなら hook の出力 JSON を、しないなら null を返す。
  * 失敗は投げない (hook が claude の進行を止めないことを最優先にする)。
  */
-export class BoardSuggestStopHandler {
+export class BranchTodoStopHandler {
   /** Jev の同じ失敗を毎ターン出さないため、失敗中のセッションを覚える */
   private failing = new Set<string>();
   private readonly log: (message: string) => void;
 
-  constructor(private readonly deps: BoardSuggestStopDeps) {
-    this.log =
-      deps.log ?? (message => console.log(`[BoardSuggest] ${message}`));
+  constructor(private readonly deps: BranchTodoStopDeps) {
+    this.log = deps.log ?? (message => console.log(`[BranchTodo] ${message}`));
   }
 
   async handle(
@@ -243,19 +213,12 @@ export class BoardSuggestStopHandler {
     input: StopHookInput
   ): Promise<StopHookOutput | null> {
     if (input.stopHookActive) return null;
-    const boardOn = this.deps.enabled();
-    const todoOn = this.deps.todoEnabled();
-    if (!boardOn && !todoOn) return null;
+    if (!this.deps.todoEnabled()) return null;
     const apiKey = this.deps.apiKey();
     if (!apiKey) return null;
 
     const lastMessage = input.lastAssistantMessage?.trim() ?? "";
-    let turn: LastTurn = {
-      text: "",
-      openedBoard: false,
-      prompt: "",
-      addedTodo: false,
-    };
+    let turn: LastTurn = { text: "", prompt: "", addedTodo: false };
     if (input.transcriptPath) {
       try {
         turn = extractLastTurn(
@@ -272,43 +235,27 @@ export class BoardSuggestStopHandler {
       lastMessage && !turn.text.endsWith(lastMessage)
         ? [turn.text, lastMessage].filter(Boolean).join("\n\n")
         : turn.text;
-    if (!text) return null;
+    // 質問は人の発話と返答の対で問うので、発話が読めなければ判定しない
+    if (!text || !turn.prompt || turn.addedTodo) return null;
 
-    const [board, deferred] = await Promise.all([
-      boardOn && !turn.openedBoard
-        ? this.judge(sessionId, "board", () => this.deps.decide(text, apiKey))
-        : null,
-      // 質問は人の発話と返答の対で問うので、発話が読めなければ判定しない
-      todoOn && !turn.addedTodo && turn.prompt
-        ? this.judge(sessionId, "todo", () =>
-            this.deps.decideDeferred(turn.prompt, text, apiKey)
-          )
-        : null,
-    ]);
-    const reasons: string[] = [];
-    if (board && board.board >= this.deps.threshold()) {
-      this.log(
-        `${sessionId}: 図解を依頼 (board=${board.board.toFixed(2)}, ${text.length} 文字)`
-      );
-      reasons.push(BOARD_SUGGEST_REASON);
+    const deferred = await this.judge(sessionId, () =>
+      this.deps.decideDeferred(turn.prompt, text, apiKey)
+    );
+    if (!deferred || deferred.deferred < this.deps.todoThreshold()) {
+      return null;
     }
-    if (deferred && deferred.deferred >= this.deps.todoThreshold()) {
-      this.log(
-        `${sessionId}: TODO を依頼 (deferred=${deferred.deferred.toFixed(2)})`
-      );
-      reasons.push(BRANCH_TODO_REASON);
-    }
-    if (reasons.length === 0) return null;
-    return { decision: "block", reason: reasons.join("\n\n") };
+    this.log(
+      `${sessionId}: TODO を依頼 (deferred=${deferred.deferred.toFixed(2)})`
+    );
+    return { decision: "block", reason: BRANCH_TODO_REASON };
   }
 
-  /** Jev を呼び、失敗は null に畳む。同じ失敗を毎ターン出さないよう、判定の種類ごとに覚える */
+  /** Jev を呼び、失敗は null に畳む。同じ失敗を毎ターン出さないよう、セッションごとに覚える */
   private async judge<T>(
     sessionId: string,
-    kind: "board" | "todo",
     run: () => Promise<T>
   ): Promise<T | null> {
-    const key = `${sessionId}:${kind}`;
+    const key = sessionId;
     try {
       const result = await run();
       if (this.failing.delete(key)) this.log(`${key}: Jev が回復した`);

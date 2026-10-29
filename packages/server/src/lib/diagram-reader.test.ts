@@ -3,26 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DIAGRAM_COMMENT_LAYER_MARKER } from "./diagram-comment-layer.js";
-import { DIAGRAM_DECK_MARKER } from "./diagram-deck.js";
-import { DIAGRAM_DOC_EDITOR_MARKER } from "./diagram-doc-editor.js";
 import { DIAGRAM_CSP } from "./diagram-file.js";
-import { DIAGRAM_HARNESS_MARKER } from "./diagram-harness.js";
+import { DIAGRAM_KEYNAV_LAYER_MARKER } from "./diagram-keynav-layer.js";
 import { DIAGRAM_LINK_LAYER_MARKER } from "./diagram-link-layer.js";
-import { readDiagram, readDiagramModel } from "./diagram-reader.js";
+import { readDiagram, readDiagramTitle } from "./diagram-reader.js";
 
 let wt: string;
 let dir: string;
 let outsideDir: string;
-
-const MODEL = JSON.stringify({
-  version: 1,
-  title: "購買フロー",
-  nodes: [{ id: "order", label: "Order" }],
-});
-
-const occurrences = (value: string, token: string) =>
-  value.split(token).length - 1;
 
 beforeEach(() => {
   wt = fs.realpathSync(
@@ -40,260 +28,37 @@ afterEach(() => {
   fs.rmSync(outsideDir, { recursive: true, force: true });
 });
 
-function write(name: string, body: string, model = MODEL) {
+function write(name: string, body: string, head = "") {
   fs.writeFileSync(
     path.join(dir, name),
-    `<!doctype html><html><head></head><body>` +
-      `<script type="application/json" id="ark-diagram-model">${model}</script>` +
-      body +
-      `</body></html>`
+    `<!doctype html><html><head>${head}</head><body>${body}</body></html>`
   );
 }
 
 describe("readDiagram", () => {
-  it("モデルと meta CSP 注入済み HTML を返す", async () => {
-    write("a.diagram.html", "<div>図</div>");
+  it("書いた HTML に meta CSP とリンク・キーの層だけを足して返す", async () => {
+    write("a.diagram.html", "<div>図</div><script>draw()</script>");
 
     const result = await readDiagram(wt, "a.diagram.html");
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.model.title).toBe("購買フロー");
       expect(result.html).toContain(DIAGRAM_CSP);
+      expect(result.html).toContain(DIAGRAM_LINK_LAYER_MARKER);
+      expect(result.html).toContain(DIAGRAM_KEYNAV_LAYER_MARKER);
+      expect(result.html).toContain("<div>図</div><script>draw()</script>");
     }
   });
 
-  it("graph の ext と配信時 harness・コメント層を返す", async () => {
-    const graphModel = JSON.stringify({
-      version: 1,
-      nodes: [
-        { id: "order", label: "Order", ext: { x: 40, y: 50 } },
-        { id: "user", label: "User", ext: { x: 360, y: 180 } },
-      ],
-      edges: [
-        { id: "e_order_user", from: "order", to: "user", label: "belongs to" },
-      ],
-      groups: [],
-    });
-    write(
-      "graph.diagram.html",
-      '<div data-ark-container="graph"><div data-model-id="order">Order</div><div data-model-id="user">User</div></div>',
-      graphModel
+  it("モデルブロックが無い HTML もそのまま配信する", async () => {
+    fs.writeFileSync(
+      path.join(dir, "b.diagram.html"),
+      "<html><body>図だけ</body></html>"
     );
 
-    const result = await readDiagram(wt, "graph.diagram.html");
+    const result = await readDiagram(wt, "b.diagram.html");
 
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.model.nodes[0]?.ext).toEqual({ x: 40, y: 50 });
-      expect(result.model.nodes[1]?.ext).toEqual({ x: 360, y: 180 });
-      expect(result.html).toContain(DIAGRAM_CSP);
-      expect(occurrences(result.html, DIAGRAM_HARNESS_MARKER)).toBe(1);
-      expect(occurrences(result.html, DIAGRAM_COMMENT_LAYER_MARKER)).toBe(1);
-      // リンク層は投影の後、ハーネス・コメント層の前に 1 回
-      expect(occurrences(result.html, DIAGRAM_LINK_LAYER_MARKER)).toBe(1);
-      expect(result.html.indexOf(DIAGRAM_LINK_LAYER_MARKER)).toBeLessThan(
-        result.html.indexOf(DIAGRAM_HARNESS_MARKER)
-      );
-      // doc 編集層は doc 専用。graph には入らない
-      expect(occurrences(result.html, DIAGRAM_DOC_EDITOR_MARKER)).toBe(0);
-      expect(result.html).toContain('data-ark-comment-mode="graph"');
-      expect(result.html).toContain('data-ark-container="graph"');
-      expect(Buffer.byteLength(result.html, "utf8")).toBeLessThan(128 * 1024);
-    }
-  });
-
-  it("doc は CSP と本文編集層・コメント層を注入する", async () => {
-    const docModel = JSON.stringify({
-      version: 1,
-      type: "doc",
-      nodes: [{ id: "section-1", label: "概要" }],
-      edges: [],
-      groups: [],
-    });
-    write(
-      "doc.diagram.html",
-      '<section data-ark-id="section-1">概要</section>',
-      docModel
-    );
-
-    const result = await readDiagram(wt, "doc.diagram.html");
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.html).toContain(DIAGRAM_CSP);
-      expect(occurrences(result.html, DIAGRAM_COMMENT_LAYER_MARKER)).toBe(1);
-      // doc は本文編集層も乗る（graph の編集ハーネスとは別物）
-      expect(occurrences(result.html, DIAGRAM_DOC_EDITOR_MARKER)).toBe(1);
-      expect(occurrences(result.html, DIAGRAM_HARNESS_MARKER)).toBe(0);
-      expect(result.html).toContain('data-ark-comment-mode="doc"');
-    }
-  });
-
-  it("edge.ext と ER projection を配信時も保持する", async () => {
-    const edge = {
-      id: "e_order_user",
-      from: "order",
-      to: "user",
-      label: "belongs to",
-      ext: {
-        from_card: "one",
-        to_card: "zero-or-many",
-        direction: "forward",
-        type: "belongs-to",
-      },
-    };
-    const graphModel = JSON.stringify({
-      version: 1,
-      nodes: [
-        { id: "order", label: "Order", kind: "entity", ext: { x: 40, y: 50 } },
-        { id: "user", label: "User", kind: "entity", ext: { x: 360, y: 180 } },
-      ],
-      edges: [edge],
-      groups: [],
-    });
-    write(
-      "er.diagram.html",
-      '<div class="er-graph" data-ark-container="graph">' +
-        '<section class="entity" data-model-id="order" data-kind="entity">Order</section>' +
-        '<section class="entity" data-model-id="user" data-kind="entity">User</section></div>',
-      graphModel
-    );
-
-    const result = await readDiagram(wt, "er.diagram.html");
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.model.edges[0]).toEqual(edge);
-      expect(result.html).toContain('class="er-graph"');
-      expect(result.html).toContain('data-kind="entity"');
-      expect(result.html).toContain(DIAGRAM_CSP);
-      expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
-      expect(result.html).toContain("from_card");
-      expect(result.html).toContain("data-ark-edge-cardinality");
-    }
-  });
-
-  it("group model と graph projection を配信時も保持する", async () => {
-    const groupModel = JSON.stringify({
-      version: 1,
-      nodes: [
-        { id: "order", label: "Order", ext: { x: 40, y: 50 } },
-        { id: "user", label: "User", ext: { x: 360, y: 180 } },
-      ],
-      edges: [],
-      groups: [
-        {
-          id: "ordering-context",
-          label: "Ordering Context",
-          nodes: ["order", "user"],
-          ext: { role: "bounded-context" },
-        },
-      ],
-    });
-    write(
-      "group.diagram.html",
-      '<div data-ark-container="graph">' +
-        '<section class="group-boundary" data-ark-group data-model-id="ordering-context">' +
-        '<span data-model-id="ordering-context">Ordering Context</span></section>' +
-        '<div data-model-id="order">Order</div>' +
-        '<div data-model-id="user">User</div></div>',
-      groupModel
-    );
-
-    const result = await readDiagram(wt, "group.diagram.html");
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.model.groups).toEqual([
-        {
-          id: "ordering-context",
-          label: "Ordering Context",
-          nodes: ["order", "user"],
-          ext: { role: "bounded-context" },
-        },
-      ]);
-      expect(result.html).toContain("data-ark-group");
-      expect(result.html).toContain('class="group-boundary"');
-      expect(result.html).toContain(DIAGRAM_CSP);
-      expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
-    }
-  });
-
-  it("任意の model kind と投影 data-kind を配信時も保持する", async () => {
-    const kindModel = JSON.stringify({
-      version: 1,
-      nodes: [
-        { id: "command", label: "Command", kind: "command" },
-        { id: "service", label: "Service", kind: "service" },
-      ],
-      edges: [],
-      groups: [],
-    });
-    write(
-      "kinds.diagram.html",
-      '<div data-model-id="command" data-kind="command">Command</div>' +
-        '<div data-model-id="service" data-kind="service">Service</div>',
-      kindModel
-    );
-
-    const result = await readDiagram(wt, "kinds.diagram.html");
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.model.nodes.map(node => node.kind)).toEqual([
-        "command",
-        "service",
-      ]);
-      expect(result.html).toContain('data-kind="command"');
-      expect(result.html).toContain('data-kind="service"');
-      expect(result.html).toContain(DIAGRAM_CSP);
-      expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
-    }
-  });
-
-  it("投影 data-kind が model の node.kind と異なる graph は 422 で拒否する", async () => {
-    const kindModel = JSON.stringify({
-      version: 1,
-      nodes: [{ id: "command", label: "Command", kind: "command" }],
-      edges: [],
-      groups: [],
-    });
-    write(
-      "mismatched-kind.diagram.html",
-      '<article data-model-id="command" data-kind="event">Command</article>',
-      kindModel
-    );
-
-    const result = await readDiagram(wt, "mismatched-kind.diagram.html");
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.status).toBe(422);
-      expect(result.error).toContain("command");
-    }
-  });
-
-  it("投影 data-kind が不一致でも readDiagramModel はモデルを返す", async () => {
-    const kindModel = JSON.stringify({
-      version: 1,
-      nodes: [{ id: "command", label: "Command", kind: "command" }],
-      edges: [],
-      groups: [],
-    });
-    write(
-      "mismatched-kind-model.diagram.html",
-      '<article data-model-id="command" data-kind="event">Command</article>',
-      kindModel
-    );
-
-    const result = await readDiagramModel(
-      wt,
-      "mismatched-kind-model.diagram.html"
-    );
-
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.model.nodes[0]?.kind).toBe("command");
   });
 
   it("存在しないファイルは 404 を返す", async () => {
@@ -309,7 +74,6 @@ describe("readDiagram", () => {
     fs.writeFileSync(
       path.join(legacyDir, "legacy.diagram.html"),
       `<!doctype html><html><head></head><body>` +
-        `<script type="application/json" id="ark-diagram-model">${MODEL}</script>` +
         `<div>旧ルート</div></body></html>`
     );
 
@@ -324,97 +88,6 @@ describe("readDiagram", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.status).toBe(403);
-  });
-
-  it("モデルブロックが無いファイルは 422 を返す", async () => {
-    fs.writeFileSync(
-      path.join(dir, "b.diagram.html"),
-      "<html><body>図だけ</body></html>"
-    );
-
-    const result = await readDiagram(wt, "b.diagram.html");
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.status).toBe(422);
-  });
-
-  it("node に対応する anchor がない doc は 422 を返す", async () => {
-    const docModel = JSON.stringify({
-      version: 1,
-      type: "doc",
-      nodes: [{ id: "section-1", label: "概要" }],
-      edges: [],
-      groups: [],
-    });
-    write("invalid-doc.diagram.html", "<section>概要</section>", docModel);
-
-    const result = await readDiagram(wt, "invalid-doc.diagram.html");
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.status).toBe(422);
-      expect(result.error).toContain("section-1");
-    }
-  });
-
-  it("語彙外の data-ark-author を持つ doc は 422 を返す", async () => {
-    const docModel = JSON.stringify({
-      version: 1,
-      type: "doc",
-      nodes: [{ id: "section-1", label: "概要" }],
-      edges: [],
-      groups: [],
-    });
-    write(
-      "bad-author-doc.diagram.html",
-      '<section data-ark-id="section-1" data-ark-author="agent">概要</section>',
-      docModel
-    );
-
-    const result = await readDiagram(wt, "bad-author-doc.diagram.html");
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.status).toBe(422);
-      expect(result.error).toContain("data-ark-author");
-      expect(result.error).toContain("agent");
-    }
-  });
-
-  it("human / claude の data-ark-author を持つ doc は配信する", async () => {
-    const docModel = JSON.stringify({
-      version: 1,
-      type: "doc",
-      nodes: [
-        { id: "section-1", label: "概要" },
-        { id: "section-1-p1", label: "回答" },
-      ],
-      edges: [],
-      groups: [],
-    });
-    write(
-      "authored-doc.diagram.html",
-      '<section data-ark-id="section-1" data-ark-author="claude">概要<p data-ark-id="section-1-p1" data-ark-author="human">回答</p></section>',
-      docModel
-    );
-
-    const result = await readDiagram(wt, "authored-doc.diagram.html");
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.html).toContain('data-ark-author="human"');
-    }
-  });
-
-  it("graph は data-ark-id がなくても従来どおり配信する", async () => {
-    write(
-      "unanchored-graph.diagram.html",
-      '<div data-model-id="order">Order</div>'
-    );
-
-    const result = await readDiagram(wt, "unanchored-graph.diagram.html");
-
-    expect(result.ok).toBe(true);
   });
 
   it("EACCES (権限エラー) は 404 に畳まず 403 で errno を含めて返す", async () => {
@@ -457,7 +130,6 @@ describe("readDiagram", () => {
     fs.writeFileSync(
       outsideTarget,
       `<!doctype html><html><head></head><body>` +
-        `<script type="application/json" id="ark-diagram-model">${MODEL}</script>` +
         `<div>秘密</div></body></html>`
     );
     fs.symlinkSync(outsideTarget, path.join(dir, "evil.diagram.html"));
@@ -473,180 +145,15 @@ describe("readDiagram", () => {
   });
 });
 
-describe("静的な内蔵図種（sequence / call-tree）の配信", () => {
-  const SEQ_MODEL = JSON.stringify({
-    version: 1,
-    type: "sequence",
-    title: "クリックが行ハイライトに着くまで",
-    nodes: [
-      { id: "iframe", label: "board iframe" },
-      { id: "parent", label: "parent window" },
-    ],
-    edges: [
-      {
-        id: "s1",
-        from: "iframe",
-        to: "parent",
-        label: "postMessage(href)",
-        ext: { source: "packages/web/src/x.ts#L1-L2" },
-      },
-    ],
-  });
+describe("readDiagramTitle", () => {
+  it("<title> を返し、無ければ null", async () => {
+    write("t.diagram.html", "<div>x</div>", "<title>構成図</title>");
+    write("u.diagram.html", "<div>x</div>");
 
-  it("投影を生成し、コメント層は載せるが graph ハーネスは載せない", async () => {
-    write("seq.diagram.html", "", SEQ_MODEL);
-    const result = await readDiagram(wt, `${DIAGRAM_DIR}/seq.diagram.html`);
+    const titled = await readDiagramTitle(wt, "t.diagram.html");
+    const untitled = await readDiagramTitle(wt, "u.diagram.html");
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // 時間順が意味を持つので、node を動かせる canvas には載せない
-    expect(result.html).not.toContain(DIAGRAM_HARNESS_MARKER);
-    expect(result.html).not.toContain(DIAGRAM_DOC_EDITOR_MARKER);
-    expect(result.html).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
-    expect(result.html).toContain(DIAGRAM_LINK_LAYER_MARKER);
-    expect(result.html).toContain(DIAGRAM_CSP);
-    expect(result.html).toContain('data-ark-static="sequence"');
-    // 生成した行にコメントが付くよう data-ark-id を出す
-    expect(result.html).toContain('data-ark-id="s1"');
-    expect(result.html).toContain('<a href="packages/web/src/x.ts#L1-L2">');
-  });
-
-  it("生成物はファイルへ書き戻さない（raw はモデルだけのまま）", async () => {
-    write("seq.diagram.html", "", SEQ_MODEL);
-    const result = await readDiagram(wt, `${DIAGRAM_DIR}/seq.diagram.html`);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.raw).not.toContain("ark-static-panel");
-  });
-});
-
-describe("デッキ（type: deck）の配信", () => {
-  const DECK_MODEL = JSON.stringify({
-    version: 1,
-    type: "deck",
-    title: "リンクを押してから行が光るまで",
-    nodes: [],
-    edges: [],
-    groups: [],
-    ext: {
-      pages: [
-        {
-          id: "p-seq",
-          type: "sequence",
-          title: "クリックから postMessage まで",
-          nodes: [
-            { id: "iframe", label: "board iframe" },
-            { id: "parent", label: "parent window" },
-          ],
-          edges: [
-            { id: "s1", from: "iframe", to: "parent", label: "postMessage" },
-          ],
-        },
-        { id: "p-why", type: "html", title: "なぜ親で解釈するか" },
-      ],
-    },
-  });
-
-  it("ページを生成し、コメント層は載せるが graph ハーネスと編集層は載せない", async () => {
-    write(
-      "deck.diagram.html",
-      '<section data-ark-page="p-why"><h2>親で解釈する</h2></section>',
-      DECK_MODEL
-    );
-    const result = await readDiagram(wt, `${DIAGRAM_DIR}/deck.diagram.html`);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.html).not.toContain(DIAGRAM_HARNESS_MARKER);
-    expect(result.html).not.toContain(DIAGRAM_DOC_EDITOR_MARKER);
-    expect(result.html).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
-    expect(result.html).toContain(DIAGRAM_DECK_MARKER);
-    expect(result.html).toContain(DIAGRAM_CSP);
-    expect(result.html).toContain('data-ark-static="sequence"');
-    expect(result.html).toContain('data-ark-deck-slot="p-why"');
-    expect(result.raw).not.toContain("ark-static-panel");
-  });
-
-  it("html ページの本文が無いデッキは 422 を返す", async () => {
-    write("deck.diagram.html", "", DECK_MODEL);
-    const result = await readDiagram(wt, `${DIAGRAM_DIR}/deck.diagram.html`);
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.status).toBe(422);
-      expect(result.error).toContain("p-why");
-    }
-  });
-});
-
-describe("見て分かる図種（git-graph など）の配信", () => {
-  const GIT_MODEL = JSON.stringify({
-    version: 1,
-    type: "git-graph",
-    title: "feat は main の 1 つ先",
-    nodes: [
-      { id: "c2", label: "図種を足す", ext: { branch: "feat" } },
-      { id: "c1", label: "起点", ext: { branch: "main" } },
-    ],
-    edges: [{ id: "g1", from: "c1", to: "c2" }],
-    groups: [],
-  });
-
-  it("単独の図として投影し、コメント層は載せるが graph ハーネスは載せない", async () => {
-    write("git.diagram.html", "", GIT_MODEL);
-    const result = await readDiagram(wt, `${DIAGRAM_DIR}/git.diagram.html`);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.html).not.toContain(DIAGRAM_HARNESS_MARKER);
-    expect(result.html).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
-    expect(result.html).toContain('data-ark-fig="git-graph"');
-    expect(result.html).toContain('data-ark-id="c2"');
-    expect(result.raw).not.toContain("ark-git");
-  });
-
-  it("形の誤り（edge の向きが逆）は 422 で理由を返す", async () => {
-    write(
-      "git.diagram.html",
-      "",
-      GIT_MODEL.replace('"from":"c1","to":"c2"', '"from":"c2","to":"c1"')
-    );
-    const result = await readDiagram(wt, `${DIAGRAM_DIR}/git.diagram.html`);
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.status).toBe(422);
-  });
-
-  it("board_open の経路では、表だけのページへの注意を返す", async () => {
-    const deck = JSON.stringify({
-      version: 1,
-      type: "deck",
-      title: "worktree の整理",
-      nodes: [],
-      edges: [],
-      groups: [],
-      ext: {
-        pages: [
-          { ...JSON.parse(GIT_MODEL), id: "p-git", version: undefined },
-          {
-            id: "p-table",
-            type: "blocks",
-            title: "消したもの",
-            blocks: [{ kind: "table", rows: [["orista-1200"]] }],
-          },
-        ],
-      },
-    });
-    write("deck.diagram.html", "", deck);
-    const result = await readDiagram(wt, `${DIAGRAM_DIR}/deck.diagram.html`, {
-      forOpen: true,
-    });
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.notices).toHaveLength(1);
-      expect(result.notices?.[0]).toContain("p-table");
-    }
+    expect(titled.ok && titled.title).toBe("構成図");
+    expect(untitled.ok && untitled.title).toBeNull();
   });
 });

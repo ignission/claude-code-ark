@@ -64,7 +64,7 @@ export interface CommandPaletteProps {
   onAsk?: (text: string) => void;
   /** 聞くウィンドウを (何も送らずに) 開く */
   onOpenAskWindow?: () => void;
-  onOpenBoardSuggestSettings: () => void;
+  onOpenBranchTodoSettings: () => void;
 }
 
 export function CommandPalette(props: CommandPaletteProps) {
@@ -99,7 +99,7 @@ function PaletteBody({
   onOpenFile,
   onAsk,
   onOpenAskWindow,
-  onOpenBoardSuggestSettings,
+  onOpenBranchTodoSettings,
   onClose,
 }: CommandPaletteProps & { onClose: (detail?: PaletteClosedDetail) => void }) {
   const [query, setQuery] = useState("");
@@ -238,8 +238,8 @@ function PaletteBody({
           command = action.command;
           region = undefined;
           break;
-        case "board-suggest-settings":
-          onOpenBoardSuggestSettings();
+        case "branch-todo-settings":
+          onOpenBranchTodoSettings();
           break;
         case "ask-window":
           onOpenAskWindow?.();
@@ -253,7 +253,7 @@ function PaletteBody({
         region,
         // 設定のダイアログと「聞く」のウィンドウは、自分でフォーカスを持つ
         handoff:
-          action.type === "board-suggest-settings" ||
+          action.type === "branch-todo-settings" ||
           action.type === "ask" ||
           action.type === "ask-window",
       });
@@ -262,7 +262,7 @@ function PaletteBody({
       onAsk,
       onClose,
       onOpenAskWindow,
-      onOpenBoardSuggestSettings,
+      onOpenBranchTodoSettings,
       onOpenDiagram,
       onOpenFile,
       onSelectSession,

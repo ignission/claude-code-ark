@@ -4,11 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  diagramKindOf,
-  handleDiagramListRequest,
-  listDiagrams,
-} from "./diagram-list.js";
+import { handleDiagramListRequest, listDiagrams } from "./diagram-list.js";
 
 const tempDirs: string[] = [];
 
@@ -27,21 +23,11 @@ function makeWorktree(withDiagramDir = true): {
 }
 
 function diagramHtml(title?: string): string {
-  const model = {
-    version: 1,
-    ...(title === undefined ? {} : { title }),
-    nodes: [],
-    edges: [],
-    groups: [],
-  };
-  return (
-    "<!doctype html><html><body>" +
-    `<script type="application/json" id="ark-diagram-model">${JSON.stringify(model)}</script>` +
-    "</body></html>"
-  );
+  const head = title === undefined ? "" : `<title>${title}</title>`;
+  return `<!doctype html><html><head>${head}</head><body></body></html>`;
 }
 
-/** 種類と更新日時を除いた、図の同定に使う 3 項目 (並びと追跡の判定を見るテスト用) */
+/** 更新日時を除いた、図の同定に使う 3 項目 (並びと追跡の判定を見るテスト用) */
 async function listBasics(worktree: string) {
   return (await listDiagrams(worktree)).map(
     ({ relPath, displayName, tracked }) => ({ relPath, displayName, tracked })
@@ -57,7 +43,7 @@ afterEach(() => {
 
 describe("listDiagrams", () => {
   it("アンダースコア始まりのディレクトリ配下は一覧から除外する", async () => {
-    // 規約サンプル（diagram-authoring skill の完成例）等の参照用ファイルを
+    // 見本などの参照用ファイルを
     // 図スイッチャーに並べないための隠しディレクトリ規約
     const { worktree, diagramDir } = makeWorktree();
     fs.mkdirSync(path.join(diagramDir, "_examples", "nested"), {
@@ -230,7 +216,7 @@ describe("listDiagrams", () => {
     await expect(listDiagrams(worktree)).resolves.toEqual([]);
   });
 
-  it("不正モデル・モデル無し・外向き symlink・symlink directory を除外する", async () => {
+  it("外向き symlink・symlink directory を除外し、title の無い図は名前で出す", async () => {
     const { worktree, diagramDir } = makeWorktree();
     const outside = makeWorktree();
     fs.writeFileSync(
@@ -238,11 +224,7 @@ describe("listDiagrams", () => {
       diagramHtml("正常")
     );
     fs.writeFileSync(
-      path.join(diagramDir, "broken.diagram.html"),
-      '<script type="application/json" id="ark-diagram-model">{</script>'
-    );
-    fs.writeFileSync(
-      path.join(diagramDir, "missing-model.diagram.html"),
+      path.join(diagramDir, "untitled.diagram.html"),
       "<html></html>"
     );
     const outsideFile = path.join(outside.worktree, "outside.diagram.html");
@@ -261,6 +243,11 @@ describe("listDiagrams", () => {
 
     await expect(listBasics(worktree)).resolves.toEqual([
       {
+        relPath: ".claude/diagrams/untitled.diagram.html",
+        displayName: "untitled.diagram.html",
+        tracked: false,
+      },
+      {
         relPath: ".claude/diagrams/valid.diagram.html",
         displayName: "正常",
         tracked: false,
@@ -268,65 +255,20 @@ describe("listDiagrams", () => {
     ]);
   });
 
-  it("anchor lint 違反の doc も一覧から消さない", async () => {
+  it("更新日時を返す", async () => {
     const { worktree, diagramDir } = makeWorktree();
-    const docModel = {
-      version: 1,
-      type: "doc",
-      title: "レビュー文書",
-      nodes: [{ id: "section-1", label: "概要" }],
-      edges: [],
-      groups: [],
-    };
-    fs.writeFileSync(
-      path.join(diagramDir, "review.diagram.html"),
-      `<!doctype html><html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(docModel)}</script><section>anchor なし</section></body></html>`
-    );
-
-    await expect(listBasics(worktree)).resolves.toEqual([
-      {
-        relPath: ".claude/diagrams/review.diagram.html",
-        displayName: "レビュー文書",
-        tracked: false,
-      },
-    ]);
-  });
-
-  it("種類と更新日時を返す (graph の図種と type なしは graph にまとめる)", async () => {
-    const { worktree, diagramDir } = makeWorktree();
-    const write = (name: string, type: string | undefined, mtime: number) => {
-      const model = {
-        version: 1,
-        ...(type === undefined ? {} : { type }),
-        title: name,
-        nodes: [],
-        edges: [],
-        groups: [],
-        ...(type === "deck" ? { ext: { pages: [] } } : {}),
-      };
+    const write = (name: string, mtime: number) => {
       const file = path.join(diagramDir, `${name}.diagram.html`);
-      fs.writeFileSync(
-        file,
-        `<!doctype html><html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(model)}</script></body></html>`
-      );
+      fs.writeFileSync(file, diagramHtml(name));
       fs.utimesSync(file, mtime, mtime);
     };
-    write("a-plain", undefined, 1_700_000_000);
-    write("b-doc", "doc", 1_700_000_100);
-    write("c-seq", "sequence", 1_700_000_200);
+    write("a", 1_700_000_000);
+    write("b", 1_700_000_100);
 
     const items = await listDiagrams(worktree);
-    expect(items.map(item => [item.displayName, item.kind])).toEqual([
-      ["a-plain", "graph"],
-      ["b-doc", "doc"],
-      ["c-seq", "sequence"],
-    ]);
     expect(items.map(item => item.mtimeMs)).toEqual([
-      1_700_000_000_000, 1_700_000_100_000, 1_700_000_200_000,
+      1_700_000_000_000, 1_700_000_100_000,
     ]);
-    expect(diagramKindOf("deck")).toBe("deck");
-    expect(diagramKindOf("call-tree")).toBe("call-tree");
-    expect(diagramKindOf("er")).toBe("graph");
   });
 
   it("comments sidecar を単独でも図の隣接時でも候補にしない", async () => {

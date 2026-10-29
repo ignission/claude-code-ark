@@ -52,21 +52,18 @@ const diagrams: DiagramListItem[] = [
     relPath: ".claude/diagrams/a.diagram.html",
     displayName: "注文フロー",
     tracked: true,
-    kind: "sequence",
     mtimeMs: Date.now() - 3 * DAY,
   },
   {
     relPath: ".claude/diagrams/nested/b.diagram.html",
     displayName: "b.diagram.html",
     tracked: false,
-    kind: "doc",
     mtimeMs: Date.now() - 400 * DAY,
   },
   {
     relPath: ".claude/diagrams/c.diagram.html",
     displayName: "コマンドパレット",
     tracked: false,
-    kind: "deck",
     mtimeMs: Date.now() - 1000,
   },
 ];
@@ -206,7 +203,7 @@ describe("DiagramSwitcher", () => {
     expect(bar()?.textContent).toContain("stale.diagram.html");
   });
 
-  it("開くと、更新の新しい順に名前・種類・更新日時を並べる", () => {
+  it("開くと、更新の新しい順に名前・更新日時を並べる", () => {
     render();
     openList();
     expect(rowNames()).toEqual([
@@ -215,7 +212,6 @@ describe("DiagramSwitcher", () => {
       "b.diagram.html",
     ]);
     const first = document.querySelector('[role="option"]')?.textContent ?? "";
-    expect(first).toContain("デッキ");
     expect(first).toMatch(/今日 \d\d:\d\d/);
     // いまの図の行を選んだ状態で開く
     expect(selected()).toBe("注文フロー");

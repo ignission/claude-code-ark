@@ -8,7 +8,6 @@
  */
 import type {
   ClientToServerEvents,
-  DiagramCommentsResponse,
   DiagramDeleteResponse,
   DiagramListItem,
   ServerToClientEvents,
@@ -28,13 +27,6 @@ import {
   type KeyNavDiagramScroll,
 } from "@/lib/keynav-dom";
 import { cn } from "@/lib/utils";
-import {
-  type DiagramCommentPortParse,
-  type DiagramCommentPortRequest,
-  type DiagramCommentPortResult,
-  parseDiagramCommentPortRequest,
-  toDiagramCommentPortResult,
-} from "../lib/diagram-comment-bridge";
 import {
   applyDiagramDeleteResponse,
   getDiagramEmptyState,
@@ -56,72 +48,17 @@ export interface DiagramPaneProps {
   openKey?: string;
   onSelectDiagram: (relPath: string, worktreePath: string) => void;
   isConnected: boolean;
-  diagramCommentsUpdate?: {
-    worktreePath: string;
-    relPath: string;
-    sequence: number;
-  } | null;
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   deleteDiagram: (
     sessionId: string,
     relPath: string,
     expectedTracked: boolean
   ) => Promise<DiagramDeleteResponse>;
-  getDiagramComments: (
-    sessionId: string,
-    relPath: string
-  ) => Promise<DiagramCommentsResponse>;
-  createDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    anchorId: string,
-    body: string,
-    anchorQuote?: string,
-    anchorOccurrence?: number
-  ) => Promise<DiagramCommentsResponse>;
-  resolveDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  replyDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string,
-    body: string
-  ) => Promise<DiagramCommentsResponse>;
-  deleteDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  sendDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
   /** 未接続時は null。null の間は診断購読をスキップする */
   socket: TypedSocket | null;
 }
 
-/** ハーネス（diagram-harness.ts）が port 経由で送ってくるメッセージ */
-interface DiagramSubmitMessage {
-  type: "ark:diagram-submit";
-  model: unknown;
-  html: string;
-}
-
-interface DiagramAutosaveMessage {
-  type: "ark:diagram-autosave";
-  model: unknown;
-  html: string;
-}
-
+/** キーの層 (diagram-keynav-layer.ts) が port 経由で送ってくるピンチ */
 interface DiagramPinchMessage {
   type: "ark:diagram-pinch";
   deltaY: number;
@@ -134,19 +71,6 @@ interface DiagramPinchMessage {
 export interface DiagramZoomPoint {
   x: number;
   y: number;
-}
-
-interface DiagramAutosaveRequest {
-  sessionId: string;
-  worktreePath: string;
-  relPath: string;
-  model: unknown;
-  html: string;
-}
-
-interface DiagramAutosaveResponse {
-  ok: boolean;
-  error?: string;
 }
 
 export const DIAGRAM_ZOOM_MIN = 0.25;
@@ -329,38 +253,6 @@ export function DiagramViewport({
   );
 }
 
-export function emitDiagramAutosave(
-  socket: TypedSocket,
-  request: DiagramAutosaveRequest,
-  reply: (response: DiagramAutosaveResponse) => void
-): void {
-  socket.timeout(10_000).emit("diagram:autosave", request, (err, response) => {
-    if (err) {
-      reply({ ok: false, error: "保存がタイムアウトしました" });
-      return;
-    }
-    reply(response);
-  });
-}
-
-function isDiagramSubmitMessage(data: unknown): data is DiagramSubmitMessage {
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { type?: unknown }).type === "ark:diagram-submit"
-  );
-}
-
-function isDiagramAutosaveMessage(
-  data: unknown
-): data is DiagramAutosaveMessage {
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { type?: unknown }).type === "ark:diagram-autosave"
-  );
-}
-
 function isDiagramPinchMessage(data: unknown): data is DiagramPinchMessage {
   return (
     typeof data === "object" &&
@@ -490,161 +382,6 @@ export function handleDiagramOpenLinkMessage(
   return true;
 }
 
-interface DiagramCommentForwardDeps {
-  isConnected: boolean;
-  sessionId: string;
-  relPath: string;
-  getDiagramComments: (
-    sessionId: string,
-    relPath: string
-  ) => Promise<DiagramCommentsResponse>;
-  createDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    anchorId: string,
-    body: string,
-    anchorQuote?: string,
-    anchorOccurrence?: number
-  ) => Promise<DiagramCommentsResponse>;
-  resolveDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  replyDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string,
-    body: string
-  ) => Promise<DiagramCommentsResponse>;
-  deleteDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  sendDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  isCurrent: () => boolean;
-  reply: (result: DiagramCommentPortResult) => void;
-  onError: (error: string | null) => void;
-}
-
-export function readDiagramCommentConnectionState(state: {
-  readonly current: boolean;
-}): boolean {
-  return state.current;
-}
-
-export function forwardDiagramCommentsUpdate(
-  update: { worktreePath: string; relPath: string } | null,
-  worktreePath: string,
-  relPath: string | undefined,
-  postMessage: (message: { type: "ark:diagram-comments-changed" }) => void
-): boolean {
-  if (update?.worktreePath !== worktreePath || update.relPath !== relPath) {
-    return false;
-  }
-  postMessage({ type: "ark:diagram-comments-changed" });
-  return true;
-}
-
-export function replyToInvalidDiagramCommentPortRequest(
-  parsed: DiagramCommentPortParse,
-  reply: (result: DiagramCommentPortResult) => void,
-  onError: (error: string) => void
-): boolean {
-  if (parsed.kind !== "invalid") return false;
-  reply(
-    toDiagramCommentPortResult(parsed.requestId, {
-      ok: false,
-      code: "BAD_REQUEST",
-      error: parsed.error,
-    })
-  );
-  onError(parsed.error);
-  return true;
-}
-
-export async function forwardDiagramCommentPortRequest(
-  request: DiagramCommentPortRequest,
-  deps: DiagramCommentForwardDeps
-): Promise<boolean> {
-  let response: DiagramCommentsResponse;
-  if (!deps.isConnected) {
-    response = {
-      ok: false,
-      code: "IO_ERROR",
-      error: "サーバーに未接続のためコメントを処理できません",
-    };
-  } else {
-    try {
-      if (request.type === "ark:diagram-comments-load") {
-        response = await deps.getDiagramComments(deps.sessionId, deps.relPath);
-      } else if (request.type === "ark:diagram-comment-create") {
-        response = await deps.createDiagramComment(
-          deps.sessionId,
-          deps.relPath,
-          request.operationId,
-          request.anchorId,
-          request.body,
-          request.anchorQuote,
-          request.anchorOccurrence
-        );
-      } else if (request.type === "ark:diagram-comment-resolve") {
-        response = await deps.resolveDiagramComment(
-          deps.sessionId,
-          deps.relPath,
-          request.operationId,
-          request.threadId
-        );
-      } else if (request.type === "ark:diagram-comment-reply") {
-        response = await deps.replyDiagramComment(
-          deps.sessionId,
-          deps.relPath,
-          request.operationId,
-          request.threadId,
-          request.body
-        );
-      } else if (request.type === "ark:diagram-comment-delete") {
-        response = await deps.deleteDiagramComment(
-          deps.sessionId,
-          deps.relPath,
-          request.operationId,
-          request.threadId
-        );
-      } else {
-        response = await deps.sendDiagramComment(
-          deps.sessionId,
-          deps.relPath,
-          request.operationId,
-          request.threadId
-        );
-      }
-    } catch (reason) {
-      response = {
-        ok: false,
-        code: "IO_ERROR",
-        error:
-          reason instanceof Error
-            ? reason.message
-            : "コメント処理に失敗しました",
-      };
-    }
-  }
-  if (!deps.isCurrent()) return false;
-  deps.reply(toDiagramCommentPortResult(request.requestId, response));
-  deps.onError(response.ok ? null : response.error);
-  return true;
-}
-
 /**
  * /api/diagram の URL を構築する。
  * リモートアクセス時は token クエリパラメータを継承する。
@@ -665,22 +402,12 @@ export function DiagramPane({
   openKey,
   socket,
   isConnected,
-  diagramCommentsUpdate,
   listDiagrams,
   deleteDiagram,
-  getDiagramComments,
-  createDiagramComment,
-  replyDiagramComment,
-  resolveDiagramComment,
-  deleteDiagramComment,
-  sendDiagramComment,
   onSelectDiagram,
 }: DiagramPaneProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [commentError, setCommentError] = useState<string | null>(null);
   const [diagrams, setDiagrams] = useState<DiagramListItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -693,14 +420,11 @@ export function DiagramPane({
   const deleteInFlightRef = useRef(false);
   // 進行中の fetch を追跡し、古いタブの結果が新しいタブを上書きしないようにする
   const abortControllerRef = useRef<AbortController | null>(null);
-  // ハーネスへ渡した MessageChannel の port1（親側）。再ロードのたびに
+  // 図の中の層へ渡した MessageChannel の port1（親側）。再ロードのたびに
   // 張り直すので、常に「今のロードに対応する port」だけを保持する。
   const portRef = useRef<MessagePort | null>(null);
   const portGrantedForRef = useRef<string | null>(null);
-  const portGenerationRef = useRef(0);
   const rootRef = useRef<HTMLDivElement>(null);
-  const isConnectedRef = useRef(isConnected);
-  isConnectedRef.current = isConnected;
 
   const load = useCallback(async () => {
     if (!relPath) return;
@@ -751,9 +475,7 @@ export function DiagramPane({
   useEffect(() => {
     setHtml(null);
     setError(null);
-    setCommentError(null);
     setZoom(resetDiagramZoom());
-    portGenerationRef.current += 1;
     portGrantedForRef.current = null;
     if (!relPath) {
       abortControllerRef.current?.abort();
@@ -763,7 +485,6 @@ export function DiagramPane({
     }
     void load();
     return () => {
-      portGenerationRef.current += 1;
       portRef.current?.close();
       portRef.current = null;
     };
@@ -850,16 +571,6 @@ export function DiagramPane({
   }, []);
 
   useEffect(() => {
-    if (!portRef.current) return;
-    forwardDiagramCommentsUpdate(
-      diagramCommentsUpdate ?? null,
-      worktreePath,
-      relPath,
-      message => portRef.current?.postMessage(message)
-    );
-  }, [diagramCommentsUpdate, worktreePath, relPath]);
-
-  useEffect(() => {
     if (!socket) return;
     const onDeleted = (data: { sessionId: string; relPath: string }) => {
       if (shouldRefreshDiagramList(sessionId, data)) {
@@ -919,81 +630,18 @@ export function DiagramPane({
     };
   }, []);
 
-  // ハーネスから port 経由で受け取った送信内容を socket:diagram:submit で
-  // サーバーへ中継し、ACK で保存/還流の成否を受け取る。失敗時はペインに
-  // エラーを表示する（非破壊）。
-  const handleSubmit = useCallback(
-    (model: unknown, submittedHtml: string) => {
-      if (!relPath) return;
-      if (!socket || !isConnected) {
-        setSubmitError("サーバーに未接続のため送信できません");
-        return;
-      }
-      socket
-        .timeout(10_000)
-        .emit(
-          "diagram:submit",
-          { sessionId, worktreePath, relPath, model, html: submittedHtml },
-          (err, response) => {
-            if (err) {
-              setSubmitError("送信がタイムアウトしました");
-              return;
-            }
-            if (!response.ok) {
-              setSubmitError(response.error ?? "送信に失敗しました");
-              return;
-            }
-            setSubmitError(null);
-          }
-        );
-    },
-    [socket, isConnected, sessionId, worktreePath, relPath]
-  );
-
-  // 自動保存はファイルだけを更新し、会話への還流は行わない。ACK は port で
-  // ハーネスへ返し、「保存中… / 保存済み」の表示を確定させる。
-  const handleAutosave = useCallback(
-    (
-      model: unknown,
-      submittedHtml: string,
-      reply: (response: { ok: boolean; error?: string }) => void
-    ) => {
-      if (!relPath) {
-        reply({ ok: false, error: "図が選択されていません" });
-        return;
-      }
-      if (!socket || !isConnected) {
-        const error = "サーバーに未接続のため保存できません";
-        setSaveError(error);
-        reply({ ok: false, error });
-        return;
-      }
-      emitDiagramAutosave(
-        socket,
-        { sessionId, worktreePath, relPath, model, html: submittedHtml },
-        response => {
-          setSaveError(
-            response.ok ? null : (response.error ?? "自動保存に失敗しました")
-          );
-          reply(response);
-        }
-      );
-    },
-    [socket, isConnected, sessionId, worktreePath, relPath]
-  );
-
   // iframe のロード（初回表示 / worktreePath・relPath 変更 / diagram:updated
   // による再読込のいずれも "load" イベントを起こす）のたびに MessageChannel を
-  // 新規に張り直し、port2 をハーネスへ渡す。ハーネス側も document 再生成のたびに
-  // submitPort を失うため、古い port を使い回すと繋がらない。
+  // 新規に張り直し、port2 を図の中の層へ渡す。層の側も document 再生成のたびに
+  // port を失うため、古い port を使い回すと繋がらない。
   //
   // ただし「同じ srcDoc に対する2回目以降の load」には渡さない。srcDoc の
   // 正当な再描画は必ず html state の変更（再fetch）を伴うため、同一 html での
   // 再 load は文書内スクリプトが location.href 等で別ドキュメントへ遷移した
   // ことを意味する。meta CSP はサブリソースを遮断するがナビゲーションは
   // 止められない（spec §4.2.2）ので、ここで port を渡すと遷移先の外部
-  // ドキュメントに diagram:submit の書き込み経路まで開いてしまう（codex
-  // review P1 指摘）。初回限定にすることでこの経路を塞ぐ。
+  // ドキュメントに親へのメッセージ経路を開いてしまう（codex review P1 指摘）。
+  // 初回限定にすることでこの経路を塞ぐ。
   const handleIframeLoad = useCallback(
     (e: React.SyntheticEvent<HTMLIFrameElement>) => {
       const iframeWindow = e.currentTarget.contentWindow;
@@ -1015,7 +663,6 @@ export function DiagramPane({
 
       const channel = new MessageChannel();
       portRef.current = channel.port1;
-      const generation = ++portGenerationRef.current;
       channel.port1.onmessage = (event: MessageEvent) => {
         if (
           handleDiagramPinchMessage(event.data, setZoom, point => {
@@ -1040,57 +687,6 @@ export function DiagramPane({
         ) {
           return;
         }
-        if (isDiagramSubmitMessage(event.data)) {
-          handleSubmit(event.data.model, event.data.html);
-          return;
-        }
-        if (isDiagramAutosaveMessage(event.data)) {
-          handleAutosave(event.data.model, event.data.html, response => {
-            channel.port1.postMessage({
-              type: "ark:diagram-autosave-result",
-              ...response,
-            });
-          });
-          return;
-        }
-        const commentParse = parseDiagramCommentPortRequest(event.data);
-        if (commentParse.kind === "invalid") {
-          replyToInvalidDiagramCommentPortRequest(
-            commentParse,
-            result => channel.port1.postMessage(result),
-            setCommentError
-          );
-          return;
-        }
-        if (commentParse.kind === "ignore") return;
-        if (!relPath) {
-          const error = "図のパスがないためコメントを処理できません";
-          channel.port1.postMessage(
-            toDiagramCommentPortResult(commentParse.request.requestId, {
-              ok: false,
-              code: "BAD_REQUEST",
-              error,
-            })
-          );
-          setCommentError(error);
-          return;
-        }
-        void forwardDiagramCommentPortRequest(commentParse.request, {
-          isConnected: readDiagramCommentConnectionState(isConnectedRef),
-          sessionId,
-          relPath,
-          getDiagramComments,
-          createDiagramComment,
-          replyDiagramComment,
-          resolveDiagramComment,
-          deleteDiagramComment,
-          sendDiagramComment,
-          isCurrent: () =>
-            portGenerationRef.current === generation &&
-            portRef.current === channel.port1,
-          reply: result => channel.port1.postMessage(result),
-          onError: setCommentError,
-        });
       };
 
       // targetOrigin に "*" を使う理由:
@@ -1106,19 +702,7 @@ export function DiagramPane({
         channel.port2,
       ]);
     },
-    [
-      createDiagramComment,
-      deleteDiagramComment,
-      getDiagramComments,
-      handleAutosave,
-      handleSubmit,
-      html,
-      relPath,
-      replyDiagramComment,
-      resolveDiagramComment,
-      sendDiagramComment,
-      sessionId,
-    ]
+    [html]
   );
 
   return (
@@ -1161,42 +745,6 @@ export function DiagramPane({
           </div>
         ) : (
           <div className="flex h-full flex-col">
-            {saveError && (
-              <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
-                <span className="flex-1">{saveError}</span>
-                <button
-                  type="button"
-                  className="shrink-0 text-xs underline"
-                  onClick={() => setSaveError(null)}
-                >
-                  閉じる
-                </button>
-              </div>
-            )}
-            {commentError && (
-              <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
-                <span className="flex-1">{commentError}</span>
-                <button
-                  type="button"
-                  className="shrink-0 text-xs underline"
-                  onClick={() => setCommentError(null)}
-                >
-                  閉じる
-                </button>
-              </div>
-            )}
-            {submitError && (
-              <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                <span className="flex-1">{submitError}</span>
-                <button
-                  type="button"
-                  className="shrink-0 text-xs underline"
-                  onClick={() => setSubmitError(null)}
-                >
-                  閉じる
-                </button>
-              </div>
-            )}
             <DiagramViewport
               relPath={relPath}
               html={html}

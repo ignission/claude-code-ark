@@ -8,14 +8,17 @@ export const DIAGRAM_KEYNAV_LAYER_MARKER = "ark-diagram-keynav-layer";
  * ボードの iframe は sandbox で出どころが別なので、図をクリックしたあとのキーは
  * 親の window に届かず、親は中の document にも触れない (端末の iframe は同じ出どころ
  * なので、親が直接リスナーを付けている)。ここで前置キーだけを横取りして親へ知らせ、
- * ほかのキーには触らない (doc の本文の編集やコメントの入力を変えない)。
+ * ほかのキーには触らない (図の中の入力を変えない)。
  * ノーマルモードの間は親がフォーカスを持つので、j / k などは親が受けて、
  * 「どれだけ送るか」だけをここへ送ってくる。
  *
+ * ピンチ (トラックパッドの Ctrl+ホイールと、2 本指のタッチ) も同じ理由で親に届かないので、
+ * ここで量だけを親へ送り、拡大縮小は親が iframe ごと行う (DiagramPane.tsx)。
+ *
  * 前置キーの判定は web の `isLeaderKey` (lib/keynav.ts) と同じにする。
- * port と `data-ark-harness-ui="1"` の扱いはリンク層 (diagram-link-layer.ts) と同じ。
+ * port の扱いはリンク層 (diagram-link-layer.ts) と同じ。
  */
-export const KEYNAV_LAYER = `<script id="${DIAGRAM_KEYNAV_LAYER_MARKER}" data-ark-harness-ui="1">
+export const KEYNAV_LAYER = `<script id="${DIAGRAM_KEYNAV_LAYER_MARKER}">
 (function(){
   "use strict";
   var port=null;
@@ -41,6 +44,33 @@ export const KEYNAV_LAYER = `<script id="${DIAGRAM_KEYNAV_LAYER_MARKER}" data-ar
     event.stopPropagation();
     port.postMessage({type:"ark:diagram-keynav-leader"});
   },true);
+  window.addEventListener("wheel",function(event){
+    if(!event.ctrlKey||!port)return;
+    event.preventDefault();
+    port.postMessage({type:"ark:diagram-pinch",deltaY:event.deltaY,clientX:event.clientX,clientY:event.clientY});
+  },{passive:false});
+  var pinchDistance=null;
+  function touchDistance(event){
+    var a=event.touches[0],b=event.touches[1];
+    return Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+  }
+  function resetPinch(){pinchDistance=null;}
+  window.addEventListener("touchstart",function(event){
+    if(!port||event.touches.length!==2){resetPinch();return;}
+    pinchDistance=touchDistance(event);
+    event.preventDefault();
+  },{passive:false});
+  window.addEventListener("touchmove",function(event){
+    if(!port||event.touches.length!==2){resetPinch();return;}
+    var next=touchDistance(event);
+    event.preventDefault();
+    if(pinchDistance===null){pinchDistance=next;return;}
+    var deltaY=-400*Math.log(next/pinchDistance);
+    pinchDistance=next;
+    if(Number.isFinite(deltaY)&&deltaY!==0)port.postMessage({type:"ark:diagram-pinch",deltaY:deltaY});
+  },{passive:false});
+  window.addEventListener("touchend",resetPinch,{passive:false});
+  window.addEventListener("touchcancel",resetPinch,{passive:false});
   window.addEventListener("message",function(event){
     if(port||!event.data||event.data.type!=="ark:diagram-init"||!event.ports||!event.ports[0])return;
     port=event.ports[0];

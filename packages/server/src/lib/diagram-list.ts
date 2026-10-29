@@ -2,13 +2,9 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import type {
-  DiagramKind,
-  DiagramListItem,
-  DiagramListResponse,
-} from "@ark/shared";
+import type { DiagramListItem, DiagramListResponse } from "@ark/shared";
 import { DIAGRAM_DIR } from "./diagram-path.js";
-import { readDiagramModel } from "./diagram-reader.js";
+import { readDiagramTitle } from "./diagram-reader.js";
 import { errnoCode, errnoMessage } from "./errors.js";
 
 const DIAGRAM_SUFFIX = ".diagram.html";
@@ -62,21 +58,13 @@ async function collectDiagramCandidates(
   return candidates;
 }
 
-/** モデルの type を、一覧に出す種類に直す (graph の図種と type なしは「図」にまとめる) */
-export function diagramKindOf(type: unknown): DiagramKind {
-  if (type === "deck" || type === "doc") return type;
-  if (type === "sequence" || type === "call-tree") return type;
-  return "graph";
-}
-
 async function readDiagramListItem(
   worktreeReal: string,
   relPath: string,
   trackedPaths: ReadonlySet<string>
 ): Promise<DiagramListItem | null> {
-  const result = await readDiagramModel(worktreeReal, relPath);
+  const result = await readDiagramTitle(worktreeReal, relPath);
   if (!result.ok) return null;
-  const title = result.model.title?.trim();
   // 一覧は更新の新しい順に並べるので、更新日時も返す。読めなくても図は載せる
   let mtimeMs: number | undefined;
   try {
@@ -86,16 +74,15 @@ async function readDiagramListItem(
   }
   return {
     relPath,
-    displayName: title || path.posix.basename(relPath),
+    displayName: result.title ?? path.posix.basename(relPath),
     tracked: trackedPaths.has(relPath),
-    kind: diagramKindOf(result.model.type),
     mtimeMs,
   };
 }
 
 /**
  * realpath 済みの managed worktree から、有効な図だけを決定的な順序で列挙する。
- * 個々の候補は readDiagramModel() の trust boundary を通過した場合だけ公開する。
+ * 個々の候補は readDiagramTitle() の trust boundary を通過した場合だけ公開する。
  */
 export async function listDiagrams(
   worktreeReal: string

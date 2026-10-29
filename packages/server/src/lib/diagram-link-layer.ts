@@ -6,17 +6,13 @@ export const DIAGRAM_LINK_LAYER_MARKER = "ark-diagram-link-layer";
  * ボード内の <a href> を横取りして親へ渡す層。
  *
  * sandbox="allow-scripts" の iframe で <a> をそのまま踏むと iframe ごと遷移し、
- * DiagramPane はそれを「別ページへの遷移」と見てコメント層との接続を切る。
+ * DiagramPane はそれを「別ページへの遷移」と見て親との接続を切る。
  * ここで遷移を止め、href の生の値だけを親へ送る。解釈 (worktree 相対パスか、
  * 外部 URL か) は親 (DiagramPane) が行う。
  *
  * port は他の層と同じく window の ark:diagram-init で受け取り、共有する。
- *
- * `data-ark-harness-ui="1"` は必須。doc 編集層と graph ハーネスは保存する HTML から
- * この属性を持つ要素を落とすので、付け忘れるとボードを編集・保存したときに
- * この層が利用者のファイルへ焼き付き、以後 marker があるせいで注入も止まる。
  */
-export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}" data-ark-harness-ui="1">
+export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}">
 (function(){
   "use strict";
   var port=null;
@@ -37,7 +33,7 @@ export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}" data-ark-ha
     if(href==null)return;
     if(href.charAt(0)==="#")return;
     event.preventDefault();
-    // doc の本文は選択してコメント・編集する。リンクの上で選択を終えたクリックで
+    // 本文は選択してコピーする。リンクの上で選択を終えたクリックで
     // 飛んでしまうと選択が使えないので、選択が残っているときは開かない
     // (遷移だけは止める)
     if(hasTextSelection())return;
@@ -80,7 +76,7 @@ function getMinifiedLinkLayer(): string {
 
 // 注入済みの判定は marker の bare な includes() ではなく、実際に注入された
 // <script id="..."> タグの有無で行う。本文に marker の語が書かれているだけの
-// 板が無言で二度と注入されなくなる事故を避ける (doc editor と同じ堅さ)
+// 板が無言で二度と注入されなくなる事故を避ける
 const INJECTED_SCRIPT_RE = new RegExp(
   `<script[^>]*\\bid=["']${DIAGRAM_LINK_LAYER_MARKER}["']`,
   "i"

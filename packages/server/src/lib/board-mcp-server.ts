@@ -17,25 +17,14 @@
  * - registry に登録された token のみ許可する
  */
 
-import fs from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import type {
-  DiagramCommentsResponse,
-  DiagramCommentThread,
-  Todo,
-} from "@ark/shared";
+import type { Todo } from "@ark/shared";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import { z } from "zod";
 import { getErrorMessage } from "./errors.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const AUTHORING_GUIDE_FILENAME = "diagram-authoring-guide.md";
-const AUTHORING_GUIDE_SOURCE_PATH = ".claude/skills/diagram-authoring/SKILL.md";
 
 /** text content だけの CallToolResult を生成するヘルパー */
 function textResult(text: string) {
@@ -71,30 +60,14 @@ export interface BoardMcpDeps {
   /** この worktree の未完了の TODO */
   listTodos(worktreePath: string): Promise<Todo[]>;
   /**
-   * 図ファイルをボードペインで開かせる（B-0a）。
-   * 実際に readDiagram で読めることを確認してから開かせる（403/404/422 の
+   * 図ファイルをボードペインで開かせる。
+   * 実際に readDiagram で読めることを確認してから開かせる（403/404 の
    * 理由をそのまま呼び出し元 = Claude に返す）ため非同期。
    */
   openDiagram(
     worktreePath: string,
     relPath: string
-  ): Promise<{ ok: boolean; error?: string; notices?: string[] }>;
-  /** コメントを走査する図候補を worktree 相対パスで返す。 */
-  listDiagramPaths(worktreePath: string): Promise<string[]>;
-  /** doc/anchor trust boundary を通して sidecar を読む。 */
-  getDiagramComments(
-    worktreePath: string,
-    relPath: string
-  ): Promise<DiagramCommentsResponse>;
-  /** doc/anchor trust boundary を通して既存 thread へ返信する。 */
-  replyDiagramComment(
-    worktreePath: string,
-    relPath: string,
-    threadId: string,
-    input: { body: string; author: "claude" }
-  ): Promise<DiagramCommentsResponse>;
-  /** `.diagram.html` の作図・文書規約を返す。 */
-  readAuthoringGuide?(): Promise<string>;
+  ): Promise<{ ok: boolean; error?: string }>;
 }
 
 export interface BoardOpenInput {
@@ -104,94 +77,6 @@ export interface BoardOpenInput {
 export interface BoardOpenResult {
   ok: boolean;
   error?: string;
-  /** 開けたが、書いた側に直してほしいこと（表だけのデッキのページなど） */
-  notices?: string[];
-}
-
-export interface BoardCommentsInput {
-  path?: string;
-  includeResolved?: boolean;
-}
-
-export interface BoardReplyInput {
-  path: string;
-  threadId: string;
-  body: string;
-}
-
-type BoardCommentThread = Pick<
-  DiagramCommentThread,
-  | "id"
-  | "anchorId"
-  | "anchorText"
-  | "anchorQuote"
-  | "anchorOccurrence"
-  | "status"
-> & {
-  messages: Array<{ at: string; body: string; author?: string }>;
-};
-
-export type BoardCommentsResult = {
-  diagrams: Array<
-    | { path: string; threads: BoardCommentThread[] }
-    | { path: string; error: string }
-  >;
-};
-
-/**
- * 明示された同梱パス、server の配布物、リポジトリの正本の順で作図規約を読む。
- * runtimeDir はパス解決テストで差し替えるための引数。
- */
-export async function readDiagramAuthoringGuide(
-  runtimeDir = __dirname,
-  authoringGuidePath?: string
-): Promise<string> {
-  let configuredError: unknown;
-  if (authoringGuidePath) {
-    try {
-      return await fs.promises.readFile(authoringGuidePath, "utf-8");
-    } catch (error) {
-      configuredError = error;
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw new Error(
-          `作図規約を読み出せません: ${authoringGuidePath}: ${getErrorMessage(error)}`
-        );
-      }
-    }
-  }
-
-  const distributedPath = path.resolve(
-    runtimeDir,
-    path.basename(runtimeDir) === "lib" ? ".." : ".",
-    AUTHORING_GUIDE_FILENAME
-  );
-  let distributedError: unknown;
-  try {
-    return await fs.promises.readFile(distributedPath, "utf-8");
-  } catch (error) {
-    distributedError = error;
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw new Error(
-        `作図規約を読み出せません: ${distributedPath}: ${getErrorMessage(error)}`
-      );
-    }
-  }
-
-  const sourcePath = path.resolve(
-    runtimeDir,
-    "../../../..",
-    AUTHORING_GUIDE_SOURCE_PATH
-  );
-  try {
-    return await fs.promises.readFile(sourcePath, "utf-8");
-  } catch (sourceError) {
-    const configuredDetail = authoringGuidePath
-      ? `同梱指定 ${authoringGuidePath}: ${getErrorMessage(configuredError)} / `
-      : "";
-    throw new Error(
-      `作図規約を読み出せません。${configuredDetail}配布用 ${distributedPath}: ${getErrorMessage(distributedError)} / 正本 ${sourcePath}: ${getErrorMessage(sourceError)}`
-    );
-  }
 }
 
 /** board_open の純ロジック（HTTP/MCP から分離してテスト可能にする）。 */
@@ -201,66 +86,6 @@ export async function handleBoardOpen(
   input: BoardOpenInput
 ): Promise<BoardOpenResult> {
   return deps.openDiagram(worktreePath, input.path);
-}
-
-/** board_comments の純ロジック（HTTP/MCP から分離してテスト可能にする）。 */
-export async function handleBoardComments(
-  deps: Pick<BoardMcpDeps, "listDiagramPaths" | "getDiagramComments">,
-  worktreePath: string,
-  input: BoardCommentsInput
-): Promise<BoardCommentsResult> {
-  const paths = input.path
-    ? [input.path]
-    : await deps.listDiagramPaths(worktreePath);
-  const diagrams: BoardCommentsResult["diagrams"] = [];
-
-  for (const relPath of paths) {
-    let response: DiagramCommentsResponse;
-    try {
-      response = await deps.getDiagramComments(worktreePath, relPath);
-    } catch (error) {
-      diagrams.push({ path: relPath, error: getErrorMessage(error) });
-      continue;
-    }
-    if (!response.ok) {
-      diagrams.push({ path: relPath, error: response.error });
-      continue;
-    }
-    const threads = response.comments.threads
-      .filter(thread => input.includeResolved || thread.status === "open")
-      .map(thread => ({
-        id: thread.id,
-        anchorId: thread.anchorId,
-        anchorText: thread.anchorText,
-        ...(thread.anchorQuote === undefined
-          ? {}
-          : { anchorQuote: thread.anchorQuote }),
-        ...(thread.anchorOccurrence === undefined
-          ? {}
-          : { anchorOccurrence: thread.anchorOccurrence }),
-        status: thread.status,
-        messages: thread.messages.map(message => ({
-          at: message.at,
-          body: message.body,
-          ...(message.author === undefined ? {} : { author: message.author }),
-        })),
-      }));
-    if (threads.length > 0) diagrams.push({ path: relPath, threads });
-  }
-
-  return { diagrams };
-}
-
-/** board_reply の純ロジック。投稿者はモデル入力ではなく server 側で固定する。 */
-export async function handleBoardReply(
-  deps: Pick<BoardMcpDeps, "replyDiagramComment">,
-  worktreePath: string,
-  input: BoardReplyInput
-): Promise<DiagramCommentsResponse> {
-  return deps.replyDiagramComment(worktreePath, input.path, input.threadId, {
-    body: input.body,
-    author: "claude",
-  });
 }
 
 /** todo_add の純ロジック。完了・削除は人間だけが行うので、ツールは足すことしかできない */
@@ -290,44 +115,6 @@ export async function handleTodoList(
   };
 }
 
-async function collectDiagramPaths(
-  directory: string,
-  relativeParts: string[]
-): Promise<string[]> {
-  const entries = await fs.promises.readdir(directory, { withFileTypes: true });
-  const result: string[] = [];
-  for (const entry of entries) {
-    const childParts = [...relativeParts, entry.name];
-    if (entry.isDirectory()) {
-      result.push(
-        ...(await collectDiagramPaths(
-          path.join(directory, entry.name),
-          childParts
-        ))
-      );
-    } else if (entry.isFile() && entry.name.endsWith(".diagram.html")) {
-      result.push([DIAGRAM_DIR, ...childParts].join("/"));
-    }
-  }
-  return result;
-}
-
-/** DIAGRAM_DIR 配下の図候補を決定的な順序で列挙する。 */
-export async function listDiagramCommentPaths(
-  worktreeReal: string
-): Promise<string[]> {
-  try {
-    const paths = await collectDiagramPaths(
-      path.join(worktreeReal, DIAGRAM_DIR),
-      []
-    );
-    return paths.sort((left, right) => left.localeCompare(right));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-}
-
 /**
  * board_open ツールを登録した McpServer を構築する。
  * stateless transport では request 毎に新しい server を作るため、
@@ -343,8 +130,8 @@ export function createBoardMcpServer(
     "board_open",
     {
       description:
-        `生成した図ファイル (${DIAGRAM_DIR}/*.diagram.html) をこのセッションのボードペインで開かせる。` +
-        "図を Write/Edit で書いた直後に呼ぶこと。path は worktree 相対で指定する。",
+        `書いた HTML (${DIAGRAM_DIR}/*.diagram.html) をこのセッションのボードペインで開かせる。` +
+        "書いた直後に呼ぶこと。path は worktree 相対で指定する。",
       inputSchema: {
         path: z
           .string()
@@ -360,102 +147,11 @@ export function createBoardMcpServer(
         });
         return textResult(
           res.ok
-            ? JSON.stringify(
-                res.notices && res.notices.length > 0
-                  ? { opened: args.path, notices: res.notices }
-                  : { opened: args.path }
-              )
+            ? JSON.stringify({ opened: args.path })
             : `board_open 失敗: ${res.error ?? "不明なエラー"}`
         );
       } catch (e) {
         return textResult(`board_open 失敗: ${getErrorMessage(e)}`);
-      }
-    }
-  );
-
-  server.registerTool(
-    "board_comments",
-    {
-      description:
-        "ボード（文書型の図）に付いた未解決コメントを読む。ユーザーが「コメントした」「図を見て」と言ったとき、または図のレビューを依頼されたときに呼ぶ。author が無いメッセージは人間が書いたものである。",
-      inputSchema: {
-        path: z
-          .string()
-          .optional()
-          .describe(
-            `worktree 相対の図ファイルパス（省略時は ${DIAGRAM_DIR} 配下の全図）`
-          ),
-        includeResolved: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe("解決済みスレッドも含める"),
-      },
-    },
-    async args => {
-      try {
-        const result = await handleBoardComments(deps, worktreePath, {
-          ...(args.path === undefined ? {} : { path: args.path }),
-          includeResolved: args.includeResolved,
-        });
-        return textResult(JSON.stringify(result));
-      } catch (error) {
-        return textResult(
-          JSON.stringify({
-            diagrams: [],
-            error: `board_comments 失敗: ${getErrorMessage(error)}`,
-          })
-        );
-      }
-    }
-  );
-
-  server.registerTool(
-    "board_authoring_guide",
-    {
-      description:
-        ".diagram.html を書く前に必ず呼ぶ。図・文書の生成規約（type と kind の語彙、data-ark-id の対応、label の書き方、figure のキャプション）を返す。",
-      inputSchema: {},
-    },
-    async () => {
-      try {
-        const guide = await (
-          deps.readAuthoringGuide ?? readDiagramAuthoringGuide
-        )();
-        return textResult(guide);
-      } catch (error) {
-        return textResult(
-          `board_authoring_guide 失敗: ${getErrorMessage(error)}`
-        );
-      }
-    }
-  );
-
-  server.registerTool(
-    "board_reply",
-    {
-      description:
-        "board_comments で読んだコメントに返信する。返信はボード上のカードに表示され、人間がそこで読む。文書を直した場合はその旨も書くこと。",
-      inputSchema: {
-        path: z.string().describe("worktree 相対の図ファイルパス"),
-        threadId: z.string().describe("board_comments が返した thread ID"),
-        body: z.string().describe("人間へ返す返信本文"),
-      },
-    },
-    async args => {
-      try {
-        const response = await handleBoardReply(deps, worktreePath, {
-          path: args.path,
-          threadId: args.threadId,
-          body: args.body,
-        });
-        return textResult(
-          response.ok
-            ? JSON.stringify({ replied: args.threadId })
-            : `board_reply 失敗: ${response.error}`
-        );
-      } catch (error) {
-        return textResult(`board_reply 失敗: ${getErrorMessage(error)}`);
       }
     }
   );

@@ -65,7 +65,17 @@ function loadLayer() {
     return prevented;
   };
   const receive = (data: unknown) => onPortMessage?.({ data });
-  return { init, press, receive, sent, scrolls };
+  const fire = (type: string, event: Record<string, unknown>) => {
+    let prevented = false;
+    listeners[`window:${type}`]?.({
+      ...event,
+      preventDefault: () => {
+        prevented = true;
+      },
+    });
+    return prevented;
+  };
+  return { init, press, receive, fire, sent, scrolls };
 }
 
 describe("前置キー", () => {
@@ -83,7 +93,7 @@ describe("前置キー", () => {
     ]);
   });
 
-  it("ほかのキーには触らない (本文の編集やコメントの入力を変えない)", () => {
+  it("ほかのキーには触らない (図の中の入力を変えない)", () => {
     const layer = loadLayer();
     layer.init();
     expect(layer.press({ key: ";" })).toBe(false);
@@ -121,17 +131,47 @@ describe("親からの送りの指示", () => {
   it("ほかの層あての通知では動かない", () => {
     const layer = loadLayer();
     layer.init();
-    layer.receive({ type: "ark:diagram-comments-changed" });
+    layer.receive({ type: "ark:diagram-other" });
     layer.receive(null);
     expect(layer.scrolls).toEqual([]);
   });
 });
 
+describe("ピンチ", () => {
+  it("Ctrl+ホイールの量と位置を親へ送り、ページの拡大は止める", () => {
+    const layer = loadLayer();
+    layer.init();
+    expect(
+      layer.fire("wheel", { ctrlKey: true, deltaY: 10, clientX: 5, clientY: 7 })
+    ).toBe(true);
+    expect(layer.fire("wheel", { ctrlKey: false, deltaY: 10 })).toBe(false);
+    expect(layer.sent).toEqual([
+      { type: "ark:diagram-pinch", deltaY: 10, clientX: 5, clientY: 7 },
+    ]);
+  });
+
+  it("2 本指の距離の変化を量にして送る", () => {
+    const layer = loadLayer();
+    layer.init();
+    const touches = (distance: number) => ({
+      touches: [
+        { clientX: 0, clientY: 0 },
+        { clientX: distance, clientY: 0 },
+      ],
+    });
+    layer.fire("touchstart", touches(100));
+    layer.fire("touchmove", touches(200));
+    expect(layer.sent).toHaveLength(1);
+    const [message] = layer.sent as Array<{ type: string; deltaY: number }>;
+    expect(message.type).toBe("ark:diagram-pinch");
+    expect(message.deltaY).toBeCloseTo(-400 * Math.log(2));
+  });
+});
+
 describe("注入", () => {
-  it("</body> の直前へ 1 回だけ入れ、保存で落ちる印を持つ", () => {
+  it("</body> の直前へ 1 回だけ入れる", () => {
     const once = injectDiagramKeynavLayer(minimalDoc);
     expect(once).toContain(`id="${DIAGRAM_KEYNAV_LAYER_MARKER}"`);
-    expect(once).toContain('data-ark-harness-ui="1"');
     expect(once.indexOf(DIAGRAM_KEYNAV_LAYER_MARKER)).toBeLessThan(
       once.indexOf("</body>")
     );

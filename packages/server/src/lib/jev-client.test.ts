@@ -4,7 +4,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFERRED_QUESTIONS,
-  decideBoardSuggestion,
   decideDeferredTopic,
   type FetchLike,
   JEV_DECISIONS_ENDPOINT,
@@ -53,50 +52,35 @@ describe("loadOpenRouterApiKey", () => {
   });
 });
 
-describe("decideBoardSuggestion", () => {
-  it("Decisions API に noul を送り、確率を取り出す", async () => {
-    const fetchImpl = fakeFetch({
-      answers: { board: { type: "noul", noul: 0.88 } },
-      usage: { cost: 0.00002 },
-    });
-    const decision = await decideBoardSuggestion("本文", "sk-test", fetchImpl);
-    expect(decision).toEqual({ board: 0.88, cost: 0.00002 });
+describe("Decisions API の呼び出し", () => {
+  it("model と data_collection: deny を送る", async () => {
+    const fetchImpl = fakeFetch({ answers: { deferred: { noul: 0.1 } } });
+    await decideDeferredTopic("q", "a", "sk-test", fetchImpl);
     const request = fetchImpl.calls[0] as Record<string, unknown>;
     expect(request.model).toBe(JEV_MODEL);
-    expect(request.state).toBe("本文");
     expect(request.provider).toEqual({ data_collection: "deny" });
-    expect(Object.keys(request.questions as object)).toEqual(["board"]);
     expect(JEV_DECISIONS_ENDPOINT).toContain("/api/alpha/decisions");
-  });
-
-  it("本文は末尾の JEV_MAX_STATE_CHARS 文字だけ送る", async () => {
-    const fetchImpl = fakeFetch({
-      answers: { board: { noul: 0.1 } },
-    });
-    const text = "a".repeat(JEV_MAX_STATE_CHARS + 100);
-    await decideBoardSuggestion(text, "sk-test", fetchImpl);
-    const request = fetchImpl.calls[0] as { state: string };
-    expect(request.state.length).toBe(JEV_MAX_STATE_CHARS);
   });
 
   it("HTTP エラーと想定外の応答は throw する", async () => {
     await expect(
-      decideBoardSuggestion("x", "sk", fakeFetch({ error: "nope" }, 401))
+      decideDeferredTopic("q", "a", "sk", fakeFetch({ error: "nope" }, 401))
     ).rejects.toThrow(/Jev HTTP 401/);
     await expect(
-      decideBoardSuggestion(
-        "x",
+      decideDeferredTopic(
+        "q",
+        "a",
         "sk",
-        fakeFetch({ answers: { board: { noul: 2 } } })
+        fakeFetch({ answers: { deferred: { noul: 2 } } })
       )
     ).rejects.toThrow(/想定外/);
     const fetchAbort = (async (_url: string, init: { signal: AbortSignal }) => {
       expect(init.signal).toBeInstanceOf(AbortSignal);
       return { ok: true, status: 200, text: async () => "{}" };
     }) as FetchLike;
-    await expect(decideBoardSuggestion("x", "sk", fetchAbort)).rejects.toThrow(
-      /想定外/
-    );
+    await expect(
+      decideDeferredTopic("q", "a", "sk", fetchAbort)
+    ).rejects.toThrow(/想定外/);
     vi.restoreAllMocks();
   });
 });

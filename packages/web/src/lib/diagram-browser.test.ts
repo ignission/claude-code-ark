@@ -16,21 +16,18 @@ const items: DiagramListItem[] = [
     relPath: ".claude/diagrams/login.diagram.html",
     displayName: "ログインの流れ",
     tracked: false,
-    kind: "sequence",
     mtimeMs: at(2026, 10, 9, 12),
   },
   {
     relPath: ".claude/diagrams/palette.diagram.html",
     displayName: "コマンドパレット",
     tracked: false,
-    kind: "deck",
     mtimeMs: at(2026, 10, 10, 19, 2),
   },
   {
     relPath: ".claude/diagrams/design/memo.diagram.html",
     displayName: "設計メモ",
     tracked: true,
-    kind: "doc",
     mtimeMs: at(2026, 10, 7),
   },
   {
@@ -51,15 +48,10 @@ describe("browseDiagrams", () => {
     ]);
   });
 
-  it("名前と種類でも並べられる", () => {
+  it("名前でも並べられる", () => {
     expect(
       names(browseDiagrams(items, "", { key: "name", dir: "asc" }))[0]
     ).toBe("old.diagram.html");
-    expect(
-      browseDiagrams(items, "", { key: "kind", dir: "asc" }).map(
-        item => item.kind ?? "graph"
-      )
-    ).toEqual(["deck", "doc", "sequence", "graph"]);
   });
 
   it("名前とパスの両方で絞り込み、語はすべて含むものだけを残す", () => {

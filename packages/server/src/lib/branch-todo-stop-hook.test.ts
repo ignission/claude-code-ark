@@ -3,15 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  BOARD_SUGGEST_REASON,
-  type BoardSuggestStopDeps,
-  BoardSuggestStopHandler,
   BRANCH_TODO_REASON,
+  type BranchTodoStopDeps,
+  BranchTodoStopHandler,
   extractLastTurn,
   parseStopHookInput,
   readTranscriptTail,
   type StopHookInput,
-} from "./board-suggest-stop-hook.js";
+} from "./branch-todo-stop-hook.js";
 
 const human = (text: string) =>
   JSON.stringify({ type: "user", message: { role: "user", content: text } });
@@ -51,30 +50,9 @@ describe("extractLastTurn", () => {
     ]);
     expect(turn).toEqual({
       text: "前半\n\n後半",
-      openedBoard: false,
       prompt: "今の質問",
       addedTodo: false,
     });
-  });
-
-  it("そのターンで board_open していれば openedBoard を立てる", () => {
-    expect(
-      extractLastTurn([
-        human("q"),
-        tool("mcp__ark-board__board_open"),
-        toolResult(),
-        say("開いた"),
-      ]).openedBoard
-    ).toBe(true);
-    // 前のターンの board_open は数えない
-    expect(
-      extractLastTurn([
-        human("q1"),
-        tool("mcp__ark-board__board_open"),
-        human("q2"),
-        say("a"),
-      ]).openedBoard
-    ).toBe(false);
   });
 
   it("isMeta の行・subagent の行・壊れた行ではターンを区切らない", () => {
@@ -112,6 +90,15 @@ describe("extractLastTurn の prompt と addedTodo", () => {
         say("足した"),
       ]).addedTodo
     ).toBe(true);
+    // 前のターンの todo_add は数えない
+    expect(
+      extractLastTurn([
+        human("q1"),
+        tool("mcp__ark-board__todo_add"),
+        human("q2"),
+        say("a"),
+      ]).addedTodo
+    ).toBe(false);
   });
 });
 
@@ -158,7 +145,7 @@ describe("readTranscriptTail", () => {
   });
 });
 
-describe("BoardSuggestStopHandler", () => {
+describe("BranchTodoStopHandler", () => {
   const input = (over: Partial<StopHookInput> = {}): StopHookInput => ({
     cwd: "/w",
     transcriptPath: "/t.jsonl",
@@ -166,30 +153,31 @@ describe("BoardSuggestStopHandler", () => {
     lastAssistantMessage: "最後",
     ...over,
   });
-  const make = (over: Partial<BoardSuggestStopDeps> = {}) => {
-    const deps: BoardSuggestStopDeps = {
-      enabled: () => true,
+  const make = (over: Partial<BranchTodoStopDeps> = {}) => {
+    const deps: BranchTodoStopDeps = {
       apiKey: () => "sk",
-      threshold: () => 0.7,
-      decide: vi.fn(async () => ({ board: 0.9, cost: 0 })),
       todoEnabled: () => true,
       todoThreshold: () => 0.7,
-      decideDeferred: vi.fn(async () => ({ deferred: 0, cost: 0 })),
+      decideDeferred: vi.fn(async () => ({ deferred: 0.9, cost: 0 })),
       readTranscript: async () => [human("q"), say("長い説明")],
       log: vi.fn(),
       ...over,
     };
-    return { deps, handler: new BoardSuggestStopHandler(deps) };
+    return { deps, handler: new BranchTodoStopHandler(deps) };
   };
 
-  it("閾値以上なら block して作図を頼む", async () => {
+  it("保留ありならTODOのreasonでblockする", async () => {
     const { deps, handler } = make();
     expect(await handler.handle("s1", input())).toEqual({
       decision: "block",
-      reason: BOARD_SUGGEST_REASON,
+      reason: BRANCH_TODO_REASON,
     });
     // hook の時点で transcript に無い最後のメッセージは末尾に補う
-    expect(deps.decide).toHaveBeenCalledWith("長い説明\n\n最後", "sk");
+    expect(deps.decideDeferred).toHaveBeenCalledWith(
+      "q",
+      "長い説明\n\n最後",
+      "sk"
+    );
   });
 
   it("transcript に最後のメッセージが書かれていれば二重にしない", async () => {
@@ -197,44 +185,45 @@ describe("BoardSuggestStopHandler", () => {
       readTranscript: async () => [human("q"), say("前半"), say("最後")],
     });
     await handler.handle("s1", input());
-    expect(deps.decide).toHaveBeenCalledWith("前半\n\n最後", "sk");
+    expect(deps.decideDeferred).toHaveBeenCalledWith("q", "前半\n\n最後", "sk");
   });
 
   it("閾値未満なら止める", async () => {
-    const { handler } = make({ decide: async () => ({ board: 0.5, cost: 0 }) });
+    const { handler } = make({
+      decideDeferred: async () => ({ deferred: 0.5, cost: 0 }),
+    });
     expect(await handler.handle("s1", input())).toBeNull();
   });
 
-  it("block で続けたターン・board_open 済み・無効・鍵なしでは Jev を呼ばない", async () => {
+  it("block で続けたターン・todo_add 済み・無効・鍵なし・発話が読めないときは Jev を呼ばない", async () => {
     for (const [over, inp] of [
       [{}, input({ stopHookActive: true })],
       [
         {
           readTranscript: async () => [
             human("q"),
-            tool("mcp__ark-board__board_open"),
-            say("開いた"),
+            tool("mcp__ark-board__todo_add"),
+            toolResult(),
+            say("足した"),
           ],
         },
         input(),
       ],
-      [{ enabled: () => false }, input()],
+      [{ todoEnabled: () => false }, input()],
       [{ apiKey: () => null }, input()],
+      [
+        {
+          readTranscript: async () => {
+            throw new Error("ENOENT");
+          },
+        },
+        input(),
+      ],
     ] as const) {
       const { deps, handler } = make(over);
       expect(await handler.handle("s1", inp)).toBeNull();
-      expect(deps.decide).not.toHaveBeenCalled();
+      expect(deps.decideDeferred).not.toHaveBeenCalled();
     }
-  });
-
-  it("transcript が読めなければ last_assistant_message で判定する", async () => {
-    const { deps, handler } = make({
-      readTranscript: async () => {
-        throw new Error("ENOENT");
-      },
-    });
-    expect(await handler.handle("s1", input())).not.toBeNull();
-    expect(deps.decide).toHaveBeenCalledWith("最後", "sk");
   });
 
   it("Jev の失敗は投げずに止め、同じセッションの失敗は 1 回だけ出す", async () => {
@@ -242,9 +231,9 @@ describe("BoardSuggestStopHandler", () => {
     const log = vi.fn();
     const { handler } = make({
       log,
-      decide: async () => {
+      decideDeferred: async () => {
         if (fail) throw new Error("timeout");
-        return { board: 0.1, cost: 0 };
+        return { deferred: 0.1, cost: 0 };
       },
     });
     expect(await handler.handle("s1", input())).toBeNull();
@@ -252,97 +241,6 @@ describe("BoardSuggestStopHandler", () => {
     expect(log).toHaveBeenCalledTimes(1);
     fail = false;
     await handler.handle("s1", input());
-    expect(log).toHaveBeenLastCalledWith("s1:board: Jev が回復した");
-  });
-
-  describe("分岐TODO", () => {
-    const boardLow = async () => ({ board: 0.1, cost: 0 });
-    const deferredHigh = async () => ({ deferred: 0.9, cost: 0 });
-
-    it("保留ありならTODOのreasonでblockする", async () => {
-      const { deps, handler } = make({
-        decide: boardLow,
-        decideDeferred: vi.fn(deferredHigh),
-      });
-      expect(await handler.handle("s1", input())).toEqual({
-        decision: "block",
-        reason: BRANCH_TODO_REASON,
-      });
-      expect(deps.decideDeferred).toHaveBeenCalledWith(
-        "q",
-        "長い説明\n\n最後",
-        "sk"
-      );
-    });
-
-    it("両方を超えたらreasonをボード→TODOの順で連結する", async () => {
-      const { handler } = make({ decideDeferred: deferredHigh });
-      expect(await handler.handle("s1", input())).toEqual({
-        decision: "block",
-        reason: `${BOARD_SUGGEST_REASON}\n\n${BRANCH_TODO_REASON}`,
-      });
-    });
-
-    it("todo_addしたターンはTODOのreasonを出さない", async () => {
-      const { deps, handler } = make({
-        decide: boardLow,
-        decideDeferred: vi.fn(deferredHigh),
-        readTranscript: async () => [
-          human("q"),
-          tool("mcp__ark-board__todo_add"),
-          toolResult(),
-          say("足した"),
-        ],
-      });
-      expect(await handler.handle("s1", input())).toBeNull();
-      expect(deps.decideDeferred).not.toHaveBeenCalled();
-    });
-
-    it("分岐TODOが無効ならdecideDeferredを呼ばない", async () => {
-      const { deps, handler } = make({
-        todoEnabled: () => false,
-        decide: boardLow,
-        decideDeferred: vi.fn(deferredHigh),
-      });
-      expect(await handler.handle("s1", input())).toBeNull();
-      expect(deps.decideDeferred).not.toHaveBeenCalled();
-    });
-
-    it("人の発話が読めないターンはdecideDeferredを呼ばない", async () => {
-      const { deps, handler } = make({
-        decide: boardLow,
-        decideDeferred: vi.fn(deferredHigh),
-        readTranscript: async () => {
-          throw new Error("ENOENT");
-        },
-      });
-      expect(await handler.handle("s1", input())).toBeNull();
-      expect(deps.decideDeferred).not.toHaveBeenCalled();
-    });
-
-    it("ボード提案が無効でも分岐TODOは動く", async () => {
-      const { deps, handler } = make({
-        enabled: () => false,
-        decideDeferred: vi.fn(deferredHigh),
-      });
-      expect(await handler.handle("s1", input())).toEqual({
-        decision: "block",
-        reason: BRANCH_TODO_REASON,
-      });
-      expect(deps.decide).not.toHaveBeenCalled();
-      expect(deps.decideDeferred).toHaveBeenCalledTimes(1);
-    });
-
-    it("decideDeferredが失敗してもボードの判定は生きる", async () => {
-      const { handler } = make({
-        decideDeferred: async () => {
-          throw new Error("timeout");
-        },
-      });
-      expect(await handler.handle("s1", input())).toEqual({
-        decision: "block",
-        reason: BOARD_SUGGEST_REASON,
-      });
-    });
+    expect(log).toHaveBeenLastCalledWith("s1: Jev が回復した");
   });
 });
