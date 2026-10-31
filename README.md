@@ -153,7 +153,7 @@ All you provide is Node.js >= 22.12.0 and [tmux](https://github.com/tmux/tmux). 
 - **pnpm**: `start.sh` fetches it when it is not installed.
 - **ttyd**: on Linux, Ark downloads the [official binary](https://github.com/tsl0922/ttyd/releases) into `data/bin/` when it cannot find one, and verifies its sha256. On macOS it tells you to run `brew install ttyd`.
 - **Claude Code**: installed as a dependency, so there is nothing else to install.
-- **Chromium**: optional, used only for HTML screenshots in the file viewer. Ark looks first for one installed by Playwright under `~/.cache/ms-playwright`, then for `chromium-browser`, `chromium` or `google-chrome` on PATH.
+- **Chromium**: optional, used only for HTML screenshots in the file viewer. Ark looks first in Playwright's browser cache (including `PLAYWRIGHT_BROWSERS_PATH`), then for a system Chromium or Chrome.
 - **GitHub CLI (`gh`)**: optional, used only to show pull requests and checks on session rows. Run `gh auth login` as the user that runs the server.
 
 To update, run `git pull` and then `./scripts/start.sh` again; it reinstalls and rebuilds when the commit has changed. Set `PORT` to change the port (default 4001). Run `./scripts/start.sh --help` for the options.
