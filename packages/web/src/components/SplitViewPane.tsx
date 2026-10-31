@@ -85,7 +85,7 @@ import type { Socket } from "socket.io-client";
 import { useOpenTerminalOnAuq } from "@/hooks/useOpenTerminalOnAuq";
 import { cn } from "@/lib/utils";
 import { useStableCallback } from "../hooks/useStableCallback";
-import { focusInput } from "../lib/keynav-dom";
+import { focusInput } from "../lib/focus-input";
 import {
   inputBarToggleLabel,
   resolveSessionHeaderLabels,
@@ -350,7 +350,6 @@ export function SplitViewPane(props: SplitViewPaneProps) {
 
   // 開いたら端末へ、閉じたら会話の入力欄へフォーカスを移す。focusInput は、窓が開いて
   // いれば端末 (フォーカスを受けられなければ窓の枠) を、閉じていれば会話の入力欄を選ぶ
-  // (キーボード操作の `i` と同じ決め方)。
   // 選択が外れて閉じたときは、見えていないペインなのでフォーカスに触らない
   const isActiveRef = useRef(props.isActive);
   isActiveRef.current = props.isActive;
@@ -373,7 +372,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       isActiveRef.current &&
       focused instanceof HTMLElement &&
       root.contains(focused) &&
-      focused.getAttribute("data-keynav") === "terminal-window"
+      focused.getAttribute("data-focus-target") === "terminal-window"
     ) {
       focusInput(root);
     }
@@ -628,7 +627,6 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             閉じている間は左ペインが全幅を使う */}
         <div
           data-testid="split-view-left"
-          data-keynav-region="left"
           style={
             showWorkArea
               ? { width: renderedLeftWidth, flexShrink: 0 }
@@ -758,7 +756,6 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               />
             </button>
             <div
-              data-keynav-region="work"
               className={cn(
                 "panel flex h-full min-w-0 flex-1 flex-col overflow-hidden",
                 isDragging && "pointer-events-none",

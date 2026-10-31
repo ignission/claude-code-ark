@@ -956,7 +956,7 @@ describe("MobileSessionView の端末の窓", () => {
     // 窓そのものは隠れる部分の外にある
     expect(covered.contains(terminalWindowOf(container))).toBe(false);
     expect(document.activeElement).toBe(
-      container.querySelector('[data-keynav="terminal-window"]')
+      container.querySelector('[data-focus-target="terminal-window"]')
     );
 
     click(container.querySelector('button[aria-label="端末を閉じる"]'));

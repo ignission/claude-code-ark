@@ -1,17 +1,9 @@
-import type {
-  FileIndexResponse,
-  ManagedSession,
-  SpecialKey,
-  Todo,
-  Worktree,
-} from "@ark/shared";
+import type { ManagedSession, SpecialKey, Todo, Worktree } from "@ark/shared";
 import { Copy, Loader2, Terminal, WifiOff } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AboutDialog } from "@/components/AboutDialog";
-import { AskWindow } from "@/components/AskWindow";
-import { CommandPalette } from "@/components/CommandPalette";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FilePane } from "@/components/FilePane";
 import { FilePeek, type FilePeekTarget } from "@/components/FilePeek";
@@ -53,7 +45,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useAsk } from "@/hooks/useAsk";
 import { useBridgeSnapshot } from "@/hooks/useBridgeSnapshot";
 import { useFileTabs } from "@/hooks/useFileTabs";
 import { useIsMobile } from "@/hooks/useMobile";
@@ -63,7 +54,6 @@ import { useSocket } from "@/hooks/useSocket";
 import { useTodos } from "@/hooks/useTodos";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { requestChatDraft } from "@/lib/chat-draft-store";
-import { focusInput } from "@/lib/keynav-dom";
 import {
   type ChatViewRequest,
   createChatViewRequest,
@@ -464,62 +454,6 @@ export default function Dashboard() {
       socket.off("diagram:open", onDiagramOpen);
     };
   }, [socket, sessions, openDiagramTab]);
-
-  // コマンドパレットから図を開く (Claude の board_open と同じ開き方)
-  const handleOpenDiagramFromPalette = useCallback(
-    (sessionId: string, worktreePath: string, relPath: string) => {
-      openDiagramTab(sessionId, worktreePath, relPath);
-      setDiagramOpenRequest(previous =>
-        createDiagramOpenRequest(previous, sessionId, relPath)
-      );
-    },
-    [openDiagramTab]
-  );
-
-  // 裏の Claude に聞く (コマンドパレットの「聞く」)。答えは浮かぶウィンドウに出す
-  const ask = useAsk(socket);
-  const [askWindow, setAskWindow] = useState({ open: false, seq: 0 });
-  const openAskWindow = useCallback(
-    () => setAskWindow(current => ({ open: true, seq: current.seq + 1 })),
-    []
-  );
-  const closeAskWindow = useCallback(() => {
-    setAskWindow(current => ({ ...current, open: false }));
-    // 入力モードではフォーカスの行き場が無くなるので、端末 / 会話の入力欄へ戻す
-    // (ノーマルモードのときは、そのままノーマルモードにいる)
-    if (document.documentElement.dataset.keynavMode !== "normal") {
-      focusInput(document);
-    }
-  }, []);
-  const askSend = ask.send;
-  const handleAsk = useCallback(
-    (text: string) => {
-      openAskWindow();
-      askSend(text);
-    },
-    [askSend, openAskWindow]
-  );
-
-  // コマンドパレットがファイルを名前で探すための一覧 (worktree 内の全ファイルのパス)
-  const fetchFileIndex = useCallback(
-    (sessionId: string): Promise<FileIndexResponse> =>
-      new Promise(resolve => {
-        if (!socket) {
-          resolve({ ok: false, error: "サーバーに未接続です" });
-          return;
-        }
-        socket
-          .timeout(10_000)
-          .emit("file:index", { sessionId }, (err, response) =>
-            resolve(
-              err || !response
-                ? { ok: false, error: "サーバーから応答がありません" }
-                : response
-            )
-          );
-      }),
-    [socket]
-  );
 
   useEffect(() => {
     if (!socket) return;
@@ -1059,35 +993,6 @@ export default function Dashboard() {
         />
       ) : (
         <SidebarMainLayout
-          overlay={
-            <CommandPalette
-              sessions={sessions}
-              worktrees={worktrees}
-              repoList={repoList}
-              sessionStatuses={sessionStatuses}
-              worktreeDisplayNames={worktreeDisplayNames}
-              selectedSessionId={selectedSessionId}
-              listDiagrams={listDiagrams}
-              fetchFileIndex={fetchFileIndex}
-              onSelectSession={handleSelectSession}
-              onOpenDiagram={handleOpenDiagramFromPalette}
-              onOpenFile={handleOpenFileLink}
-              onAsk={handleAsk}
-              onOpenAskWindow={openAskWindow}
-            />
-          }
-          floating={
-            askWindow.open && (
-              <AskWindow
-                state={ask.state}
-                sendError={ask.sendError}
-                focusSeq={askWindow.seq}
-                onSend={ask.send}
-                onReset={ask.reset}
-                onClose={closeAskWindow}
-              />
-            )
-          }
           sidebar={
             <SessionSidebar
               sessions={sessions}
