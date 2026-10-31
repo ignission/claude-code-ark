@@ -1,6 +1,6 @@
 /**
  * Quick Tunnel のトークンは URL のクエリで届く。Socket.IO は handshake の auth に、
- * 生の WebSocket (リモート画面、ブラウザ機能) は upgrade リクエストのクエリに載せる。
+ * 生の WebSocket (リモート画面) は upgrade リクエストのクエリに載せる。
  */
 
 export function getAuthToken(): string | null {

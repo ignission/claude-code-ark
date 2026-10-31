@@ -584,7 +584,9 @@ describe("SplitChatPane: 端末の帯", () => {
       liveTail: text,
       onOpenTerminal: vi.fn(),
     });
-    const scroller = container.querySelector('[data-keynav="chat-scroll"]');
+    const scroller = container.querySelector(
+      '[data-testid="chat-scroll-content"]'
+    )?.parentElement;
     const textarea = container.querySelector(
       'textarea[aria-label="メッセージ"]'
     );

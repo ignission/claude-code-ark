@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  DIAGRAM_KEYNAV_LAYER_MARKER,
-  injectDiagramKeynavLayer,
-  KEYNAV_LAYER,
-} from "./diagram-keynav-layer.js";
-import {
   DIAGRAM_LINK_LAYER_MARKER,
   injectDiagramLinkLayer,
   LINK_LAYER,
 } from "./diagram-link-layer.js";
+import {
+  DIAGRAM_PINCH_LAYER_MARKER,
+  injectDiagramPinchLayer,
+  PINCH_LAYER,
+} from "./diagram-pinch-layer.js";
 import { createCachedMinifier } from "./injected-minify.js";
 
 const byteLength = (value: string) => Buffer.byteLength(value, "utf8");
@@ -16,38 +16,33 @@ const occurrences = (value: string, token: string) =>
   value.split(token).length - 1;
 
 describe("注入コードの minify", () => {
-  it("リンク層とキーの層をソースより小さくする", () => {
+  it("リンク層とピンチの層をソースより小さくする", () => {
     expect(byteLength(injectDiagramLinkLayer(""))).toBeLessThan(
       byteLength(LINK_LAYER)
     );
-    expect(byteLength(injectDiagramKeynavLayer(""))).toBeLessThan(
-      byteLength(KEYNAV_LAYER)
+    expect(byteLength(injectDiagramPinchLayer(""))).toBeLessThan(
+      byteLength(PINCH_LAYER)
     );
   });
 
   it("marker と port protocol を minify 後も維持する", () => {
     const link = injectDiagramLinkLayer("");
-    const keynav = injectDiagramKeynavLayer("");
+    const pinch = injectDiagramPinchLayer("");
 
     expect(occurrences(link, DIAGRAM_LINK_LAYER_MARKER)).toBe(1);
-    expect(occurrences(keynav, DIAGRAM_KEYNAV_LAYER_MARKER)).toBe(1);
+    expect(occurrences(pinch, DIAGRAM_PINCH_LAYER_MARKER)).toBe(1);
     for (const protocol of ["ark:diagram-init", "ark:diagram-open-link"]) {
       expect(link).toContain(protocol);
     }
-    for (const protocol of [
-      "ark:diagram-init",
-      "ark:diagram-keynav-leader",
-      "ark:diagram-keynav-scroll",
-      "ark:diagram-pinch",
-    ]) {
-      expect(keynav).toContain(protocol);
+    for (const protocol of ["ark:diagram-init", "ark:diagram-pinch"]) {
+      expect(pinch).toContain(protocol);
     }
   });
 
   it("minify 後も CSP 禁止 token を含まない", () => {
     for (const injected of [
       injectDiagramLinkLayer(""),
-      injectDiagramKeynavLayer(""),
+      injectDiagramPinchLayer(""),
     ]) {
       for (const forbidden of [
         "fetch(",
