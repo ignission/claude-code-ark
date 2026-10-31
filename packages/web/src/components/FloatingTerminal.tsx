@@ -26,11 +26,8 @@
  *   開いたあと・閉じたあとのフォーカスの移し先は、呼び出し側が `onOpened` / `onClosed` で決める
  * - 窓の枠はフォーカスを受けられる (`tabIndex={-1}`)。端末のiframeがまだ無いときに、
  *   後ろの入力欄へキーが流れないよう、フォーカスの置き場にする (探す目印は
- *   `data-keynav="terminal-window"`。使うのは keynav-dom.ts の `focusInput`)
- * - キーボード操作の層 (KeyNavLayer) には、アプリのダイアログとして数えさせない
- *   (`data-keynav-nonmodal`)。数えさせると、開いている間は前置キーが効かなくなり、
- *   端末の中からノーマルモードへ出て窓を閉じることができない。
- *   `role="dialog"` は開いている間だけ付ける (セッションの数だけ常にマウントされるため)
+ *   `data-focus-target="terminal-window"`。使うのは focus-input.ts の `focusInput`)
+ * - `role="dialog"` は開いている間だけ付ける (セッションの数だけ常にマウントされるため)
  */
 
 import { X } from "lucide-react";
@@ -133,8 +130,7 @@ export function FloatingTerminal({
       {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-label は role="dialog" と同じ条件 (開いている間) でだけ付く */}
       <div
         data-testid="floating-terminal-window"
-        data-keynav-nonmodal=""
-        data-keynav="terminal-window"
+        data-focus-target="terminal-window"
         tabIndex={-1}
         role={open ? "dialog" : undefined}
         aria-label={open ? title : undefined}

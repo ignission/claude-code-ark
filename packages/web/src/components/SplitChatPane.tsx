@@ -1943,7 +1943,7 @@ export function SplitChatPane({
             aria-label={label}
             // 添付の途中で送ると、あとから入力欄に足される @path が届かない
             disabled={uploadingCount > 0}
-            title={`${label} (入力欄の文が対象。Ctrl+; → ${action === "diagram" ? "d" : "T"})`}
+            title={`${label} (入力欄の文が対象)`}
           >
             <Icon className="size-5" />
           </button>
@@ -1955,7 +1955,7 @@ export function SplitChatPane({
         onChange={e => setInputValue(e.target.value)}
         onKeyDown={handleKeyDown}
         onPaste={onUploadFile ? handlePaste : undefined}
-        data-keynav="chat-input"
+        data-focus-target="chat-input"
         aria-label="メッセージ"
         placeholder={
           isMobile
@@ -2011,7 +2011,6 @@ export function SplitChatPane({
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: キーボード利用者は Tab で入力欄 (textarea) に直接到達できるため、キーハンドラは不要 */}
         <div
           ref={jsonlScrollRef}
-          data-keynav="chat-scroll"
           onClick={handleConversationClick}
           className="absolute inset-0 overflow-y-auto"
         >

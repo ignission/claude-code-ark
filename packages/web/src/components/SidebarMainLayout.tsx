@@ -20,7 +20,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { KeyNavLayer } from "@/components/KeyNavLayer";
 import {
   clampSidebarWidth,
   LAYOUT_PADDING_WIDTH,
@@ -30,10 +29,6 @@ import {
 interface SidebarMainLayoutProps {
   sidebar: ReactNode;
   main: ReactNode;
-  /** 画面全体に重ねるもの (コマンドパレット) */
-  overlay?: ReactNode;
-  /** 画面の上に浮かべるもの (聞くウィンドウ)。後ろの操作は妨げない */
-  floating?: ReactNode;
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
 }
@@ -46,8 +41,6 @@ function viewportWidth(): number {
 export function SidebarMainLayout({
   sidebar,
   main,
-  overlay,
-  floating,
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
 }: SidebarMainLayoutProps) {
@@ -130,17 +123,11 @@ export function SidebarMainLayout({
   return (
     <div className="app-wallpaper h-[100dvh] flex relative gap-2 p-2">
       {resizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
-      <KeyNavLayer />
-      {overlay}
-      {floating}
       <div
         className="shrink-0 relative flex flex-col"
         style={{ width: `${sidebarWidth}px` }}
       >
-        <div
-          data-keynav-region="sidebar"
-          className="panel-glass flex-1 min-h-0 overflow-hidden"
-        >
+        <div className="panel-glass flex-1 min-h-0 overflow-hidden">
           {sidebar}
         </div>
         {/* biome-ignore lint/a11y/noStaticElementInteractions: リサイズハンドルはマウス操作専用 */}

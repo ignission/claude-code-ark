@@ -20,8 +20,8 @@ vi.mock("./injected-minify.js", () => ({
   },
 }));
 
-import { injectDiagramKeynavLayer } from "./diagram-keynav-layer.js";
 import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
+import { injectDiagramPinchLayer } from "./diagram-pinch-layer.js";
 
 describe("注入 payload の遅延生成", () => {
   it("import しただけでは圧縮せず、初回注入時に 1 度だけ走る", () => {
@@ -34,9 +34,9 @@ describe("注入 payload の遅延生成", () => {
     injectDiagramLinkLayer("");
     expect(minified).toEqual(["js"]);
 
-    injectDiagramKeynavLayer("");
+    injectDiagramPinchLayer("");
     expect(minified).toEqual(["js", "js"]);
-    injectDiagramKeynavLayer("");
+    injectDiagramPinchLayer("");
     expect(minified).toEqual(["js", "js"]);
   });
 });

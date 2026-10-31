@@ -3,8 +3,6 @@
  *
  * どちらも Claude への普通のメッセージとして送る (ボードと TODO の使い方は
  * SessionStart hook が伝えてある)。入力欄に文があれば、それを対象として前に置く。
- * ノーマルモードの `d` / `T` とコマンドパレットは、ボタンを aria-label で押す
- * (keynav-dom.ts)。
  */
 
 export type ChatQuickAction = "diagram" | "todo";

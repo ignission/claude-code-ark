@@ -107,7 +107,6 @@ describe("FloatingTerminal", () => {
       dialog?.querySelector('button[aria-label="端末を閉じる"]')
     ).not.toBeNull();
     // キーボード操作の層に、アプリのダイアログとして数えさせない印
-    expect(dialog?.hasAttribute("data-keynav-nonmodal")).toBe(true);
   });
 
   it("見出しは title で替えられ、actions は閉じるボタンの手前に並ぶ", () => {
@@ -197,7 +196,7 @@ describe("FloatingTerminal", () => {
     const win = windowEl(container);
 
     expect(win?.getAttribute("tabindex")).toBe("-1");
-    expect(win?.getAttribute("data-keynav")).toBe("terminal-window");
+    expect(win?.getAttribute("data-focus-target")).toBe("terminal-window");
     win?.focus();
     expect(document.activeElement).toBe(win);
   });
