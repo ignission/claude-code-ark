@@ -38,7 +38,8 @@ export const PINCH_LAYER = `<script id="${DIAGRAM_PINCH_LAYER_MARKER}">
     if(pinchDistance===null){pinchDistance=next;return;}
     var deltaY=-400*Math.log(next/pinchDistance);
     pinchDistance=next;
-    if(Number.isFinite(deltaY)&&deltaY!==0)port.postMessage({type:"ark:diagram-pinch",deltaY:deltaY});
+    var a=event.touches[0],b=event.touches[1];
+    if(Number.isFinite(deltaY)&&deltaY!==0)port.postMessage({type:"ark:diagram-pinch",deltaY:deltaY,clientX:(a.clientX+b.clientX)/2,clientY:(a.clientY+b.clientY)/2});
   },{passive:false});
   window.addEventListener("touchend",resetPinch,{passive:false});
   window.addEventListener("touchcancel",resetPinch,{passive:false});

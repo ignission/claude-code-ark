@@ -153,7 +153,7 @@ cd claude-code-ark
 - **pnpm**: 無ければ `start.sh` が調達します。
 - **ttyd**: Linuxでは、見つからなければ[公式のバイナリ](https://github.com/tsl0922/ttyd/releases)を取得して `data/bin/` に置きます (sha256を照合します)。macOSでは `brew install ttyd` を案内します。
 - **Claude Code**: 依存として入るので、別に入れる必要はありません。
-- **Chromium**: 任意です。ファイルビューアのHTMLのスクリーンショットだけが使います。`~/.cache/ms-playwright` にPlaywrightで入れたものを先に探し、なければPATHの `chromium-browser` / `chromium` / `google-chrome` を使います。
+- **Chromium**: 任意です。ファイルビューアのHTMLのスクリーンショットだけが使います。Playwrightのブラウザキャッシュ (`PLAYWRIGHT_BROWSERS_PATH` も含む) を先に探し、なければシステムのChromiumかChromeを使います。
 - **GitHub CLI (`gh`)**: 任意です。セッションの行にPRとチェックの結果を出す機能だけが使います。サーバーを動かすユーザーで `gh auth login` を済ませておきます。
 
 更新するときは `git pull` して、もう一度 `./scripts/start.sh` を実行します。コミットが変わっていれば、依存の導入とビルドをやり直します。ポートは `PORT` で変えられます (既定は4001)。オプションの一覧は `./scripts/start.sh --help` で見られます。

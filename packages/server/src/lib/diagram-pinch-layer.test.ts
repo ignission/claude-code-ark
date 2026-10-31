@@ -60,21 +60,30 @@ describe("ピンチ", () => {
     ]);
   });
 
-  it("2 本指の距離の変化を量にして送る", () => {
+  it("2 本指の距離の変化を量にして、指の中点と一緒に送る", () => {
     const layer = loadLayer();
     layer.init();
     const touches = (distance: number) => ({
       touches: [
-        { clientX: 0, clientY: 0 },
-        { clientX: distance, clientY: 0 },
+        { clientX: 0, clientY: 40 },
+        { clientX: distance, clientY: 60 },
       ],
     });
     layer.fire("touchstart", touches(100));
     layer.fire("touchmove", touches(200));
     expect(layer.sent).toHaveLength(1);
-    const [message] = layer.sent as Array<{ type: string; deltaY: number }>;
+    const [message] = layer.sent as Array<{
+      type: string;
+      deltaY: number;
+      clientX: number;
+      clientY: number;
+    }>;
     expect(message.type).toBe("ark:diagram-pinch");
-    expect(message.deltaY).toBeCloseTo(-400 * Math.log(2));
+    expect(message.deltaY).toBeCloseTo(
+      -400 * Math.log(Math.hypot(200, 20) / Math.hypot(100, 20))
+    );
+    expect(message.clientX).toBe(100);
+    expect(message.clientY).toBe(50);
   });
 });
 
