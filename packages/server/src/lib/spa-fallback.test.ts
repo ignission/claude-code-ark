@@ -27,7 +27,7 @@ describe("SPA_FALLBACK_ROUTE_PATTERN", () => {
     expect(SPA_FALLBACK_ROUTE_PATTERN.test(p)).toBe(false);
   });
 
-  it.each(["/ttyd/abc", "/proxy/8080/", "/browser/x"])(
+  it.each(["/ttyd/abc", "/proxy/8080/"])(
     "既存の除外プレフィックス %s は引き続き対象外",
     p => {
       expect(SPA_FALLBACK_ROUTE_PATTERN.test(p)).toBe(false);

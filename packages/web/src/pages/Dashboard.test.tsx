@@ -135,7 +135,6 @@ vi.mock("@/components/AboutDialog", () => ({
     return null;
   },
 }));
-vi.mock("@/components/BrowserPane", () => ({ BrowserPane: () => null }));
 vi.mock("@/components/ScreenPane", () => ({
   ScreenPane: () => {
     // mount/unmount 回数を testDoubles 経由で記録し、再マウント（リモート画面の再接続）の
@@ -283,9 +282,6 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     sessionAuqSignals: [],
     readFile: fn,
     fileContent: null,
-    browserSessions: new Map(),
-    startBrowser: fn,
-    navigateBrowser: fn,
     screens: [],
     screensLoaded: true,
     createScreen: vi.fn(),

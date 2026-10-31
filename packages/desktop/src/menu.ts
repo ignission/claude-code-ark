@@ -12,8 +12,8 @@
  * を撤去して `Open Data Folder` 単独に整理した（F3 review 指摘事項）。
  */
 // `@ark/server` は static import しない。
-// import 評価時に `@ark/server` の module-level singleton (db / fileUploadManager /
-// browserManager) が即時構築されると、`configureAppPaths()` で set される
+// import 評価時に `@ark/server` の module-level singleton (db / fileUploadManager)
+// が即時構築されると、`configureAppPaths()` で set される
 // `ARK_DATA_DIR` / `ARK_LOGS_DIR` より先に singleton がパスを確定してしまい、
 // Finder 起動の .app では `process.cwd()/data` (= `/data`) に紐付いて失敗する。
 // click ハンドラ内で dynamic import することで、メニュー操作タイミングまで
