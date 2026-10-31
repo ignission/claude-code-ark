@@ -7,14 +7,7 @@
  */
 
 import type { Screen } from "@ark/shared";
-import {
-  ChevronDown,
-  Globe,
-  Info,
-  Monitor,
-  Plus,
-  Settings,
-} from "lucide-react";
+import { ChevronDown, Info, Monitor, Plus, Settings } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,10 +26,6 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   onNewSession: () => void;
   /** Aboutダイアログを開く */
   onOpenAbout: () => void;
-  /** ブラウザ選択コールバック (リモートアクセス時のみ使用) */
-  onSelectBrowser?: () => void;
-  isBrowserSelected?: boolean;
-  isRemote?: boolean;
   notificationControl?: ReactNode;
   /** リモート画面。onOpenScreenManager が無ければメニューを出さない */
   screens?: Screen[];
@@ -48,9 +37,6 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
 export function SessionSidebar({
   onNewSession,
   onOpenAbout,
-  onSelectBrowser,
-  isBrowserSelected = false,
-  isRemote = false,
   notificationControl,
   screens = [],
   selectedScreenId = null,
@@ -125,21 +111,6 @@ export function SessionSidebar({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        )}
-        {isRemote && onSelectBrowser && (
-          <Button
-            variant={isBrowserSelected ? "default" : "ghost"}
-            size="icon"
-            className="h-8 w-8"
-            onClick={onSelectBrowser}
-            aria-label={
-              isBrowserSelected ? "ブラウザを選択中" : "ブラウザを開く"
-            }
-            aria-pressed={isBrowserSelected}
-            title="ブラウザ"
-          >
-            <Globe className="size-5" />
-          </Button>
         )}
       </div>
 

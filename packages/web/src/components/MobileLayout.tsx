@@ -11,7 +11,6 @@
 
 import type {
   BridgeSessionStatus,
-  BrowserSession,
   ClientToServerEvents,
   DiagramDeleteResponse,
   DiagramListItem,
@@ -31,7 +30,6 @@ import type {
 import { ChevronLeft } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { Socket } from "socket.io-client";
-import { BrowserPane } from "@/components/BrowserPane";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
 import { ScreenPane } from "@/components/ScreenPane";
@@ -46,7 +44,7 @@ import { findRepoForSession } from "@/utils/sessionUtils";
 // MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
 // こうしないと runtime 検証配列と型が二重化し、union に値を足したとき配列更新を
 // 忘れても型エラーにならず正当な値が静かに潰れる。
-const MOBILE_TABS = ["session", "browser", "screen"] as const;
+const MOBILE_TABS = ["session", "screen"] as const;
 const SESSION_SUB_VIEWS = ["list", "detail"] as const;
 export type MobileTab = (typeof MOBILE_TABS)[number];
 export type SessionSubView = (typeof SESSION_SUB_VIEWS)[number];
@@ -125,9 +123,6 @@ interface MobileLayoutProps {
   /** Socket.IO 接続状態 */
   isSocketConnected: boolean;
   // ブラウザ
-  activeBrowserSession: BrowserSession | null;
-  onSelectBrowser: () => void;
-  isRemote: boolean;
   // リモート画面
   screens: Screen[];
   requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
@@ -222,9 +217,6 @@ export function MobileLayout({
   listDiagrams,
   deleteDiagram,
   isSocketConnected,
-  activeBrowserSession,
-  onSelectBrowser,
-  isRemote,
   screens,
   requestScreenCredentials,
   setScreenClipboard,
@@ -279,8 +271,6 @@ export function MobileLayout({
     }
   }, [selectedSessionId]);
   // ブラウザビューを一度でも開いたかどうかのフラグ
-  // 一度開いたらdisplay:hiddenで切り替え、BrowserPaneの再マウント（WebSocket再接続）を防ぐ
-  const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
 
   // セッションを選択して詳細画面に遷移
   const handleOpenSession = useCallback(
@@ -318,14 +308,11 @@ export function MobileLayout({
   );
   const effectiveSessionSubView: SessionSubView =
     sessionSubView === "detail" && !canShowDetail ? "list" : sessionSubView;
-  // ブラウザのタブはリモート時だけ、画面のタブは登録があるときだけある。
+  // 画面のタブは登録があるときだけある。
   // 無いタブが保存されていたら一覧に戻す (戻る手段の無い空の画面を避ける)
   const hasScreens = screens.length > 0;
   const activeTab: MobileTab =
-    (storedActiveTab === "browser" && !isRemote) ||
-    (storedActiveTab === "screen" && !hasScreens)
-      ? "session"
-      : storedActiveTab;
+    storedActiveTab === "screen" && !hasScreens ? "session" : storedActiveTab;
 
   // 選択中のセッションが恒久的に存在しない（削除等）場合は、永続化state も
   // 全てクリアする（sessionSubView=list + 不在 selectedSessionId の解除）。
@@ -356,11 +343,6 @@ export function MobileLayout({
   };
 
   // ブラウザを選択して画面遷移
-  const handleOpenBrowser = useCallback(() => {
-    onSelectBrowser();
-    onChangeActiveTab("browser");
-    setHasBrowserOpened(true);
-  }, [onSelectBrowser, onChangeActiveTab]);
 
   // 画面タブ。複数登録があれば上部の select で切り替える
   const [selectedScreenId, setSelectedScreenId] = useState<string | null>(null);
@@ -392,7 +374,7 @@ export function MobileLayout({
   // 会話の詳細画面は自前の下部バーを画面の下端に置くので、タブを重ねない
   const isDetailShown =
     activeTab === "session" && effectiveSessionSubView === "detail";
-  const hasBottomNav = isRemote || hasScreens;
+  const hasBottomNav = hasScreens;
   const showBottomNav = hasBottomNav && !isDetailShown;
   // 一覧とブラウザ・画面のラッパーだけが、下部タブの高さぶんの余白を持つ
   const paneClassName = hasBottomNav
@@ -553,33 +535,6 @@ export function MobileLayout({
           );
         })}
 
-      {/* ブラウザビュー - 一度開いたら常に描画し、display:hiddenで切り替え。
-          BrowserPaneの再マウントによるWebSocketの再接続を防ぐ。 */}
-      {hasBrowserOpened && (
-        <div className={activeTab === "browser" ? paneClassName : "hidden"}>
-          <div className="h-12 border-b border-border flex items-center px-4 shrink-0">
-            <button
-              type="button"
-              className="mr-3 inline-flex items-center gap-0.5 text-sm text-muted-foreground"
-              onClick={() => onChangeActiveTab("session")}
-            >
-              <ChevronLeft className="size-4" aria-hidden="true" />
-              戻る
-            </button>
-            <span className="text-sm font-medium">ブラウザ</span>
-          </div>
-          <div className="flex-1 min-h-0">
-            {activeBrowserSession ? (
-              <BrowserPane browserSession={activeBrowserSession} />
-            ) : (
-              <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                ブラウザを起動中...
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* リモート画面 - 一度開いた画面はマウントしたまま、
           サイズを保ったまま visibility だけで切り替える
           (理由は screenPaneClassName のコメント) */}
@@ -663,16 +618,6 @@ export function MobileLayout({
           >
             セッション
           </button>
-          {isRemote && (
-            <button
-              type="button"
-              aria-current={activeTab === "browser" ? "page" : undefined}
-              className={tabClassName(activeTab === "browser")}
-              onClick={handleOpenBrowser}
-            >
-              ブラウザ
-            </button>
-          )}
           {hasScreens && (
             <button
               type="button"

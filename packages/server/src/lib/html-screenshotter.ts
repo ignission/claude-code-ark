@@ -7,7 +7,7 @@
 
 import { pathToFileURL } from "node:url";
 import { type Browser, chromium } from "playwright-core";
-import { findChromiumExecutable } from "./browser-manager.js";
+import { findChromiumExecutable } from "./chromium-executable.js";
 import { getErrorMessage } from "./errors.js";
 
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;

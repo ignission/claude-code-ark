@@ -9,7 +9,7 @@ describe("screen-selection", () => {
 
   it("番兵でなければ null", () => {
     expect(parseScreenSelection("session-1")).toBeNull();
-    expect(parseScreenSelection("browser")).toBeNull();
+    expect(parseScreenSelection("session-1")).toBeNull();
     expect(parseScreenSelection(null)).toBeNull();
   });
 });

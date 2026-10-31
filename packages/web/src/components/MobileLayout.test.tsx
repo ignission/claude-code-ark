@@ -45,7 +45,6 @@ function createProps(): ComponentProps<typeof MobileLayout> {
     isSocketConnected: true,
     activeBrowserSession: null,
     onSelectBrowser: vi.fn(),
-    isRemote: false,
     screens: [],
     requestScreenCredentials: vi
       .fn()
@@ -92,13 +91,27 @@ describe("MobileLayout diagram wiring", () => {
   });
 });
 
+const SCREENS = [
+  {
+    id: "s1",
+    name: "ビルド VM",
+    sshHost: "build.example.internal",
+    sshPort: 22,
+    sshUser: "user",
+    vncHost: "127.0.0.1",
+    vncPort: 5900,
+    vncUser: "user",
+    createdAt: 0,
+    updatedAt: 0,
+  },
+];
+
 describe("MobileLayoutの下部タブ", () => {
-  it("ローカルでは下部タブを出さず、画面の下端に余白も足さない", () => {
+  it("下部タブが無いときは、画面の下端に余白も足さない", () => {
     const markup = renderToStaticMarkup(
       createElement(MobileLayout, {
         ...createProps(),
         sessionSubView: "list",
-        isRemote: false,
       })
     );
 
@@ -106,43 +119,12 @@ describe("MobileLayoutの下部タブ", () => {
     expect(markup).not.toContain("pb-14");
   });
 
-  it("リモートでは下部タブを出し、選択中のタブをaria-currentで示す", () => {
+  it("会話の詳細画面では下部タブを出さず、余白も付けない", () => {
     const markup = renderToStaticMarkup(
       createElement(MobileLayout, {
         ...createProps(),
-        sessionSubView: "list",
-        isRemote: true,
+        screens: SCREENS,
       })
-    );
-
-    expect(markup).toMatch(/<nav [^>]*aria-label="画面の切り替え"/);
-    expect(markup).toContain('aria-current="page"');
-    expect(markup).toContain("ブラウザ");
-    expect(markup).toContain("pb-14");
-    expect(markup).not.toContain("border-t-2");
-  });
-
-  it("ローカルではブラウザのタブが保存されていても一覧を出す", () => {
-    // 設定はサーバーに保存され端末をまたぐので、リモートの端末で開いたブラウザのタブが残りうる。
-    // ローカルには下部タブが無いので、一覧に戻さないと戻る手段の無い空の画面になる
-    const markup = renderToStaticMarkup(
-      createElement(MobileLayout, {
-        ...createProps(),
-        activeTab: "browser",
-        sessionSubView: "list",
-        isRemote: false,
-      })
-    );
-
-    const listWrapperClass = markup.match(
-      /<div class="([^"]*)"><div class="[^"]*safe-area-x/
-    )?.[1];
-    expect(listWrapperClass).toBe("flex-1 flex flex-col min-h-0");
-  });
-
-  it("リモートでも会話の詳細画面では下部タブを出さず、余白も付けない", () => {
-    const markup = renderToStaticMarkup(
-      createElement(MobileLayout, { ...createProps(), isRemote: true })
     );
 
     expect(markup).toContain('aria-label="図の一覧"');
@@ -150,40 +132,28 @@ describe("MobileLayoutの下部タブ", () => {
     expect(markup).not.toContain("pb-14");
   });
 
-  it("画面が登録されていればローカルでも下部タブに「画面」を出す", () => {
-    const props = {
-      ...createProps(),
-      sessionSubView: "list" as const,
-      isRemote: false,
-      screens: [
-        {
-          id: "s1",
-          name: "ビルド VM",
-          sshHost: "build.example.internal",
-          sshPort: 22,
-          sshUser: "user",
-          vncHost: "127.0.0.1",
-          vncPort: 5900,
-          vncUser: "user",
-          createdAt: 0,
-          updatedAt: 0,
-        },
-      ],
-    };
-    const html = renderToStaticMarkup(createElement(MobileLayout, props));
+  it("画面が登録されていれば下部タブに「画面」を出し、選択中のタブをaria-currentで示す", () => {
+    const html = renderToStaticMarkup(
+      createElement(MobileLayout, {
+        ...createProps(),
+        sessionSubView: "list",
+        screens: SCREENS,
+      })
+    );
     expect(html).toContain('aria-label="画面の切り替え"');
     expect(html).toContain(">画面</button>");
-    expect(html).not.toContain(">ブラウザ</button>");
+    expect(html).toContain('aria-current="page"');
+    expect(html).toContain("pb-14");
   });
 
-  it("画面が未登録ならローカルでは下部タブを出さない", () => {
-    const props = {
-      ...createProps(),
-      sessionSubView: "list" as const,
-      isRemote: false,
-      screens: [],
-    };
-    const html = renderToStaticMarkup(createElement(MobileLayout, props));
+  it("画面が未登録なら下部タブを出さない", () => {
+    const html = renderToStaticMarkup(
+      createElement(MobileLayout, {
+        ...createProps(),
+        sessionSubView: "list",
+        screens: [],
+      })
+    );
     expect(html).not.toContain('aria-label="画面の切り替え"');
   });
 });
@@ -216,16 +186,17 @@ describe("MobileLayoutの一覧の配線", () => {
 });
 
 describe("normalizeMobileTab", () => {
-  // localhost の e2e では isRemote=false で下部タブが出ず、保存値の正規化を画面から確かめられないので、ここで固定する
+  // 画面の登録が無いと下部タブが出ず、保存値の正規化を画面から確かめられないので、ここで固定する
   it("不正な保存値は session に戻す", () => {
     expect(normalizeMobileTab("garbage")).toBe("session");
     expect(normalizeMobileTab(42)).toBe("session");
     expect(normalizeMobileTab(undefined)).toBe("session");
+    // 撤去したブラウザのタブが設定に残っていても一覧へ戻す
+    expect(normalizeMobileTab("browser")).toBe("session");
   });
 
   it("正しい保存値はそのまま使う", () => {
     expect(normalizeMobileTab("session")).toBe("session");
-    expect(normalizeMobileTab("browser")).toBe("browser");
     expect(normalizeMobileTab("screen")).toBe("screen");
   });
 });
