@@ -37,8 +37,6 @@ You need to be logged in to Claude Code. If Claude Code has never run on the mac
 
 > Walk me through what happens when I start a session, from the socket event to the terminal showing up in the browser. Draw it on the board as a sequence diagram.
 
-**Drive Ark from the keyboard.** Press `Ctrl+;` to enter normal mode, then `?` for the key list. `J` / `K` move between sessions, `n` jumps to the next session waiting for you, and `:` opens the command palette.
-
 **Answer from your phone.** Start Ark with `./scripts/start.sh --quick`, scan the QR code, and answer Claude's questions in the terminal that opens for them.
 
 ## Why Ark
@@ -85,8 +83,6 @@ The mobile UI has its own session list, chat view, terminal with quick keys, and
 ### More
 
 - Paste, drop or attach images, PDFs, text files and spreadsheets to send them to Claude.
-- Ask a side question from the command palette (`Tab`). A separate Claude with no tools answers in a floating window, and your session's conversation is left alone.
-- Run one headless Chromium on the server machine and show it in Ark, with the screen and input relayed over the Chrome DevTools Protocol. All it needs is a Chromium executable: Ark looks first for one installed by Playwright under `~/.cache/ms-playwright`, then for `chromium-browser`, `chromium` or `google-chrome` on PATH. If none is found, only this feature is disabled.
 - Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser. Ark connects with `ssh -o BatchMode=yes` as the user running the server, so that user needs a key without a passphrase (or one loaded in ssh-agent) and the host already in `known_hosts`.
 - Use a different Claude account per repository (Linux only).
 - Keep topics set aside mid-conversation in the TODO tab. Press the TODO button to the left of the chat input and Claude writes the topics it set aside down as TODOs. Only you can complete or delete one. See [Branch TODOs](#branch-todos).
@@ -157,7 +153,7 @@ All you provide is Node.js >= 22.12.0 and [tmux](https://github.com/tmux/tmux). 
 - **pnpm**: `start.sh` fetches it when it is not installed.
 - **ttyd**: on Linux, Ark downloads the [official binary](https://github.com/tsl0922/ttyd/releases) into `data/bin/` when it cannot find one, and verifies its sha256. On macOS it tells you to run `brew install ttyd`.
 - **Claude Code**: installed as a dependency, so there is nothing else to install.
-- **Chromium**: optional, used only by the browser feature.
+- **Chromium**: optional, used only for HTML screenshots in the file viewer. Ark looks first for one installed by Playwright under `~/.cache/ms-playwright`, then for `chromium-browser`, `chromium` or `google-chrome` on PATH.
 - **GitHub CLI (`gh`)**: optional, used only to show pull requests and checks on session rows. Run `gh auth login` as the user that runs the server.
 
 To update, run `git pull` and then `./scripts/start.sh` again; it reinstalls and rebuilds when the commit has changed. Set `PORT` to change the port (default 4001). Run `./scripts/start.sh --help` for the options.
@@ -175,8 +171,6 @@ Ark prints a QR code and a temporary `*.trycloudflare.com` URL protected by a ra
 ## Branch TODOs
 
 Topics set aside mid-conversation are kept as TODOs. Press the TODO button to the left of the chat input, and Claude writes down the topics it put off in this conversation with the MCP tool `todo_add`. Type something first, and that text becomes the TODO. The diagram button next to it works the same way: it asks Claude to draw the last explanation (or the text you typed) on the board.
-
-On a PC, `d` and `T` in normal mode (`Ctrl+;`) press the diagram and TODO buttons. Both are also in the command palette.
 
 TODOs show in the right pane's TODO tab, as counts in the sidebar, and in the mobile TODO view. Claude cannot complete or delete a TODO.
 
@@ -206,7 +200,7 @@ Existing sessions do not get branch TODOs until `claude` is restarted, because `
 - **The macOS app is unsigned** ([#193](https://github.com/ignission/claude-code-ark/issues/193)), and there is no packaged app for Linux or Windows. On Linux, run from source.
 - **The Git tab does not edit the working tree.** It manages branches and runs fetch, pull (fast-forward only) and push, but you cannot stage, commit, discard or check out from it. Deleting a branch that a worktree has checked out removes that whole worktree and stops its session, after a confirmation.
 - **The Files tab edits existing files only.** It cannot create, delete or rename them.
-- **The Git tab, file editing and keyboard navigation are desktop only.** On a phone, files open read-only.
+- **The Git tab and file editing are desktop only.** On a phone, files open read-only.
 - **Per-repository accounts work on Linux only**, because macOS keeps Claude's credentials in the Keychain.
 - **Voice mode is for iPhone** and runs only while the screen is on and Ark is in the foreground.
 - **The UI is in Japanese.**
