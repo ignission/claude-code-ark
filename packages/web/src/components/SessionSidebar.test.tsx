@@ -12,6 +12,14 @@ import { SessionSidebar } from "./SessionSidebar";
 
 const testDoubles = vi.hoisted(() => ({
   sectionList: vi.fn(),
+  statusBar: vi.fn(),
+}));
+
+vi.mock("@/components/bridge/SystemStatusBar", () => ({
+  SystemStatusBar: (props: Record<string, unknown>) => {
+    testDoubles.statusBar(props);
+    return <div data-testid="system-status-bar" />;
+  },
 }));
 
 vi.mock("./SessionSectionList", () => ({
@@ -73,12 +81,14 @@ function sidebarProps(): ComponentProps<typeof SessionSidebar> {
     onSelectRepoGrid: vi.fn(),
     onNewSession: vi.fn(),
     onOpenAbout: vi.fn(),
+    metrics: null,
   };
 }
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   testDoubles.sectionList.mockClear();
+  testDoubles.statusBar.mockClear();
 });
 
 afterEach(() => {
@@ -122,6 +132,29 @@ describe("SessionSidebar", () => {
     expect(listProps.onSelectRepoGrid).toBe(props.onSelectRepoGrid);
     expect(listProps).not.toHaveProperty("onNewSession");
     expect(listProps).not.toHaveProperty("onOpenAbout");
+    expect(listProps).not.toHaveProperty("metrics");
+  });
+
+  it("一覧の下にCPU/MEM/DISKを常に出す", () => {
+    const metrics = { cpuPercent: 12 } as unknown as ComponentProps<
+      typeof SessionSidebar
+    >["metrics"];
+    const container = mount(
+      <SessionSidebar {...sidebarProps()} metrics={metrics} />
+    );
+
+    const bar = container.querySelector('[data-testid="system-status-bar"]');
+    const list = container.querySelector('[data-testid="section-list"]');
+    expect(bar).not.toBeNull();
+    // 一覧より後ろ (下) に置く
+    expect(
+      list?.compareDocumentPosition(bar as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(testDoubles.statusBar).toHaveBeenLastCalledWith({
+      metrics,
+      compact: true,
+    });
   });
 
   it("画面メニューから登録済みの画面を選び、管理ダイアログを開ける", () => {

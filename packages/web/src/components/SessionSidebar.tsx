@@ -2,13 +2,15 @@
  * SessionSidebar - PCのセッション一覧サイドバー
  *
  * ヘッダー (ワードマークのメニュー・新規作成・通知許可・ブラウザ) と、
- * 注意の順に並べたセッション一覧 (SessionSectionList) を出す。
- * About (CPU/MEM/DISKとBridgeへのリンクを含む) はワードマークのメニューから開く。
+ * 注意の順に並べたセッション一覧 (SessionSectionList) と、
+ * 下部に常に出すCPU/MEM/DISK (押すとBridgeを別タブで開く) を出す。
+ * About はワードマークのメニューから開く。
  */
 
-import type { Screen } from "@ark/shared";
+import type { HostMetrics, Screen } from "@ark/shared";
 import { ChevronDown, Info, Monitor, Plus, Settings } from "lucide-react";
 import type { ReactNode } from "react";
+import { SystemStatusBar } from "@/components/bridge/SystemStatusBar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -26,6 +28,8 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   onNewSession: () => void;
   /** Aboutダイアログを開く */
   onOpenAbout: () => void;
+  /** 下部に出すCPU/MEM/DISK (未着はnull) */
+  metrics: HostMetrics | null;
   notificationControl?: ReactNode;
   /** リモート画面。onOpenScreenManager が無ければメニューを出さない */
   screens?: Screen[];
@@ -37,6 +41,7 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
 export function SessionSidebar({
   onNewSession,
   onOpenAbout,
+  metrics,
   notificationControl,
   screens = [],
   selectedScreenId = null,
@@ -121,6 +126,10 @@ export function SessionSidebar({
           素直なdivの縦スクロール + overflow-x: hiddenで水平方向の広がりを抑える。 */}
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 pb-3">
         <SessionSectionList variant="sidebar" {...listProps} />
+      </div>
+
+      <div className="shrink-0 px-2 pb-2">
+        <SystemStatusBar metrics={metrics} compact />
       </div>
     </div>
   );

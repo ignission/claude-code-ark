@@ -4,12 +4,17 @@ import { clamp } from "./utils";
 
 interface SystemStatusBarProps {
   metrics: HostMetrics | null;
+  /** 狭い幅 (PCのサイドバーは最小180px) 向けに文字と間隔を詰める */
+  compact?: boolean;
 }
 
 const SPARK_H = 14;
 const SPARK_SAMPLES = 30;
 
-export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
+export function SystemStatusBar({
+  metrics,
+  compact = false,
+}: SystemStatusBarProps) {
   const cpu = metrics ? Math.round(metrics.cpuPercent) : null;
   const memTotal = metrics?.memory.totalGB ?? 0;
   const memUsed = metrics?.memory.usedGB ?? 0;
@@ -30,9 +35,13 @@ export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
       target="_blank"
       rel="noopener noreferrer"
       title="Bridgeを別タブで開く"
-      className="flex items-center gap-5 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground select-none transition-colors hover:bg-accent cursor-pointer"
+      className={`flex items-center rounded-lg border border-border bg-muted text-foreground select-none transition-colors hover:bg-accent cursor-pointer ${
+        compact ? "gap-2.5 px-2 py-1.5 text-xs" : "gap-5 px-3 py-2 text-sm"
+      }`}
     >
-      <span className="flex items-center gap-2 flex-1 min-w-0">
+      <span
+        className={`flex items-center flex-1 min-w-0 ${compact ? "gap-1.5" : "gap-2"}`}
+      >
         <span className="text-muted-foreground shrink-0">CPU</span>
         <Sparkline values={cpuHistory} />
         <span className="tabular-nums shrink-0">
@@ -42,7 +51,7 @@ export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
       <Metric label="MEM" percent={mem} />
       <Metric label="DISK" percent={disk} />
       <ExternalLink
-        className="size-4 shrink-0 text-muted-foreground"
+        className={`${compact ? "size-3.5" : "size-4"} shrink-0 text-muted-foreground`}
         aria-hidden="true"
       />
     </a>

@@ -586,8 +586,9 @@ export default function Dashboard() {
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
-  // AboutダイアログのCPU/MEM/DISK用。開いている間だけbridge:snapshotを購読する
-  const bridgeSnapshot = useBridgeSnapshot(socket, showAboutDialog);
+  // PCのサイドバー下部とAboutに出すCPU/MEM/DISK用。サイドバーに常に出すので
+  // PCでは常にbridge:snapshotを購読する。モバイルにはどちらの表示も無いので購読しない
+  const bridgeSnapshot = useBridgeSnapshot(socket, !isMobile);
 
   const copyToClipboard = (text: string | null) => {
     if (text) {
@@ -1027,6 +1028,7 @@ export default function Dashboard() {
               onOpenProfileManager={() => setShowProfileManager(true)}
               onNewSession={handleNewSession}
               onOpenAbout={() => setShowAboutDialog(true)}
+              metrics={bridgeSnapshot?.metrics ?? null}
               notificationControl={notificationControl}
               screens={screens}
               selectedScreenId={selectedScreenId}

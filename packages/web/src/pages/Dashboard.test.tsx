@@ -498,7 +498,7 @@ describe("Dashboardのファイルペイン配線", () => {
 });
 
 describe("Dashboardのサイドバー配線", () => {
-  it("状態とプレビューをサイドバーへ渡し、Aboutを開いている間だけホストの状態を購読する", () => {
+  it("状態とプレビューをサイドバーへ渡し、PCではホストの状態を常に購読する", () => {
     mount(<Dashboard />);
 
     const state = testDoubles.socketState;
@@ -511,7 +511,8 @@ describe("Dashboardのサイドバー配線", () => {
       open: false,
       metrics: null,
     });
-    expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(false);
+    expect(sidebar).toHaveProperty("metrics", null);
+    expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(true);
 
     act(() => (sidebar.onOpenAbout as () => void)());
 
@@ -521,6 +522,13 @@ describe("Dashboardのサイドバー配線", () => {
 });
 
 describe("Dashboardのモバイル一覧の配線", () => {
+  it("モバイルではホストの状態を購読しない", () => {
+    testDoubles.isMobile = true;
+    mount(<Dashboard />);
+
+    expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(false);
+  });
+
   it("状態・プレビュー・表示名・プロファイルと、リポジトリの操作をMobileLayoutへ渡す", () => {
     testDoubles.isMobile = true;
     mount(<Dashboard />);

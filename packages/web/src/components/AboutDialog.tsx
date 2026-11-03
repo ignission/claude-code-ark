@@ -39,7 +39,7 @@ interface LicensesResponse {
 interface AboutDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** CPU/MEM/DISK。Aboutを開いている間だけ購読した値 (未着はnull) */
+  /** CPU/MEM/DISK。サイドバーと同じ購読の値 (未着はnull) */
   metrics: HostMetrics | null;
 }
 
