@@ -14,11 +14,3 @@ export function buildScreenWsUrl(screenId: string): string {
   const token = getAuthToken();
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
-
-/** ブラウザ機能のブリッジ (`/browser/:id/ws`) のWebSocket URL */
-export function buildBrowserWsUrl(browserId: string): string {
-  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  const base = `${protocol}://${window.location.host}/browser/${encodeURIComponent(browserId)}/ws`;
-  const token = getAuthToken();
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
-}

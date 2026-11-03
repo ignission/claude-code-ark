@@ -1,5 +1,4 @@
 import { execSync } from "node:child_process";
-import { browserManager } from "./browser-manager.js";
 import { TTYD_PORT_END, TTYD_PORT_START } from "./constants.js";
 
 export interface ListeningPort {
@@ -43,18 +42,14 @@ function collectPorts(
     const ports: ListeningPort[] = [];
     const seen = new Set<number>();
 
-    // ブラウザ機能が使うポート (CDP) は、ユーザーのアプリではないので除外する
-    const browserUsedPorts = new Set(browserManager.getUsedPorts());
-
     for (const line of output.trim().split("\n")) {
       const parsed = parseLine(line);
       if (!parsed) continue;
 
       const { port, processName, pid } = parsed;
 
-      // ttydのポート範囲とブラウザ機能のポートを除外
+      // ttydのポート範囲を除外
       if (port >= TTYD_PORT_START && port <= TTYD_PORT_END) continue;
-      if (browserUsedPorts.has(port)) continue;
 
       if (!seen.has(port)) {
         seen.add(port);

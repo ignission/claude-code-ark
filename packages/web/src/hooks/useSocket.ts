@@ -8,7 +8,6 @@
 
 import type {
   BridgeSessionStatus,
-  BrowserSession,
   ClientToServerEvents,
   DiagramDeleteResponse,
   DiagramListItem,
@@ -235,13 +234,6 @@ interface UseSocketReturn {
    */
   sessionPlanLimits: Map<string, PlanLimits>;
 
-  // Browser sessions
-  browserSessions: Map<string, BrowserSession>;
-  browserError: string | null;
-  startBrowser: () => void;
-  stopBrowser: (browserId: string) => void;
-  navigateBrowser: (url: string) => void;
-
   // プロファイル切替 (Linux限定)
   profiles: Profile[];
   /** repoPath → profileId のマップ (リポジトリのデフォルト) */
@@ -435,12 +427,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [sessionPlanLimits, setSessionPlanLimits] = useState<
     Map<string, PlanLimits>
   >(new Map());
-
-  // Browser session state
-  const [browserSessions, setBrowserSessions] = useState<
-    Map<string, BrowserSession>
-  >(new Map());
-  const [browserError, setBrowserError] = useState<string | null>(null);
 
   // プロファイル切替 (Linux限定)
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -1022,28 +1008,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       });
     });
 
-    // Browser session events
-    socket.on("browser:started", (session: BrowserSession) => {
-      setBrowserSessions(prev => {
-        const next = new Map(prev);
-        next.set(session.id, session);
-        return next;
-      });
-      setBrowserError(null);
-    });
-
-    socket.on("browser:stopped", ({ browserId }: { browserId: string }) => {
-      setBrowserSessions(prev => {
-        const next = new Map(prev);
-        next.delete(browserId);
-        return next;
-      });
-    });
-
-    socket.on("browser:error", ({ message }: { message: string }) => {
-      setBrowserError(message);
-    });
-
     // プロファイル切替 (Linux限定) ----------------------------------
     socket.on("system:capabilities", caps => {
       setCapabilities(caps);
@@ -1220,9 +1184,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("session:auq", handleAuqSignal);
       socket.off("session:previews");
       socket.off("session:grid:snapshot");
-      socket.off("browser:started");
-      socket.off("browser:stopped");
-      socket.off("browser:error");
       socket.off("screen:list");
       socket.off("screen:created");
       socket.off("screen:updated");
@@ -1504,19 +1465,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
-  // Browser session actions
-  const startBrowser = useCallback(() => {
-    socketRef.current?.emit("browser:start");
-  }, []);
-
-  const stopBrowser = useCallback((browserId: string) => {
-    socketRef.current?.emit("browser:stop", { browserId });
-  }, []);
-
-  const navigateBrowser = useCallback((url: string) => {
-    socketRef.current?.emit("browser:navigate", { url });
-  }, []);
-
   // プロファイル切替 (Linux限定) actions
   const loadProfiles = useCallback(() => {
     socketRef.current?.emit("profile:list");
@@ -1742,12 +1690,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     unsubscribeGrid,
     sessionStatuses,
     sessionLastUpdatedAt,
-    // Browser sessions
-    browserSessions,
-    browserError,
-    startBrowser,
-    stopBrowser,
-    navigateBrowser,
     // プロファイル切替 (Linux限定)
     profiles,
     repoProfileLinks,

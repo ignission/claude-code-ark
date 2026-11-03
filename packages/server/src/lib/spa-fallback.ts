@@ -9,9 +9,9 @@
  *   実行を拒否するため、以後リロードしても白画面のままになる。
  *   アセットの未ヒットは 404 で明確に失敗させることで、キャッシュ汚染を防ぐ。
  *
- * /ttyd/ /proxy/ /browser/ は従来どおり別ハンドラ (プロキシ) の領域。
+ * /ttyd/ /proxy/ は従来どおり別ハンドラ (プロキシ) の領域。
  */
 
 /** SPA フォールバック (index.html 配信) の対象パスにマッチする正規表現 */
 export const SPA_FALLBACK_ROUTE_PATTERN =
-  /^(?!\/ttyd\/|\/proxy\/|\/browser\/|\/assets\/).*$/;
+  /^(?!\/ttyd\/|\/proxy\/|\/assets\/).*$/;

@@ -32,7 +32,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // 型のみ import: ESM では `import type` は erase されるため、`@ark/server` の
-// module-level singleton (db / fileUploadManager / browserManager) が import 評価
+// module-level singleton (db / fileUploadManager) が import 評価
 // 時に即時構築されない。`startServer` は `bootstrap()` 内で dynamic import で取得し、
 // その時点では `configureAppPaths()` により `ARK_DATA_DIR` / `ARK_LOGS_DIR` が
 // 設定済みであることを保証する。
@@ -417,7 +417,7 @@ async function bootstrap(): Promise<void> {
     port = parsed;
   }
   // dynamic import: ここで初めて `@ark/server` を評価することで、
-  // module-level singleton (db / fileUploadManager / browserManager) が
+  // module-level singleton (db / fileUploadManager) が
   // `configureAppPaths()` で set 済みの `ARK_DATA_DIR` / `ARK_LOGS_DIR` を
   // 読み取った状態で構築される。static import にすると import 評価が
   // module top で走り、`configureAppPaths()` より前に singleton が

@@ -47,12 +47,7 @@ import {
   collectBridgeSessions,
   collectGridSnapshots,
 } from "./lib/bridge-collector.js";
-import {
-  browserBridge,
-  browserManager,
-  validateBrowserUrl,
-} from "./lib/browser-manager.js";
-import { CDP_PORT, TTYD_PORT_END, TTYD_PORT_START } from "./lib/constants.js";
+import { TTYD_PORT_END, TTYD_PORT_START } from "./lib/constants.js";
 import { db } from "./lib/database.js";
 import {
   createDiagramDeleteSocketHandler,
@@ -255,8 +250,8 @@ function loadTunnelState(): { active: boolean; port: number } | null {
  * Ark サーバーを起動し、ハンドルを返す。
  *
  * **重要**: このサーバーは module-level singleton (sessionOrchestrator,
- * browserManager, htmlScreenshotter) を内部で使用するため、**同一プロセスで複数回呼び
- * 出すことはできない**。`stop()` 後に再度 `startServer()` を呼ぶと、破壊済み singleton
+ * htmlScreenshotter) を内部で使用するため、**同一プロセスで複数回呼び出すことは
+ * できない**。`stop()` 後に再度 `startServer()` を呼ぶと、破壊済み singleton
  * が再利用され予期しない挙動になる。再起動が必要な場合は別プロセスを起動すること。
  *
  * @param options サーバー設定。詳細は StartServerOptions 参照
@@ -453,12 +448,6 @@ export async function startServer(
 
   // リモート画面: noVNC の WebSocket を ssh -W へ直結する (screen-bridge.ts)
   const screenWss = new WebSocketServer({ noServer: true });
-  // ブラウザ機能: 視聴者のWebSocketをCDPのブリッジへ渡す (browser-cdp-bridge.ts)
-  // 視聴者が送るのは小さなJSONだけ。wsの既定 (100MiB) のままだと、形を確かめる前に全体を読み込む
-  const browserWss = new WebSocketServer({
-    noServer: true,
-    maxPayload: 1 << 20,
-  });
 
   if (enableRemote) {
     console.log(
@@ -1148,9 +1137,9 @@ export async function startServer(
       return;
     }
 
-    // Ark自体のポート・CDPポート・ttydポート範囲をブロック（SSRF対策）
+    // Ark自体のポート・ttydポート範囲をブロック（SSRF対策）
     const serverPort = parseInt(process.env.PORT || "4001", 10);
-    if (port === serverPort || port === CDP_PORT) {
+    if (port === serverPort) {
       res.status(403).json({ error: "This port is not accessible via proxy" });
       return;
     }
@@ -1263,24 +1252,6 @@ export async function startServer(
       return;
     }
 
-    // ブラウザ機能 (CDPブリッジ) のWebSocket
-    const browserMatch = pathname.match(/^\/browser\/([^/]+)\/ws$/);
-    if (browserMatch) {
-      // 認証検証 (Quick Tunnel時のみ)
-      if (!authorizeWebSocketUpgrade(req, url)) {
-        socket.destroy();
-        return;
-      }
-      if (!browserManager.getSession(browserMatch[1])) {
-        socket.destroy();
-        return;
-      }
-      browserWss.handleUpgrade(req, socket, head, ws => {
-        browserBridge.attach(ws);
-      });
-      return;
-    }
-
     // Handle proxy WebSocket connections（ローカルポートプロキシ用）
     const proxyMatch = pathname.match(/^\/proxy\/(\d+)(\/.*)?$/);
     if (proxyMatch) {
@@ -1292,11 +1263,10 @@ export async function startServer(
 
       const proxyPort = parseInt(proxyMatch[1], 10);
       if (proxyPort >= 1 && proxyPort <= 65535) {
-        // SSRF対策: Ark自体のポート、CDPポート、ttydポート範囲をブロック
+        // SSRF対策: Ark自体のポート、ttydポート範囲をブロック
         const serverPort = parseInt(process.env.PORT || "4001", 10);
         if (
           proxyPort === serverPort ||
-          proxyPort === CDP_PORT ||
           (proxyPort >= TTYD_PORT_START && proxyPort <= TTYD_PORT_END)
         ) {
           socket.destroy();
@@ -1411,14 +1381,6 @@ export async function startServer(
   const gridBroadcastInterval = setInterval(() => {
     broadcastGridSnapshot();
   }, 1500);
-
-  // Chromiumが止まったら (明示的な停止でも、自分で落ちたときでも) ブリッジを閉じ、
-  // 全クライアントのペインを閉じさせる
-  const onBrowserStopped = (browserId: string) => {
-    browserBridge.reset();
-    io.emit("browser:stopped", { browserId });
-  };
-  browserManager.on("session:stopped", onBrowserStopped);
 
   io.on("connection", socket => {
     console.log(`Client connected: ${socket.id}`);
@@ -2383,56 +2345,6 @@ export async function startServer(
           size: 0,
           error: getErrorMessage(error),
         });
-      }
-    });
-
-    // ===== Browser Session Commands =====
-    //
-    // 設計: ブラウザセッション (headlessのChromium) はシングルトンのため、
-    // 特定のクライアントの切断で停止させると他クライアントの画面が消える。
-    // そのため明示的な`browser:stop`のみで停止する方針を取り、
-    // disconnect時の自動停止は行わない。
-    // 最終的なプロセス掃除は、サーバーの停止 (`startServer` が返す `stop`) の中の
-    // `browserManager.cleanup()` で行う。
-
-    socket.on("browser:start", async () => {
-      try {
-        if (!browserManager.isAvailable()) {
-          socket.emit("browser:error", {
-            message: "Chromiumが見つからないため、ブラウザ機能は使えません",
-          });
-          return;
-        }
-
-        const session = await browserManager.start();
-        // シングルトンブラウザは全クライアントで共有されるため、
-        // 他の接続クライアントにも同期する。
-        io.emit("browser:started", session);
-      } catch (error) {
-        socket.emit("browser:error", { message: getErrorMessage(error) });
-      }
-    });
-
-    socket.on("browser:stop", async data => {
-      try {
-        // 全クライアントへの `browser:stopped` は、`session:stopped` の購読が出す
-        await browserManager.stop(data.browserId);
-      } catch (error) {
-        socket.emit("browser:error", { message: getErrorMessage(error) });
-      }
-    });
-
-    socket.on("browser:navigate", async data => {
-      try {
-        // 遷移に使うのは、渡された文字列ではなく、確かめたあとの形
-        const url = validateBrowserUrl(data.url);
-        const session = await browserManager.start();
-        // 遷移より先に知らせる。遷移に失敗してもChromiumは動いているので、
-        // セッションを知らないクライアントにはペインを開かせる
-        io.emit("browser:started", session);
-        await browserBridge.navigate(url);
-      } catch (error) {
-        socket.emit("browser:error", { message: getErrorMessage(error) });
       }
     });
 
@@ -3409,9 +3321,6 @@ export async function startServer(
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);
       });
-
-      // ブラウザセッションはシングルトンのため、socket切断では停止しない。
-      // 明示的なbrowser:stopまたはSIGTERM/SIGINT時のcleanup()で停止する。
     });
   });
 
@@ -3567,16 +3476,6 @@ export async function startServer(
     planLimitsCollector.stop();
     sessionOrchestrator.cleanup();
     askManager.dispose();
-    browserBridge.reset();
-    // 終わるまで待つ。待たずに進むと、起動の途中のChromiumや、SIGTERMで終わらない
-    // Chromiumを残したまま、呼び出し側がプロセスを終了させる
-    try {
-      await browserManager.cleanup();
-    } catch (error) {
-      console.error("[Browser] cleanupに失敗:", getErrorMessage(error));
-    }
-    // 外すのは止めたあと。止まったことは、このリスナーがクライアントへ知らせる
-    browserManager.off("session:stopped", onBrowserStopped);
     screenBridge.closeAll();
     boardMcp.stop();
     if (activeTunnel) {

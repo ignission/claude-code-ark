@@ -1,5 +1,5 @@
 /**
- * Dashboard の selectedSessionId は「セッション id」「"browser"」「"screen:<id>"」を
+ * Dashboard の selectedSessionId は「セッション id」「"screen:<id>"」を
  * 1 本の文字列で持つ。画面の番兵はここで作り、ここで読む
  */
 

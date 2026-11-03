@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AboutDialog } from "@/components/AboutDialog";
 import { AskWindow } from "@/components/AskWindow";
-import { BrowserPane } from "@/components/BrowserPane";
 import { CommandPalette } from "@/components/CommandPalette";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FilePane } from "@/components/FilePane";
@@ -170,9 +169,6 @@ export default function Dashboard() {
     sessionAuqSignals,
     readFile,
     fileContent,
-    browserSessions,
-    startBrowser,
-    navigateBrowser,
     screens,
     screensLoaded,
     createScreen,
@@ -215,13 +211,6 @@ export default function Dashboard() {
 
   const isMobile = useIsMobile();
 
-  const isRemote =
-    typeof window !== "undefined" &&
-    window.location.hostname !== "localhost" &&
-    window.location.hostname !== "127.0.0.1";
-
-  const activeBrowserSession = Array.from(browserSessions.values())[0] ?? null;
-
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
@@ -234,8 +223,6 @@ export default function Dashboard() {
   const [diagramOpenRequest, setDiagramOpenRequest] =
     useState<DiagramOpenRequest | null>(null);
   // ブラウザビューを一度でも開いたかどうかのフラグ
-  // 一度開いたら常に描画してdisplay:hiddenで切り替え、BrowserPaneの再マウント (WebSocketの再接続) を防ぐ
-  const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
 
   // 一度開いた画面の id。開いた ScreenPane はマウントしたまま display で切り替える。
   // リロードで復元された選択は openedScreenIds に無いので、描画条件は
@@ -359,36 +346,14 @@ export default function Dashboard() {
     setSelectedSessionId(sessionId);
   }, []);
 
-  /** ブラウザを選択（未起動なら起動） */
-  const handleSelectBrowser = useCallback(() => {
-    if (!activeBrowserSession) {
-      startBrowser();
-    }
-    setSelectedSessionId("browser");
-    setHasBrowserOpened(true);
-  }, [activeBrowserSession, startBrowser]);
-
-  /** localhost URLクリック時: ブラウザに遷移して選択 */
-  const handleOpenUrl = useCallback(
-    (url: string) => {
-      if (isRemote) {
-        if (isMobile) {
-          handleSelectBrowser();
-          setMobileActiveTab("browser");
-        }
-        navigateBrowser(url);
-        setSelectedSessionId("browser");
-        setHasBrowserOpened(true);
-      } else {
-        const a = document.createElement("a");
-        a.href = url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.click();
-      }
-    },
-    [isRemote, isMobile, handleSelectBrowser, navigateBrowser]
-  );
+  /** localhost URLクリック時: 新しいタブで開く */
+  const handleOpenUrl = useCallback((url: string) => {
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.click();
+  }, []);
 
   // PC の作業エリアの「ファイル」のタブ列。端末のタブ列 (useViewerTabs) とは別に持つ
   const {
@@ -663,15 +628,6 @@ export default function Dashboard() {
   // mount/unmount に紐付ける形に戻している。
 
   // リロード時にブラウザ選択状態を維持:
-  // selectedSessionIdが"browser"のまま復元された場合、
-  // browserSessionがまだなければ自動的に起動する。
-  useEffect(() => {
-    if (selectedSessionId === "browser" && !activeBrowserSession && isRemote) {
-      startBrowser();
-      setHasBrowserOpened(true);
-    }
-  }, [selectedSessionId, activeBrowserSession, isRemote, startBrowser]);
-
   // リロードで復元された画面の選択も「開いたことがある」に入れ、
   // 別の対象に移って戻っても再マウントしない
   useEffect(() => {
@@ -733,7 +689,7 @@ export default function Dashboard() {
   // migration ヒューリスティックは持たない (pending 残留の温床だったため廃止)。
   // sessions 一覧の更新は session:stopped / session:created が担うので、
   // ここでは selectedSessionId の付け替えだけを行う。
-  // 選択が "browser" 等の別対象に移っていた場合は付け替えない (prev 不一致)
+  // 選択が別対象に移っていた場合は付け替えない (prev 不一致)
   useEffect(() => {
     if (!socket) return;
     const handler = (data: {
@@ -809,8 +765,8 @@ export default function Dashboard() {
 
   // セッション自動選択
   useEffect(() => {
-    // ブラウザ・画面の選択中はリセットしない
-    if (selectedSessionId === "browser" || selectedScreenId) return;
+    // 画面の選択中はリセットしない
+    if (selectedScreenId) return;
 
     // グリッドビュー表示中は自動選択を抑制 (ユーザーがセルクリックで明示的に選ぶ)
     if (!selectedSessionId && sessions.size > 0 && !gridRepoPath) {
@@ -1046,9 +1002,6 @@ export default function Dashboard() {
           listDiagrams={listDiagrams}
           deleteDiagram={deleteDiagram}
           isSocketConnected={isConnected}
-          activeBrowserSession={activeBrowserSession}
-          onSelectBrowser={handleSelectBrowser}
-          isRemote={isRemote}
           screens={screens}
           requestScreenCredentials={requestScreenCredentials}
           setScreenClipboard={setScreenClipboard}
@@ -1169,9 +1122,6 @@ export default function Dashboard() {
               onOpenProfileManager={() => setShowProfileManager(true)}
               onNewSession={handleNewSession}
               onOpenAbout={() => setShowAboutDialog(true)}
-              onSelectBrowser={handleSelectBrowser}
-              isBrowserSelected={selectedSessionId === "browser"}
-              isRemote={isRemote}
               notificationControl={notificationControl}
               screens={screens}
               selectedScreenId={selectedScreenId}
@@ -1216,26 +1166,8 @@ export default function Dashboard() {
                     onSelectSession={handleSelectSessionFromGrid}
                   />
                 ) : null}
-                {/* ブラウザビュー: 一度開いたら常に描画してdisplay:hiddenで切り替え。
-                    BrowserPaneの再マウント (WebSocketの再接続) を防ぐ */}
-                {hasBrowserOpened && (
-                  <div
-                    className={
-                      selectedSessionId === "browser" ? "h-full" : "hidden"
-                    }
-                  >
-                    {activeBrowserSession ? (
-                      <BrowserPane browserSession={activeBrowserSession} />
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-muted-foreground">
-                        <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                        ブラウザを起動中...
-                      </div>
-                    )}
-                  </div>
-                )}
                 {/* リモート画面: 一度開いた画面はマウントしたまま切り替えて
-                    再接続を防ぐ (ブラウザビューと同じ)。ただし display:none は
+                    再接続を防ぐ。ただし display:none は
                     使わない。noVNC の scaleViewport はコンテナの実寸から倍率を
                     決めるので、隠れている間に window が resize されると
                     autoscale(0,0) に落ち、戻しても戻らないことがある。

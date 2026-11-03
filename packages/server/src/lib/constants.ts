@@ -18,22 +18,3 @@ export const TTYD_PORT_END = 7780;
  *     と上限到達時の退避策（health monitor）は #173 で対応予定。
  */
 export const TTYD_MAX_CONNECTIONS_PER_INSTANCE = 5;
-
-/**
- * CDP (Chrome DevTools Protocol) のポート。
- *
- * browser-manager.ts が起動するChromiumの `--remote-debugging-port` に使う。
- * 127.0.0.1だけで待ち受けるが、`/proxy/:port/*` とポートスキャンから見えないよう
- * ブロックリストにも入れる。`ARK_CDP_PORT` は、同じ機械で2つ目のArkを動かすときに
- * ポートを分けるためのもの。
- */
-export const CDP_PORT = (() => {
-  const raw = process.env.ARK_CDP_PORT;
-  if (raw === undefined || raw === "") return 9222;
-  const n = Number(raw);
-  if (Number.isInteger(n) && n >= 1024 && n <= 65535) return n;
-  console.warn(
-    `[constants] ARK_CDP_PORT=${raw} は1024〜65535の整数ではないため、9222を使います`
-  );
-  return 9222;
-})();
