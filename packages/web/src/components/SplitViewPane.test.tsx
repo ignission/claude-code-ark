@@ -39,7 +39,7 @@ vi.mock("./SplitChatPane", () => ({
           aria-label="端末を開く"
           onClick={props.onOpenTerminal}
         />
-        <textarea data-keynav="chat-input" aria-label="メッセージ" />
+        <textarea data-focus-target="chat-input" aria-label="メッセージ" />
       </div>
     );
   },
@@ -197,7 +197,9 @@ const dialogOf = (scope: ParentNode) =>
 const windowOf = (scope: ParentNode) =>
   scope.querySelector<HTMLElement>('[data-testid="floating-terminal-window"]');
 const terminalIframe = (scope: ParentNode) =>
-  scope.querySelector<HTMLIFrameElement>('iframe[data-keynav="terminal"]');
+  scope.querySelector<HTMLIFrameElement>(
+    'iframe[data-focus-target="terminal"]'
+  );
 const isTerminalHidden = (scope: ParentNode) =>
   terminalIframe(scope)?.closest(".hidden") != null;
 
@@ -394,7 +396,7 @@ describe("PC 会話と端末の窓", () => {
 
     clickButton(dialogOf(container) as ParentNode, "端末を閉じる");
     expect(document.activeElement).toBe(
-      container.querySelector('textarea[data-keynav="chat-input"]')
+      container.querySelector('textarea[data-focus-target="chat-input"]')
     );
   });
 
@@ -406,7 +408,7 @@ describe("PC 会話と端末の窓", () => {
     };
     const container = mount(paneSection(starting, true));
     const chatInput = container.querySelector<HTMLTextAreaElement>(
-      'textarea[data-keynav="chat-input"]'
+      'textarea[data-focus-target="chat-input"]'
     );
     chatInput?.focus();
     expect(terminalIframe(container)).toBeNull();
@@ -443,7 +445,7 @@ describe("PC 会話と端末の窓", () => {
     const container = mount(paneSection(starting, true));
     const root = mountedRoots.at(-1)?.root;
     const chatInput = container.querySelector<HTMLTextAreaElement>(
-      'textarea[data-keynav="chat-input"]'
+      'textarea[data-focus-target="chat-input"]'
     );
     chatInput?.focus();
 

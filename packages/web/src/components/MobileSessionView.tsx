@@ -306,7 +306,7 @@ export function MobileSessionView({
   const focusTerminalWindow = useCallback(() => {
     if (!isActiveRef.current) return;
     rootRef.current
-      ?.querySelector<HTMLElement>('[data-keynav="terminal-window"]')
+      ?.querySelector<HTMLElement>('[data-focus-target="terminal-window"]')
       ?.focus({ preventScroll: true });
   }, []);
   const restoreFocusAfterClose = useCallback(() => {

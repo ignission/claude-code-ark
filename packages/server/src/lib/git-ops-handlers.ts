@@ -26,8 +26,8 @@ import {
 export interface GitOpsHandlersDeps {
   getWorktreePath: (sessionId: string) => string | undefined;
   /**
-   * ブランチの名前を変えたあと。セッション一覧やコマンドパレットは worktree の一覧から
-   * ブランチ名を出すので、一覧を配り直させる (別のセッションのブランチを変えた場合も)
+   * ブランチの名前を変えたあと。セッション一覧は worktree の一覧からブランチ名を
+   * 出すので、一覧を配り直させる (別のセッションのブランチを変えた場合も)
    */
   onBranchRenamed?: (sessionId: string) => void;
   /**

@@ -21,11 +21,6 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
-import { KEYNAV_LEADER_EVENT } from "@/hooks/useTerminalLeaderKey";
-import {
-  KEYNAV_DIAGRAM_SCROLL_EVENT,
-  type KeyNavDiagramScroll,
-} from "@/lib/keynav-dom";
 import { cn } from "@/lib/utils";
 import {
   applyDiagramDeleteResponse,
@@ -58,7 +53,7 @@ export interface DiagramPaneProps {
   socket: TypedSocket | null;
 }
 
-/** キーの層 (diagram-keynav-layer.ts) が port 経由で送ってくるピンチ */
+/** ピンチの層 (diagram-pinch-layer.ts) が port 経由で送ってくるピンチ */
 interface DiagramPinchMessage {
   type: "ark:diagram-pinch";
   deltaY: number;
@@ -105,36 +100,6 @@ export function getDiagramZoomStyle(zoom: number): CSSProperties | undefined {
     height: `calc(100% / ${zoom})`,
     transform: `scale(${zoom})`,
     transformOrigin: "0 0",
-  };
-}
-
-/**
- * ノーマルモードの j / k などで図を送るとき、拡大中の外側の入れ物をどう動かすか。
- *
- * 拡大中は iframe の下のほうが入れ物の外に切れているので、中の文書を送るだけでは
- * そこが見えない。Chrome のピンチと同じく、まず外側 (見えている範囲) を動かし、端まで
- * 来たら中の文書を送る。端への移動 (gg / G) は両方を端へ寄せる。
- *
- * 戻り値の `top` は外側の新しいスクロール位置 (動かさないなら undefined)、`forward` は
- * 中の文書へも指示を渡すか。
- */
-export function planDiagramKeynavScroll(
-  scroller: { scrollTop: number; scrollHeight: number; clientHeight: number },
-  scroll: KeyNavDiagramScroll
-): { top?: number; forward: boolean } {
-  const max = scroller.scrollHeight - scroller.clientHeight;
-  // 拡大していない (外側が動かない)
-  if (max <= 1) return { forward: true };
-  if (scroll.unit === "edge") {
-    return { top: scroll.dir === 1 ? max : 0, forward: true };
-  }
-  const canMove =
-    scroll.dir === 1 ? scroller.scrollTop < max - 1 : scroller.scrollTop > 0;
-  if (!canMove) return { forward: true };
-  const amount = scroll.unit === "page" ? scroller.clientHeight / 2 : 80;
-  return {
-    top: Math.min(max, Math.max(0, scroller.scrollTop + scroll.dir * amount)),
-    forward: false,
   };
 }
 
@@ -240,7 +205,6 @@ export function DiagramViewport({
         <div style={getDiagramZoomSizerStyle(zoom)}>
           <iframe
             title={relPath}
-            data-keynav="diagram"
             srcDoc={html}
             sandbox="allow-scripts"
             className="block h-full w-full border-0 bg-white"
@@ -260,15 +224,6 @@ function isDiagramPinchMessage(data: unknown): data is DiagramPinchMessage {
     (data as { type?: unknown }).type === "ark:diagram-pinch" &&
     typeof (data as { deltaY?: unknown }).deltaY === "number" &&
     Number.isFinite((data as { deltaY: number }).deltaY)
-  );
-}
-
-/** 図の中で前置キーが押された (diagram-keynav-layer が送る) */
-export function isDiagramKeynavLeaderMessage(data: unknown): boolean {
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { type?: unknown }).type === "ark:diagram-keynav-leader"
   );
 }
 
@@ -545,31 +500,6 @@ export function DiagramPane({
     };
   }, [socket, isConnected, worktreePath, relPath, load]);
 
-  // ノーマルモードの j / k など (keynav-dom が、見えている図の iframe へ投げる)
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    const onScroll = (event: Event) => {
-      const detail = (event as CustomEvent<KeyNavDiagramScroll>).detail;
-      const scroller = root.querySelector<HTMLElement>(
-        "[data-diagram-zoom-scroller]"
-      );
-      if (scroller) {
-        const plan = planDiagramKeynavScroll(scroller, detail);
-        if (plan.top !== undefined) scroller.scrollTop = plan.top;
-        if (!plan.forward) return;
-      }
-      portRef.current?.postMessage({
-        type: "ark:diagram-keynav-scroll",
-        unit: detail.unit,
-        dir: detail.dir,
-      });
-    };
-    root.addEventListener(KEYNAV_DIAGRAM_SCROLL_EVENT, onScroll);
-    return () =>
-      root.removeEventListener(KEYNAV_DIAGRAM_SCROLL_EVENT, onScroll);
-  }, []);
-
   useEffect(() => {
     if (!socket) return;
     const onDeleted = (data: { sessionId: string; relPath: string }) => {
@@ -669,13 +599,6 @@ export function DiagramPane({
             zoomAnchorRef.current = point;
           })
         ) {
-          return;
-        }
-        if (isDiagramKeynavLeaderMessage(event.data)) {
-          // 図の中にいたのだから、ノーマルモードは作業エリアから始める
-          window.dispatchEvent(
-            new CustomEvent(KEYNAV_LEADER_EVENT, { detail: { region: "work" } })
-          );
           return;
         }
         if (

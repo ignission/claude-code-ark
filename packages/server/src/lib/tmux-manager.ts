@@ -149,12 +149,6 @@ function posixShellQuote(s: string): string {
  *     脱出される余地があるため、全 control char を一律拒否する。
  *
  */
-/** シェルへ渡せる形の claude の起動コマンド (引数なし)。裏の Claude (AskManager) が使う */
-export function claudeShellCommand(): string {
-  const binary = resolveValidatedClaudePath();
-  return binary === "claude" ? "claude" : posixShellQuote(binary);
-}
-
 function resolveValidatedClaudePath(): string {
   const resolved = resolveClaudePath();
   if (resolved === null) return "claude";
