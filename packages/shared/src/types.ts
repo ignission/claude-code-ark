@@ -595,6 +595,9 @@ export interface ServerToClientEvents {
     lines: BridgeStreamLine[];
   }) => void;
 
+  // ホストのメトリクスだけ (PCのサイドバーとAbout)
+  "host:metrics": (metrics: HostMetrics) => void;
+
   // 主 Dashboard の Repo グリッドビュー
   "session:grid:snapshot": (snapshots: SessionGridSnapshot[]) => void;
 }
@@ -904,6 +907,13 @@ export interface ClientToServerEvents {
    */
   "bridge:subscribe": (data: { focusSessionId?: string | null }) => void;
   "bridge:unsubscribe": () => void;
+
+  /**
+   * ホストのメトリクス (CPU/MEM/DISKなど) だけを購読する。毎秒 host:metrics を送る。
+   * Bridgeと違い、セッションの収集 (セッションごとの capture-pane) をしない。
+   */
+  "host:metrics:subscribe": () => void;
+  "host:metrics:unsubscribe": () => void;
 
   // 主 Dashboard の Repo グリッドビュー
   /**

@@ -45,8 +45,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useBridgeSnapshot } from "@/hooks/useBridgeSnapshot";
 import { useFileTabs } from "@/hooks/useFileTabs";
+import { useHostMetrics } from "@/hooks/useHostMetrics";
 import { useIsMobile } from "@/hooks/useMobile";
 import { useSessionNotifications } from "@/hooks/useSessionNotifications";
 import { useSettings } from "@/hooks/useSettings";
@@ -586,8 +586,10 @@ export default function Dashboard() {
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
-  // AboutダイアログのCPU/MEM/DISK用。開いている間だけbridge:snapshotを購読する
-  const bridgeSnapshot = useBridgeSnapshot(socket, showAboutDialog);
+  // PCのサイドバー下部とAboutに出すCPU/MEM/DISK用。サイドバーに常に出すのでPCでは
+  // 常に購読する。モバイルにサイドバーは無いが、Aboutを開いたままモバイル幅になっても
+  // 値を止めないよう、Aboutを開いている間も購読する
+  const hostMetrics = useHostMetrics(socket, !isMobile || showAboutDialog);
 
   const copyToClipboard = (text: string | null) => {
     if (text) {
@@ -1027,6 +1029,7 @@ export default function Dashboard() {
               onOpenProfileManager={() => setShowProfileManager(true)}
               onNewSession={handleNewSession}
               onOpenAbout={() => setShowAboutDialog(true)}
+              metrics={hostMetrics}
               notificationControl={notificationControl}
               screens={screens}
               selectedScreenId={selectedScreenId}
@@ -1457,7 +1460,7 @@ export default function Dashboard() {
       <AboutDialog
         open={showAboutDialog}
         onOpenChange={setShowAboutDialog}
-        metrics={bridgeSnapshot?.metrics ?? null}
+        metrics={hostMetrics}
       />
     </>
   );

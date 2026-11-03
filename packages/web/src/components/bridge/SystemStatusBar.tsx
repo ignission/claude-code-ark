@@ -4,12 +4,17 @@ import { clamp } from "./utils";
 
 interface SystemStatusBarProps {
   metrics: HostMetrics | null;
+  /** 狭い幅 (PCのサイドバーは最小180px) 向けに2行で詰めて出す */
+  compact?: boolean;
 }
 
 const SPARK_H = 14;
 const SPARK_SAMPLES = 30;
 
-export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
+export function SystemStatusBar({
+  metrics,
+  compact = false,
+}: SystemStatusBarProps) {
   const cpu = metrics ? Math.round(metrics.cpuPercent) : null;
   const memTotal = metrics?.memory.totalGB ?? 0;
   const memUsed = metrics?.memory.usedGB ?? 0;
@@ -24,6 +29,38 @@ export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
   // 現在の URL の token クエリを引き継ぐ
   const bridgeHref = buildBridgeHref();
 
+  const cpuItem = (
+    <span
+      className={`flex items-center flex-1 min-w-0 ${compact ? "gap-1.5" : "gap-2"}`}
+    >
+      <span className="text-muted-foreground shrink-0">CPU</span>
+      <Sparkline values={cpuHistory} />
+      <span className="tabular-nums shrink-0">
+        {cpu !== null ? `${cpu}%` : "--"}
+      </span>
+    </span>
+  );
+
+  // compact はサイドバーの最小幅 (180px) でも枠に収まるよう、
+  // CPU と MEM/DISK を2行に分け、別タブのアイコンを省く (title で示す)
+  if (compact) {
+    return (
+      <a
+        href={bridgeHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Bridgeを別タブで開く"
+        className="flex flex-col gap-1 rounded-lg border border-border bg-muted px-2 py-1.5 text-xs text-foreground select-none transition-colors hover:bg-accent cursor-pointer"
+      >
+        {cpuItem}
+        <span className="flex items-center justify-between gap-2">
+          <Metric label="MEM" percent={mem} />
+          <Metric label="DISK" percent={disk} />
+        </span>
+      </a>
+    );
+  }
+
   return (
     <a
       href={bridgeHref}
@@ -32,13 +69,7 @@ export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
       title="Bridgeを別タブで開く"
       className="flex items-center gap-5 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground select-none transition-colors hover:bg-accent cursor-pointer"
     >
-      <span className="flex items-center gap-2 flex-1 min-w-0">
-        <span className="text-muted-foreground shrink-0">CPU</span>
-        <Sparkline values={cpuHistory} />
-        <span className="tabular-nums shrink-0">
-          {cpu !== null ? `${cpu}%` : "--"}
-        </span>
-      </span>
+      {cpuItem}
       <Metric label="MEM" percent={mem} />
       <Metric label="DISK" percent={disk} />
       <ExternalLink

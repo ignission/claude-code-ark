@@ -21,6 +21,7 @@ import {
   type BridgeSnapshot,
   type ClientToServerEvents,
   type DiagramListResponse,
+  type HostMetrics,
   MESSAGE_SHORTCUT_MAX_LENGTH,
   type ServerToClientEvents,
   type SessionGridSnapshot,
@@ -1318,6 +1319,8 @@ export async function startServer(
   // 乱れて不正な値になる。サーバ全体で 1本のループに統一して、購読中のクライアント
   // (Socket.IO room) にブロードキャストする。
   const BRIDGE_ROOM = "bridge:subscribers";
+  /** CPU/MEM/DISKだけを受け取る購読先 (PCのサイドバーとAbout) */
+  const METRICS_ROOM = "host-metrics:subscribers";
   const GRID_ROOM = "grid:subscribers";
   /**
    * セッション単位の配信先。JSONL を購読しているクライアント
@@ -1330,12 +1333,31 @@ export async function startServer(
   // (subscribe ハンドラ内で hostMetrics.sample() を再実行すると、内部の prev*
   // 状態が乱れて次回 broadcast の差分計算が崩れるためキャッシュ参照に絞る)
   let lastBridgeSnapshot: BridgeSnapshot | null = null;
+  let lastHostMetrics: HostMetrics | null = null;
   let lastGridSnapshots: SessionGridSnapshot[] | null = null;
 
-  const broadcastBridgeSnapshot = async () => {
-    if (io.sockets.adapter.rooms.get(BRIDGE_ROOM)?.size === undefined) return;
+  /**
+   * 1秒ごとにホストのメトリクスを1回だけ取り、購読先へ配る。
+   *
+   * - METRICS_ROOM (PCのサイドバーとAbout) にはメトリクスだけを送る
+   * - BRIDGE_ROOM (Bridge) にはセッションの収集も足したスナップショットを送る
+   *
+   * hostMetrics.sample() は前回値との差分でCPUやI/Oを出すので、両方の購読先が
+   * いても1周期に1回だけ呼ぶ。セッションの収集はセッションごとに capture-pane を
+   * 同期で実行して重いので、Bridgeの購読者がいるときだけ行う。
+   */
+  const broadcastHostSnapshots = async () => {
+    const hasMetricsSubscribers =
+      io.sockets.adapter.rooms.get(METRICS_ROOM)?.size !== undefined;
+    const hasBridgeSubscribers =
+      io.sockets.adapter.rooms.get(BRIDGE_ROOM)?.size !== undefined;
+    if (!hasMetricsSubscribers && !hasBridgeSubscribers) return;
     try {
       const metrics = await hostMetrics.sample();
+      lastHostMetrics = metrics;
+      if (hasMetricsSubscribers)
+        io.to(METRICS_ROOM).emit("host:metrics", metrics);
+      if (!hasBridgeSubscribers) return;
       const sessions = collectBridgeSessions();
       const tunnels = buildTunnelEntries({ primaryUrl: tunnelUrl });
       const snapshot = {
@@ -1364,7 +1386,7 @@ export async function startServer(
 
   // 購読クライアントがいるときだけ実行する (idle 時は no-op)
   const bridgeBroadcastInterval = setInterval(() => {
-    void broadcastBridgeSnapshot();
+    void broadcastHostSnapshots();
   }, 1000);
   const gridBroadcastInterval = setInterval(() => {
     broadcastGridSnapshot();
@@ -3228,18 +3250,30 @@ export async function startServer(
 
     // ===== Bridge Dashboard =====
     // 購読は Socket.IO room (BRIDGE_ROOM) で管理。
-    // 実際のサンプリング/送信はサーバ共有の broadcastBridgeSnapshot が行う。
+    // 実際のサンプリング/送信はサーバ共有の broadcastHostSnapshots が行う。
     // 初回応答はキャッシュ参照のみ (sample() を呼ぶと共有 prev* 状態が乱れる)。
     socket.on("bridge:subscribe", () => {
       socket.join(BRIDGE_ROOM);
       if (lastBridgeSnapshot) {
         socket.emit("bridge:snapshot", lastBridgeSnapshot);
       }
-      // キャッシュ未着の場合 (起動直後) は次回 broadcastBridgeSnapshot で受け取る
+      // キャッシュ未着の場合 (起動直後) は次回 broadcastHostSnapshots で受け取る
     });
 
     socket.on("bridge:unsubscribe", () => {
       socket.leave(BRIDGE_ROOM);
+    });
+
+    // ホストのメトリクスだけの購読。Bridgeと同じ周期の値を共有する
+    socket.on("host:metrics:subscribe", () => {
+      socket.join(METRICS_ROOM);
+      if (lastHostMetrics) {
+        socket.emit("host:metrics", lastHostMetrics);
+      }
+    });
+
+    socket.on("host:metrics:unsubscribe", () => {
+      socket.leave(METRICS_ROOM);
     });
 
     // ===== Repo Grid View =====

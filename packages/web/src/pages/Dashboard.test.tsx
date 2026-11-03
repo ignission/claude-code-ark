@@ -12,7 +12,7 @@ const testDoubles = vi.hoisted(() => ({
   splitChatPane: vi.fn(),
   sessionSidebar: vi.fn(),
   aboutDialog: vi.fn(),
-  bridgeSnapshotEnabled: vi.fn(),
+  hostMetricsEnabled: vi.fn(),
   mobileLayout: vi.fn(),
   isMobile: false,
   viewerTabsArgs: vi.fn(),
@@ -41,9 +41,9 @@ vi.mock("@/hooks/useMobile", () => ({
   useIsMobile: () => testDoubles.isMobile,
 }));
 
-vi.mock("@/hooks/useBridgeSnapshot", () => ({
-  useBridgeSnapshot: (_socket: unknown, enabled: boolean) => {
-    testDoubles.bridgeSnapshotEnabled(enabled);
+vi.mock("@/hooks/useHostMetrics", () => ({
+  useHostMetrics: (_socket: unknown, enabled: boolean) => {
+    testDoubles.hostMetricsEnabled(enabled);
     return null;
   },
 }));
@@ -338,7 +338,7 @@ beforeEach(() => {
   testDoubles.setSetting.mockClear();
   testDoubles.sessionSidebar.mockClear();
   testDoubles.aboutDialog.mockClear();
-  testDoubles.bridgeSnapshotEnabled.mockClear();
+  testDoubles.hostMetricsEnabled.mockClear();
   testDoubles.screenPaneMount.mockClear();
   testDoubles.screenPaneUnmount.mockClear();
 
@@ -498,7 +498,7 @@ describe("Dashboardのファイルペイン配線", () => {
 });
 
 describe("Dashboardのサイドバー配線", () => {
-  it("状態とプレビューをサイドバーへ渡し、Aboutを開いている間だけホストの状態を購読する", () => {
+  it("状態とプレビューをサイドバーへ渡し、PCではホストの状態を常に購読する", () => {
     mount(<Dashboard />);
 
     const state = testDoubles.socketState;
@@ -511,16 +511,24 @@ describe("Dashboardのサイドバー配線", () => {
       open: false,
       metrics: null,
     });
-    expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(false);
+    expect(sidebar).toHaveProperty("metrics", null);
+    expect(testDoubles.hostMetricsEnabled).toHaveBeenLastCalledWith(true);
 
     act(() => (sidebar.onOpenAbout as () => void)());
 
     expect(latestProps(testDoubles.aboutDialog)).toMatchObject({ open: true });
-    expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(true);
+    expect(testDoubles.hostMetricsEnabled).toHaveBeenLastCalledWith(true);
   });
 });
 
 describe("Dashboardのモバイル一覧の配線", () => {
+  it("モバイルではAboutを開いていない限りホストの状態を購読しない", () => {
+    testDoubles.isMobile = true;
+    mount(<Dashboard />);
+
+    expect(testDoubles.hostMetricsEnabled).toHaveBeenLastCalledWith(false);
+  });
+
   it("状態・プレビュー・表示名・プロファイルと、リポジトリの操作をMobileLayoutへ渡す", () => {
     testDoubles.isMobile = true;
     mount(<Dashboard />);
