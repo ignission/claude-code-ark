@@ -6,10 +6,18 @@
  * 色を付けるのは落ちたときだけ (セッションの状態の色は使わない)。
  * 主ラベルは表示名があれば表示名、無ければリポジトリ名。行のtitleはリポジトリの絶対パス。
  * 行メニューはsidebarでは右クリックと `…`、cardでは `⋮` で開き、中身は同じ。
+ * task_start で起こした子の行は、親の直後に寄せたときだけ字下げし、2行目の先頭に「↳ 親」を出す
+ * (押すと親を開く)。親の行には子の数を出す。
  */
 
 import type { Profile, SessionPrStatus } from "@ark/shared";
-import { Ellipsis, MoreVertical, RotateCw, TriangleAlert } from "lucide-react";
+import {
+  CornerDownRight,
+  Ellipsis,
+  MoreVertical,
+  RotateCw,
+  TriangleAlert,
+} from "lucide-react";
 import {
   Fragment,
   type KeyboardEvent,
@@ -80,6 +88,12 @@ export interface SessionListRowProps {
   prStatus: SessionPrStatus | null;
   /** 未完了の分岐TODOの件数。0なら出さない */
   todoCount?: number;
+  /** この worktree から起こした子の数。0なら出さない */
+  childCount?: number;
+  /** 子の行なら親の名前。親の行や普通の行は null */
+  parentLabel?: string | null;
+  /** 親を開く。親のセッションが無ければ undefined (名前だけ出す) */
+  onOpenParent?: () => void;
   /** プロファイルのチップ。未割り当てならnull */
   profile: SessionRowProfile | null;
   /** 起動後にプロファイルの割り当てが変わった (再起動が要る) */
@@ -102,6 +116,9 @@ export function SessionListRow({
   previewText,
   prStatus,
   todoCount = 0,
+  childCount = 0,
+  parentLabel = null,
+  onOpenParent,
   profile,
   staleProfile,
   selected,
@@ -226,6 +243,7 @@ export function SessionListRow({
     <div
       className={cn(
         "group rounded-lg border transition-colors",
+        entry.nested && (variant === "sidebar" ? "ml-4" : "ml-5"),
         variant === "sidebar"
           ? cn(
               "px-3 py-2.5",
@@ -310,8 +328,36 @@ export function SessionListRow({
               </span>
             )}
           </div>
-          {(profile || badge || todoCount > 0 || detailSegments.length > 0) && (
+          {(profile ||
+            badge ||
+            todoCount > 0 ||
+            childCount > 0 ||
+            parentLabel !== null ||
+            detailSegments.length > 0) && (
             <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground">
+              {parentLabel !== null && (
+                <button
+                  type="button"
+                  data-testid="session-row-parent"
+                  title={`親: ${parentLabel}`}
+                  aria-label={`親 ${parentLabel} を開く`}
+                  disabled={!onOpenParent}
+                  // 行を押したときの動き (行を開く・フォーカスを外す) を起こさない
+                  onClick={event => {
+                    event.stopPropagation();
+                    onOpenParent?.();
+                  }}
+                  onMouseDown={event => event.stopPropagation()}
+                  onKeyDown={event => event.stopPropagation()}
+                  className="inline-flex h-5 max-w-[8rem] shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 text-xs text-muted-foreground enabled:hover:text-foreground"
+                >
+                  <CornerDownRight
+                    className="size-3 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span className="truncate">{parentLabel}</span>
+                </button>
+              )}
               {profile && (
                 <span
                   data-testid="session-row-profile"
@@ -340,6 +386,18 @@ export function SessionListRow({
                 >
                   {badge.text}
                 </a>
+              )}
+              {childCount > 0 && (
+                <span
+                  role="img"
+                  data-testid="session-row-children"
+                  aria-label={`子のタスク ${childCount} 件`}
+                  title={`子のタスク ${childCount} 件`}
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
+                >
+                  <CornerDownRight className="size-3" aria-hidden="true" />
+                  {childCount}
+                </span>
               )}
               {todoCount > 0 && (
                 <span

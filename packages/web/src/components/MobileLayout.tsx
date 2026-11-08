@@ -33,6 +33,7 @@ import type { Socket } from "socket.io-client";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
 import { ScreenPane } from "@/components/ScreenPane";
+import type { SplitTaskTarget } from "@/components/SessionSectionList";
 import type { ViewerTab } from "@/components/TerminalPane";
 import type {
   ChatViewRequest,
@@ -98,6 +99,10 @@ interface MobileLayoutProps {
   }>;
   onCopyBuffer?: (sessionId: string) => Promise<string | null>;
   onNewSession: () => void;
+  /** 見出しの「新しいタスク」。親なしで新しいタスクのダイアログを開く */
+  onNewTask: () => void;
+  /** 行メニューの「子タスクを分離」。その worktree を親にして新しいタスクのダイアログを開く */
+  onSplitTask?: (target: SplitTaskTarget) => void;
   // ビューアタブ状態は Dashboard から props で受け取り、ここでは useViewerTabs を呼ばない
   getTabsForSession: (sessionId: string) => ViewerTab[];
   getActiveTabForSession: (sessionId: string) => number;
@@ -206,6 +211,8 @@ export function MobileLayout({
   onUploadFile,
   onCopyBuffer,
   onNewSession,
+  onNewTask,
+  onSplitTask,
   getTabsForSession,
   getActiveTabForSession,
   getViewerOpenSeqForSession,
@@ -438,6 +445,8 @@ export function MobileLayout({
           onSetWorktreeProfile={onSetWorktreeProfile}
           onOpenProfileManager={onOpenProfileManager}
           onNewSession={onNewSession}
+          onNewTask={onNewTask}
+          onSplitTask={onSplitTask}
           notificationControl={notificationControl}
         />
       </div>

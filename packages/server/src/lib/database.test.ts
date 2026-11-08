@@ -311,6 +311,68 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
   });
 
   // ============================================================
+  // sessions.parent_worktree_path (task_start で起こした子の親)
+  // ============================================================
+
+  describe("upsertSession: parentWorktreePath 永続化", () => {
+    it("親つきで保存すると読み戻せ、省略すれば null", () => {
+      testDb.upsertSession({
+        id: "child",
+        worktreeId: "wt-child",
+        worktreePath: "/repo-fix",
+        repoPath: "/repo",
+        status: "active",
+        parentWorktreePath: "/repo",
+      });
+      testDb.upsertSession({
+        id: "plain",
+        worktreeId: "wt-plain",
+        worktreePath: "/repo-plain",
+        status: "active",
+      });
+      expect(
+        testDb.getSessionByWorktreePath("/repo-fix")?.parentWorktreePath
+      ).toBe("/repo");
+      expect(
+        testDb.getSessionByWorktreePath("/repo-plain")?.parentWorktreePath
+      ).toBeNull();
+    });
+
+    it("親を渡さない upsert (OS の再起動後の session:start など) では親を消さない", () => {
+      const base = {
+        worktreeId: "wt",
+        worktreePath: "/repo-fix",
+        status: "active" as const,
+      };
+      testDb.upsertSession({ id: "a", ...base, parentWorktreePath: "/repo" });
+      testDb.upsertSession({ id: "b", ...base });
+      expect(
+        testDb.getSessionByWorktreePath("/repo-fix")?.parentWorktreePath
+      ).toBe("/repo");
+    });
+
+    it("replaceSession (再起動) で親を渡せば引き継がれる", () => {
+      testDb.upsertSession({
+        id: "old",
+        worktreeId: "wt",
+        worktreePath: "/repo-fix",
+        status: "active",
+        parentWorktreePath: "/repo",
+      });
+      testDb.replaceSession("old", {
+        id: "new",
+        worktreeId: "wt",
+        worktreePath: "/repo-fix",
+        status: "active",
+        parentWorktreePath: "/repo",
+      });
+      const restored = testDb.getSessionByWorktreePath("/repo-fix");
+      expect(restored?.id).toBe("new");
+      expect(restored?.parentWorktreePath).toBe("/repo");
+    });
+  });
+
+  // ============================================================
   // sessions.profile_id 永続化
   // ============================================================
 

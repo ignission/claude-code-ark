@@ -81,6 +81,11 @@ export interface Session {
    * 起動時に無効化される（未オープン時は null/undefined）。
    */
   lastDiagramPath?: string | null;
+  /**
+   * このセッションを起こした親の worktree のパス (task_start / task:start で起こした子だけ)。
+   * サイドバーで子を親の下に並べ、子から親を開くために使う。人が普通に作ったセッションは null
+   */
+  parentWorktreePath?: string | null;
 }
 
 /**
@@ -374,8 +379,6 @@ export interface ServerToClientEvents {
   "worktree:created": (payload: {
     repoPath: string;
     worktree: Worktree;
-    /** worktree:create で受けた todoId をそのまま返す (自分が頼んだ作成かの判別用) */
-    todoId?: string;
   }) => void;
   "worktree:deleted": (payload: {
     repoPath: string;
@@ -614,9 +617,16 @@ export interface ClientToServerEvents {
     repoPath: string;
     branchName: string;
     baseBranch?: string;
-    /** 分岐TODOから始める作成。作成できたらそのTODOの始めた先を新しい worktree にする */
-    todoId?: string;
   }) => void;
+  /**
+   * 新しいタスク: worktree を作り、セッションを起動し、起動を待って prompt を送る。
+   * MCP の task_start と同じ実装 (task-start.ts)。callback はセッションが起動した時点で返り、
+   * prompt の送信に失敗したら session:error で知らせる
+   */
+  "task:start": (
+    data: TaskStartRequest,
+    callback: (response: TaskStartResponse) => void
+  ) => void;
   "worktree:delete": (data: { repoPath: string; worktreePath: string }) => void;
 
   // Session commands
@@ -1001,6 +1011,30 @@ export interface Todo {
   /** Claude が付けた、新しい worktree のブランチ名の候補 (kebab-case)。無ければ null */
   branchName: string | null;
 }
+
+/** task:start で送るもの */
+export interface TaskStartRequest {
+  repoPath: string;
+  /** タスク名。ブランチ名と worktree のディレクトリ名の元になる */
+  name: string;
+  /** 子セッションに最初に送る文 */
+  prompt: string;
+  /** 省略時はリポジトリの既定のブランチ */
+  baseBranch?: string;
+  /** 親にする worktree (分岐TODOから起こすときは元の worktree)。省略時は親なし */
+  parentWorktreePath?: string;
+  /** 分岐TODOから起こすとき。起動できたらそのTODOの始めた先を新しい worktree にする */
+  todoId?: string;
+}
+
+export type TaskStartResponse =
+  | {
+      ok: true;
+      sessionId: string;
+      worktreePath: string;
+      branch: string;
+    }
+  | { ok: false; error: string };
 
 export type TodoListResponse =
   | { ok: true; todos: Todo[] }

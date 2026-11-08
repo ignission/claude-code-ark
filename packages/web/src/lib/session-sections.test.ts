@@ -7,6 +7,9 @@ import { describe, expect, it } from "vitest";
 import type { RepoGroup } from "@/hooks/useGroupedWorktreeItems";
 import {
   buildSessionEntries,
+  countChildren,
+  nestChildEntries,
+  type SessionListEntry,
   sectionize,
   sortSessionEntries,
   toListRows,
@@ -315,5 +318,106 @@ describe("sectionize と toListRows", () => {
       section: "working",
       count: 0,
     });
+  });
+});
+
+describe("親子の並び (task_start で起こした子)", () => {
+  function childSession(
+    id: string,
+    worktreeId: string,
+    worktreePath: string,
+    parentWorktreePath: string
+  ): ManagedSession {
+    return {
+      id,
+      worktreeId,
+      worktreePath,
+      parentWorktreePath,
+    } as ManagedSession;
+  }
+
+  const groups = new Map<string, RepoGroup>([
+    [
+      "/r/app",
+      group("app", [
+        {
+          worktree: worktree("p", "/r/app"),
+          session: session("sp", "p", "/r/app"),
+        },
+        {
+          worktree: worktree("a", "/r/app-a"),
+          session: session("sa", "a", "/r/app-a"),
+        },
+        {
+          worktree: worktree("c1", "/r/app-c1"),
+          session: childSession("sc1", "c1", "/r/app-c1", "/r/app"),
+        },
+        {
+          worktree: worktree("c2", "/r/app-c2"),
+          session: childSession("sc2", "c2", "/r/app-c2", "/r/app"),
+        },
+      ]),
+    ],
+  ]);
+
+  it("同じセクションの子は親の直後に寄せ、字下げの印を付ける", () => {
+    const statuses = new Map<string, BridgeSessionStatus>([
+      ["sp", "IDLE"],
+      ["sa", "IDLE"],
+      ["sc1", "IDLE"],
+      ["sc2", "IDLE"],
+    ]);
+    const [yourTurn] = sectionize(
+      sortSessionEntries(buildSessionEntries(groups, statuses))
+    );
+    expect(yourTurn?.entries.map(e => [e.key, e.nested])).toEqual([
+      ["wt:p", false],
+      ["wt:c1", true],
+      ["wt:c2", true],
+      ["wt:a", false],
+    ]);
+  });
+
+  it("親と別のセクションの子は、自分のセクションに字下げせずに残る", () => {
+    const statuses = new Map<string, BridgeSessionStatus>([
+      ["sp", "IDLE"],
+      ["sa", "IDLE"],
+      ["sc1", "TOOL"],
+      ["sc2", "IDLE"],
+    ]);
+    const sections = sectionize(
+      sortSessionEntries(buildSessionEntries(groups, statuses))
+    );
+    expect(
+      sections.map(s => [s.section, s.entries.map(e => [e.key, e.nested])])
+    ).toEqual([
+      [
+        "your-turn",
+        [
+          ["wt:p", false],
+          ["wt:c2", true],
+          ["wt:a", false],
+        ],
+      ],
+      ["working", [["wt:c1", false]]],
+    ]);
+  });
+
+  it("子の数はセクションをまたいで数える", () => {
+    const entries = buildSessionEntries(groups, new Map());
+    expect(countChildren(entries)).toEqual(new Map([["/r/app", 2]]));
+  });
+
+  it("親子が輪になっていても行を落とさない", () => {
+    const entry = (path: string, parent: string): SessionListEntry =>
+      ({
+        key: path,
+        worktree: worktree(path, path),
+        session: null,
+        parentWorktreePath: parent,
+        nested: false,
+      }) as unknown as SessionListEntry;
+    const result = nestChildEntries([entry("/x", "/y"), entry("/y", "/x")]);
+    expect(result.map(e => e.key).sort()).toEqual(["/x", "/y"]);
   });
 });

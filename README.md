@@ -86,6 +86,7 @@ The mobile UI has its own session list, chat view, terminal with quick keys, and
 - Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser. Ark connects with `ssh -o BatchMode=yes` as the user running the server, so that user needs a key without a passphrase (or one loaded in ssh-agent) and the host already in `known_hosts`.
 - Use a different Claude account per repository (Linux only).
 - Keep topics set aside mid-conversation in the TODO tab. Press the TODO button to the left of the chat input and Claude writes the topics it set aside down as TODOs. Only you can complete or delete one. See [Branch TODOs](#branch-todos).
+- Start a session in a new worktree from just a name and a prompt: without a parent from the list header, or as a child task split off a session row. See [New tasks](#new-tasks).
 
 ## How it works
 
@@ -174,9 +175,20 @@ Topics set aside mid-conversation are kept as TODOs. Press the TODO button to th
 
 TODOs show in the right pane's TODO tab, as counts in the sidebar, and in the mobile TODO view. Claude cannot complete or delete a TODO.
 
-From a TODO row you can start a conversation on that topic in the original session or in a new worktree (the branch name defaults to the short English name Claude gave when adding the TODO, or `todo-<first 6 chars of id>`). The TODO text goes into the chat input as a draft; you press send yourself. The TODO row shows where you started it.
+From a TODO row you can start a conversation on that topic in the original session or in a new worktree. In the original session, the TODO text goes into the chat input as a draft and you press send yourself. In a new worktree, the [New task](#new-tasks) dialog opens with the task name set to the short English name Claude gave when adding the TODO (or `todo-<first 6 chars of id>`); starting it sends the TODO text as the first message, with the original worktree as the parent. The TODO row shows where you started it.
 
 Existing sessions do not get branch TODOs until `claude` is restarted, because `claude` reads the MCP tool list at startup.
+
+## New tasks
+
+From just a task name and a prompt, Ark creates a worktree, starts a session and sends the first message in one go. The task name becomes the branch name. There are two entry points.
+
+- **"New task" in the list header:** creates a task with no parent. Pick the repository; leave the base branch empty to branch from the repository's default branch (`origin/HEAD`).
+- **"Split child task" in a session row's menu** (right-click or `…` on desktop, `⋮` on mobile): that row's worktree becomes the parent, and the base branch is prefilled with the parent's current branch. Leave it empty to branch from the repository's default branch.
+
+Claude inside a session can do the same with the MCP tool `task_start`. The calling session's worktree becomes the parent, and the base branch defaults to the parent's current branch. The child's result is not sent back to the parent. Children are listed right under their parent in the sidebar (when both are in the same status group), the "↳ parent" chip on a child row opens the parent, and the parent row shows how many children it has.
+
+The first message is sent only after Ark sees claude running and waiting for input (it reads the CLI's status file, so Linux only). If it cannot tell, for example because a startup confirmation is still on screen, it does not send and tells you instead. The worktree and session stay, so you can open it and send by hand.
 
 ## Configuration
 

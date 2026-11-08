@@ -23,7 +23,10 @@ import type {
   BoardSessionRegistry,
 } from "./board-mcp-server.js";
 import { analyzeBridgeStatus } from "./bridge-collector.js";
-import { cliSessionStatusReader } from "./cli-session-status.js";
+import {
+  type CliSessionState,
+  cliSessionStatusReader,
+} from "./cli-session-status.js";
 import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
 import { cleanupLegacyContextSettings } from "./legacy-context-settings-cleanup.js";
@@ -441,6 +444,8 @@ export class SessionOrchestrator extends EventEmitter {
       // リロード後にクライアントが右ペインの図タブを復元するために必要
       // (board_open の度に db.updateSessionLastDiagram で更新される)
       lastDiagramPath: dbSession?.lastDiagramPath ?? null,
+      // サイドバーで子を親の下に並べるために必要 (task_start で起こした子だけ値がある)
+      parentWorktreePath: dbSession?.parentWorktreePath ?? null,
     };
   }
 
@@ -632,7 +637,11 @@ export class SessionOrchestrator extends EventEmitter {
   async startSession(
     worktreeId: string,
     worktreePath: string,
-    repoPath?: string
+    repoPath?: string,
+    options: {
+      /** 親の worktree (task_start で起こすときだけ)。新しく作るセッションの行に記録する */
+      parentWorktreePath?: string;
+    } = {}
   ): Promise<ManagedSession> {
     // worktreePathから導出したrepoPathを優先する。
     // 呼び出し側の `currentRepoPath` はソケット状態に依存するため、
@@ -733,6 +742,7 @@ export class SessionOrchestrator extends EventEmitter {
         // サーバー再起動後に token を registry へ復帰させるため、
         // mcp-config のパスを永続化する (token 自体は 0600 のファイル内のみ)
         boardMcpConfigPath: boardPrep?.cfgPath ?? null,
+        parentWorktreePath: options.parentWorktreePath ?? null,
       });
     } catch (error) {
       ttydManager.stopInstance(tmuxSession.id);
@@ -756,6 +766,7 @@ export class SessionOrchestrator extends EventEmitter {
       ttydPort: ttydInstance.port,
       ttydUrl: `/ttyd/${tmuxSession.id}/`,
       profileId: snapshot?.id ?? null,
+      parentWorktreePath: options.parentWorktreePath ?? null,
     };
 
     this.emit("session:created", managed);
@@ -875,6 +886,8 @@ export class SessionOrchestrator extends EventEmitter {
         profileId: snapshot?.id ?? null,
         profileConfigDir: snapshot?.configDir ?? null,
         boardMcpConfigPath: boardPrep?.cfgPath ?? null,
+        // 再起動しても親子の表示を保つ
+        parentWorktreePath: dbSession?.parentWorktreePath ?? null,
       };
       if (dbSession) {
         db.replaceSession(dbSession.id, newSessionInput);
@@ -922,6 +935,7 @@ export class SessionOrchestrator extends EventEmitter {
       ttydPort: newTtyd.port,
       ttydUrl: `/ttyd/${newTmux.id}/`,
       profileId: snapshot?.id ?? null,
+      parentWorktreePath: dbSession?.parentWorktreePath ?? null,
     };
     this.emit("session:created", managed);
     this.emit("session:restarted", {
@@ -1123,6 +1137,50 @@ export class SessionOrchestrator extends EventEmitter {
   getTtydPort(sessionId: string): number | null {
     const instance = ttydManager.getInstance(sessionId);
     return instance?.port || null;
+  }
+
+  /**
+   * 起動したばかりのセッションに、最初の文を送ってよいかを見るための状態 (task-start.ts が使う)。
+   *
+   * 画面の判定 (bridgeStatus) だけでは足りない。tmux を作って claude の起動コマンドを打った直後は、
+   * シェルのプロンプトと打ったコマンドだけが画面にあり、transcript もまだ無いので READY に倒れる。
+   * そこで送るとシェルに打ち込まれる。claude 本体が起動したことは CLI の状態ファイル
+   * (`<configDir>/sessions/<pid>.json`) が書かれたことで見る。/proc の無い環境ではこれを読めないので
+   * cliRecordSupported=false を返し、呼び出し側は自動送信をあきらめる。
+   *
+   * @returns セッションが無いか画面を取れなければ null
+   */
+  readLaunchState(sessionId: string): {
+    bridgeStatus: BridgeSessionStatus;
+    cliState: CliSessionState | null;
+    cliRecordSupported: boolean;
+  } | null {
+    const session = tmuxManager.getSession(sessionId);
+    if (!session) return null;
+    const captured = tmuxManager.capturePaneVisible(sessionId);
+    if (!captured.ok) return null;
+    const configDir = this.sessionProfiles.get(sessionId)?.configDir ?? null;
+    const cliRecord = cliSessionStatusReader.recordFor({
+      tmuxSessionName: session.tmuxSessionName,
+      worktreePath: session.worktreePath,
+      configDir,
+    });
+    const { status } = analyzeBridgeStatus(
+      captured.value,
+      session.status === "stopped",
+      cliRecord?.state ?? null,
+      () =>
+        readTranscriptConversationState(
+          session.worktreePath,
+          configDir,
+          cliRecord?.sessionId ?? null
+        )
+    );
+    return {
+      bridgeStatus: status,
+      cliState: cliRecord?.state ?? null,
+      cliRecordSupported: process.platform === "linux",
+    };
   }
 
   /**

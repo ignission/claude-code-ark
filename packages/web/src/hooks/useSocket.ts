@@ -27,6 +27,8 @@ import type {
   SessionPrStatus,
   SpecialKey,
   SystemCapabilities,
+  TaskStartRequest,
+  TaskStartResponse,
   UsageProgress,
   UsageReport,
   Worktree,
@@ -74,15 +76,6 @@ interface UseSocketOptions {
   initialRepoPath?: string | null;
   onRepoListChange?: (list: string[]) => void;
   onRepoPathChange?: (path: string | null) => void;
-  /**
-   * `worktree:created` が todoId を伴って届いたときに呼ぶ (自分が頼んだ「TODOから始める作成」の完了通知)。
-   * 検証済みのイベントだけ。ref 越しに読むので、毎レンダーで新しい関数を渡してよい
-   */
-  onWorktreeCreatedForTodo?: (event: {
-    todoId: string;
-    repoPath: string;
-    worktree: Worktree;
-  }) => void;
 }
 
 interface UseSocketReturn {
@@ -118,12 +111,12 @@ interface UseSocketReturn {
 
   // Worktrees
   worktrees: Worktree[];
-  /** todoId を渡すと、サーバーが作成後にそのTODOの始めた先を新しいworktreeにする */
-  createWorktree: (
-    branchName: string,
-    baseBranch?: string,
-    todoId?: string
-  ) => void;
+  createWorktree: (branchName: string, baseBranch?: string) => void;
+  /**
+   * 新しいタスク (worktree の作成 → 起動 → 最初の文の送信)。セッションが起動したら解決する。
+   * 最初の文を送れなかったときは、あとで session:error が届く
+   */
+  startTask: (request: TaskStartRequest) => Promise<TaskStartResponse>;
   deleteWorktree: (worktreePath: string) => void;
   refreshWorktrees: () => void;
 
@@ -766,25 +759,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setWorktreesByRepo(prev => setRepoWorktrees(prev, listRepoPath, wts));
     });
 
-    socket.on(
-      "worktree:created",
-      ({ repoPath: eventRepoPath, worktree, todoId }) => {
-        if (
-          !isAllowedWorktreeRepo(eventRepoPath) ||
-          !isValidWorktree(worktree)
-        ) {
-          return;
-        }
-        setWorktreesByRepo(prev => addWorktree(prev, eventRepoPath, worktree));
-        if (typeof todoId === "string" && todoId.length > 0) {
-          optionsRef.current.onWorktreeCreatedForTodo?.({
-            todoId,
-            repoPath: eventRepoPath,
-            worktree,
-          });
-        }
+    socket.on("worktree:created", ({ repoPath: eventRepoPath, worktree }) => {
+      if (!isAllowedWorktreeRepo(eventRepoPath) || !isValidWorktree(worktree)) {
+        return;
       }
-    );
+      setWorktreesByRepo(prev => addWorktree(prev, eventRepoPath, worktree));
+    });
 
     socket.on("worktree:deleted", ({ repoPath: eventRepoPath, worktreeId }) => {
       if (typeof worktreeId !== "string" || worktreeId.length === 0) return;
@@ -1299,16 +1279,35 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
   // Worktree actions
   const createWorktree = useCallback(
-    (branchName: string, baseBranch?: string, todoId?: string) => {
+    (branchName: string, baseBranch?: string) => {
       if (!repoPath) return;
       socketRef.current?.emit("worktree:create", {
         repoPath,
         branchName,
         baseBranch,
-        todoId,
       });
     },
     [repoPath]
+  );
+
+  const startTask = useCallback(
+    (request: TaskStartRequest): Promise<TaskStartResponse> =>
+      new Promise(resolve => {
+        const socket = socketRef.current;
+        if (!socket?.connected) {
+          resolve({ ok: false, error: "ソケットが切断されています" });
+          return;
+        }
+        // worktree の作成とセッションの起動まで。git の操作を含むので長めに待つ
+        const timeoutId = window.setTimeout(() => {
+          resolve({ ok: false, error: "タスクの起動がタイムアウトしました" });
+        }, 60_000);
+        socket.emit("task:start", request, response => {
+          window.clearTimeout(timeoutId);
+          resolve(response);
+        });
+      }),
+    []
   );
 
   const deleteWorktree = useCallback(
@@ -1648,6 +1647,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     removeRepo,
     worktrees,
     createWorktree,
+    startTask,
     deleteWorktree,
     refreshWorktrees,
     deletedWorktreeId,

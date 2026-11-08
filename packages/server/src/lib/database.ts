@@ -107,6 +107,7 @@ interface SessionRow {
   board_mcp_config_path: string | null;
   /** セッションで最後に開いた図（.claude/diagrams/*.diagram.html）の worktree 相対パス */
   last_diagram_path: string | null;
+  parent_worktree_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -158,6 +159,8 @@ interface CreateSessionInput {
    * このファイルにのみ置き、DB にはパスだけを持つ。
    */
   readonly boardMcpConfigPath?: string | null;
+  /** 親の worktree のパス (task_start で起こした子だけ) */
+  readonly parentWorktreePath?: string | null;
 }
 
 /** メッセージ作成時の入力データ */
@@ -322,6 +325,16 @@ export class SessionDatabase {
     // (board_open で開いた図をリロード後も右ペインに復元するため)
     try {
       this.db.exec("ALTER TABLE sessions ADD COLUMN last_diagram_path TEXT");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
+    // マイグレーション: sessionsテーブルにparent_worktree_path列を追加
+    // (task_start で起こした子を、サーバー再起動後も親の下に並べるため)
+    try {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN parent_worktree_path TEXT");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes("duplicate column name")) {
@@ -543,8 +556,8 @@ export class SessionDatabase {
   upsertSession(session: CreateSessionInput): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, board_mcp_config_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, board_mcp_config_path, parent_worktree_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worktree_path) DO UPDATE SET
         id = excluded.id,
         worktree_id = excluded.worktree_id,
@@ -553,6 +566,8 @@ export class SessionDatabase {
         profile_id = excluded.profile_id,
         profile_config_dir = excluded.profile_config_dir,
         board_mcp_config_path = excluded.board_mcp_config_path,
+        -- 親を渡さない起動 (session:start など) で、残っていた行の親子を消さない
+        parent_worktree_path = COALESCE(excluded.parent_worktree_path, parent_worktree_path),
         updated_at = excluded.updated_at
     `);
     stmt.run(
@@ -564,6 +579,7 @@ export class SessionDatabase {
       session.profileId ?? null,
       session.profileConfigDir ?? null,
       session.boardMcpConfigPath ?? null,
+      session.parentWorktreePath ?? null,
       now,
       now
     );
@@ -763,6 +779,7 @@ export class SessionDatabase {
       profileConfigDir: row.profile_config_dir,
       boardMcpConfigPath: row.board_mcp_config_path,
       lastDiagramPath: row.last_diagram_path,
+      parentWorktreePath: row.parent_worktree_path ?? null,
     };
   }
 

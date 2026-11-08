@@ -25,7 +25,7 @@ vi.mock("node:fs", () => {
 
 import { exec } from "node:child_process";
 import fs from "node:fs";
-import { createWorktree, deleteWorktree } from "./git.js";
+import { createWorktree, deleteWorktree, getDefaultBranch } from "./git.js";
 
 const mockedExec = vi.mocked(exec);
 
@@ -174,6 +174,8 @@ describe("createWorktree", () => {
     expect(execCalls).toContain('git branch -D "doc"');
     const addCall = execCalls.find(c => c.includes("worktree add"));
     expect(addCall).toContain('-b "doc"');
+    // ベースがリモートの ref でも新しいブランチに追跡を付けない
+    expect(addCall).toContain("--no-track");
   });
 
   it("固有コミットを持つ同名ブランチには -b なしで attach する", async () => {
@@ -519,5 +521,57 @@ describe("deleteWorktree", () => {
     await expect(deleteWorktree(REPO, REPO)).rejects.toThrow(
       /Cannot delete the main worktree/
     );
+  });
+});
+
+describe("getDefaultBranch", () => {
+  const originHead = (ref: string): ExecRule => ({
+    match: /symbolic-ref --quiet --short refs\/remotes\/origin\/HEAD/,
+    respond: () => ({ stdout: `${ref}\n` }),
+  });
+  const localBranches = (names: string[]): ExecRule => ({
+    match: /show-ref --verify --quiet "refs\/heads\//,
+    respond: cmd =>
+      names.some(n => cmd.includes(`refs/heads/${n}"`))
+        ? { stdout: "" }
+        : execError("not found", 1),
+  });
+
+  it("origin/HEAD の指すブランチがローカルにあればその名前を返す", async () => {
+    execRules = [originHead("origin/main"), localBranches(["main"])];
+    await expect(getDefaultBranch(REPO)).resolves.toBe("main");
+  });
+
+  it("ローカルに無ければ、本体が別のブランチにいてもリモートの ref を返す", async () => {
+    execRules = [
+      originHead("origin/main"),
+      localBranches([]),
+      {
+        match: /rev-parse --verify --quiet "refs\/remotes\/origin\/main"/,
+        respond: () => ({ stdout: "abc\n" }),
+      },
+      ...baseRules(() => porcelain([{ path: REPO, branch: "feature-x" }])),
+    ];
+    await expect(getDefaultBranch(REPO)).resolves.toBe("origin/main");
+  });
+
+  it("origin/HEAD が無ければ本体の作業ツリーのブランチ。detached なら undefined", async () => {
+    execRules = [
+      {
+        match: /symbolic-ref/,
+        respond: () => execError("no origin/HEAD", 1),
+      },
+      ...baseRules(() => porcelain([{ path: REPO, branch: "develop" }])),
+    ];
+    await expect(getDefaultBranch(REPO)).resolves.toBe("develop");
+
+    execRules = [
+      {
+        match: /symbolic-ref/,
+        respond: () => execError("no origin/HEAD", 1),
+      },
+      ...baseRules(() => porcelain([{ path: REPO, detached: true }])),
+    ];
+    await expect(getDefaultBranch(REPO)).resolves.toBeUndefined();
   });
 });

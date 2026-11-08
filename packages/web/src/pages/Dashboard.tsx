@@ -16,12 +16,14 @@ import {
   normalizeSessionSubView,
   type SessionSubView,
 } from "@/components/MobileLayout";
+import { NewTaskDialog, type NewTaskInitial } from "@/components/NewTaskDialog";
 import { NotificationPermissionButton } from "@/components/NotificationPermissionButton";
 import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
 import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { ScreenManagerDialog } from "@/components/ScreenManagerDialog";
 import { ScreenPane } from "@/components/ScreenPane";
+import type { SplitTaskTarget } from "@/components/SessionSectionList";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { SplitViewPane } from "@/components/SplitViewPane";
@@ -71,9 +73,7 @@ import {
 } from "@/lib/session-notifications";
 import { buildTodoDraft, todoBranchCandidate } from "@/lib/todo-draft";
 import {
-  draftForCreatedWorktree,
   findSessionIdByWorktreePath,
-  type PendingTodoWorktree,
   resolveTodoOrigin,
 } from "@/lib/todo-start";
 import { todoWorktreeLabel } from "@/lib/todo-worktree-label";
@@ -95,16 +95,13 @@ export default function Dashboard() {
   const savedRepoPath = getSetting<string | null>("selectedRepoPath", null);
   const savedScanBasePath = getSetting<string>("scanBasePath", "");
 
-  // 分岐TODOから新しいworktreeで話し始めるとき。dialogTodo は作成ダイアログを開いている間の
-  // そのTODO、pendingTodoWorktree は作成を頼んだあと worktree:created を待つ1件
-  // (別のTODOで作成を頼んだら置き換える)
-  const [dialogTodo, setDialogTodo] = useState<PendingTodoWorktree | null>(
+  // 新しいタスクのダイアログ。null の間は閉じている。分岐TODOから開くときは
+  // 名前・プロンプト・ベース・親の worktree を初期値に入れる
+  const [newTaskInitial, setNewTaskInitial] = useState<NewTaskInitial | null>(
     null
   );
-  const [pendingTodoWorktree, setPendingTodoWorktree] =
-    useState<PendingTodoWorktree | null>(null);
   // セッションが現れたら選ぶworktree (1件だけ)。今のDashboardは、作ったworktreeや
-  // 起動したセッションを自動では選ばないため、TODOから始めたときだけこれで選ぶ
+  // 起動したセッションを自動では選ばないため、TODOや新しいタスクから始めたときだけこれで選ぶ
   const [pendingSelectWorktreePath, setPendingSelectWorktreePath] = useState<
     string | null
   >(null);
@@ -126,6 +123,7 @@ export default function Dashboard() {
     deleteDiagram,
     worktrees,
     createWorktree,
+    startTask,
     deleteWorktree,
     sessions,
     sessionsLoaded,
@@ -188,15 +186,6 @@ export default function Dashboard() {
     initialRepoPath: savedRepoPath,
     onRepoListChange: list => setSetting("repoList", list),
     onRepoPathChange: path => setSetting("selectedRepoPath", path),
-    // 待っているTODOの作成が終わったら、新しいworktreeの会話に下書きを置き、
-    // そのセッションが現れたら選ぶ (セッションはサーバーが作成に続けて起動する)
-    onWorktreeCreatedForTodo: event => {
-      const target = draftForCreatedWorktree(pendingTodoWorktree, event);
-      if (!target) return;
-      requestChatDraft(target.worktreePath, target.draft);
-      setPendingTodoWorktree(null);
-      setPendingSelectWorktreePath(target.worktreePath);
-    },
   });
 
   const isMobile = useIsMobile();
@@ -749,11 +738,7 @@ export default function Dashboard() {
   };
 
   const handleCreateWorktree = (branchName: string, baseBranch?: string) => {
-    // TODO から開いたダイアログなら todoId を添え、作成の完了を待って下書きを置く
-    // (始めた先の記録はサーバーが todoId を見て行う)
-    createWorktree(branchName, baseBranch, dialogTodo?.todoId);
-    if (dialogTodo) setPendingTodoWorktree(dialogTodo);
-    setDialogTodo(null);
+    createWorktree(branchName, baseBranch);
     setIsCreateWorktreeOpen(false);
     // 作成確定時は元repoへの復元をキャンセルし、作成先repoに留まる
     setPreviousRepoPath(null);
@@ -836,7 +821,6 @@ export default function Dashboard() {
   /** Worktree作成ダイアログの open/close ハンドラ。close時にrepo復元する */
   const handleCreateWorktreeOpenChange = (open: boolean) => {
     setIsCreateWorktreeOpen(open);
-    if (!open) setDialogTodo(null);
     if (!open && previousRepoPath !== null) {
       selectRepo(previousRepoPath);
       setPreviousRepoPath(null);
@@ -866,9 +850,9 @@ export default function Dashboard() {
   };
 
   /**
-   * 分岐TODOを新しいworktreeで話し始める。元のworktreeのリポジトリへ切り替えて
-   * (handleCreateWorktreeForRepo と同じ流れ。キャンセルで元のリポジトリに戻る)、
-   * ブランチ名の候補と元のブランチを基点に入れた作成ダイアログを開く
+   * 分岐TODOを新しいworktreeで話し始める。新しいタスクのダイアログを、ブランチ名の候補・
+   * TODOの本文・元のブランチ (ベース) を入れて開く。起動するとTODOの本文が最初の文として
+   * 送られ、元のworktreeが親になる (始めた先の記録はサーバーが todoId を見て行う)
    */
   const handleStartTodoInNewWorktree = (todo: Todo) => {
     const origin = resolveTodoOrigin(
@@ -878,8 +862,37 @@ export default function Dashboard() {
       repoList
     );
     if (!origin) return;
-    setDialogTodo({ todoId: todo.id, todo, originBranch: origin.branch });
-    handleCreateWorktreeForRepo(origin.repoPath);
+    setNewTaskInitial({
+      repoPath: origin.repoPath,
+      name: todoBranchCandidate(todo),
+      prompt: buildTodoDraft(todo, origin.branch),
+      ...(origin.branch ? { baseBranch: origin.branch } : {}),
+      parentWorktreePath: todo.worktreePath,
+      todoId: todo.id,
+    });
+  };
+
+  // 見出しの「新しいタスク」。親なし、リポジトリは選択中のもの、ベースはサーバーが既定のブランチにする
+  const handleNewTask = () => {
+    setNewTaskInitial({ repoPath: repoPath ?? repoList[0] ?? null });
+  };
+
+  // 行メニューの「子タスクを分離」。その worktree を親にし、ベースは今のブランチ
+  const handleSplitTask = (target: SplitTaskTarget) => {
+    setNewTaskInitial({
+      repoPath: target.repoPath,
+      ...(target.branch ? { baseBranch: target.branch } : {}),
+      parentWorktreePath: target.worktreePath,
+    });
+  };
+
+  // 起動できたら、そのセッションが現れたところで選ぶ
+  const handleTaskStarted = (response: {
+    worktreePath: string;
+    branch: string;
+  }) => {
+    setPendingSelectWorktreePath(response.worktreePath);
+    toast.success(`タスクを起動しました: ${response.branch}`);
   };
 
   // 元のworktreeのリポジトリが分かるときだけ、新しいworktreeで始められる
@@ -927,6 +940,8 @@ export default function Dashboard() {
           onUploadFile={uploadFile}
           onCopyBuffer={copyBuffer}
           onNewSession={handleNewSession}
+          onNewTask={handleNewTask}
+          onSplitTask={handleSplitTask}
           getTabsForSession={getTabsForSession}
           getActiveTabForSession={getActiveTabForSession}
           getViewerOpenSeqForSession={getViewerOpenSeqForSession}
@@ -1028,6 +1043,8 @@ export default function Dashboard() {
               onSetWorktreeProfile={setWorktreeProfile}
               onOpenProfileManager={() => setShowProfileManager(true)}
               onNewSession={handleNewSession}
+              onNewTask={handleNewTask}
+              onSplitTask={handleSplitTask}
               onOpenAbout={() => setShowAboutDialog(true)}
               metrics={hostMetrics}
               notificationControl={notificationControl}
@@ -1429,10 +1446,17 @@ export default function Dashboard() {
         onOpenChange={handleCreateWorktreeOpenChange}
         selectedRepoPath={repoPath}
         onCreateWorktree={handleCreateWorktree}
-        initialBranchName={
-          dialogTodo ? todoBranchCandidate(dialogTodo.todo) : undefined
-        }
-        initialBaseBranch={dialogTodo?.originBranch}
+      />
+
+      <NewTaskDialog
+        open={newTaskInitial !== null}
+        onOpenChange={open => {
+          if (!open) setNewTaskInitial(null);
+        }}
+        repoList={repoList}
+        initial={newTaskInitial ?? { repoPath: null }}
+        onStartTask={startTask}
+        onStarted={handleTaskStarted}
       />
 
       {/* プロファイル管理 (Linux限定) */}

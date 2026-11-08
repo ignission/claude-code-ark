@@ -33,6 +33,7 @@ import { useHeldOrder, useListHold } from "@/hooks/useHeldOrder";
 import { deleteSessionDescription } from "@/lib/session-header";
 import {
   buildSessionEntries,
+  countChildren,
   type SessionListRow as ListRow,
   type SessionListEntry,
   sectionize,
@@ -44,6 +45,14 @@ import { cn } from "@/lib/utils";
 import { getBaseName } from "@/utils/pathUtils";
 import { resolveSessionRowProfile, SessionListRow } from "./SessionListRow";
 import type { SessionRowMenuProps } from "./SessionRowMenu";
+
+/** 行メニューの「子タスクを分離」で渡すもの (分離元の worktree) */
+export interface SplitTaskTarget {
+  repoPath: string;
+  worktreePath: string;
+  /** 分離元の今のブランチ。detached・不明なら undefined */
+  branch: string | undefined;
+}
 
 export interface SessionSectionListProps {
   /** "sidebar" = PCサイドバーの行、"card" = モバイル一覧のカード */
@@ -91,6 +100,8 @@ export interface SessionSectionListProps {
     enabled: boolean
   ) => void;
   onCreateWorktreeForRepo?: (repoPath: string) => void;
+  /** その worktree を親にして子タスクを分離する (新しいタスクのダイアログを開く) */
+  onSplitTask?: (target: SplitTaskTarget) => void;
   /** リポジトリの全セッションを並べて見る (RepoGridView)。PCだけ渡す */
   onSelectRepoGrid?: (repoPath: string) => void;
   onRemoveRepo?: (repoPath: string) => void;
@@ -146,6 +157,7 @@ export function SessionSectionList({
   onSetWorktreeDisplayName,
   onSessionNotificationEnabledChange,
   onCreateWorktreeForRepo,
+  onSplitTask,
   onSelectRepoGrid,
   onRemoveRepo,
   onSetRepoProfile,
@@ -158,21 +170,24 @@ export function SessionSectionList({
     repoList
   );
   const { held, bindings, onMenuOpenChange } = useListHold();
-  const rows = useMemo(
+  const entries = useMemo(
     () =>
-      toListRows(
-        sectionize(
-          sortSessionEntries(
-            buildSessionEntries(
-              groupedItems,
-              sessionStatuses,
-              sessionLastUpdatedAt
-            )
-          )
-        )
+      sortSessionEntries(
+        buildSessionEntries(groupedItems, sessionStatuses, sessionLastUpdatedAt)
       ),
     [groupedItems, sessionStatuses, sessionLastUpdatedAt]
   );
+  const rows = useMemo(() => toListRows(sectionize(entries)), [entries]);
+  // 親子の表示: 親の行に出す子の数と、子の行から親をたどるための worktree のパス → 行
+  const childCounts = useMemo(() => countChildren(entries), [entries]);
+  const entryByPath = useMemo(() => {
+    const map = new Map<string, SessionListEntry>();
+    for (const entry of entries) {
+      const path = worktreePathOf(entry);
+      if (path) map.set(path, entry);
+    }
+    return map;
+  }, [entries]);
   const shownRows = useHeldOrder(rows, rowKey, held);
   // 保留していなければ、直後に行が続かない (空の) 見出しは描かない。
   // 保留中は描く見出しを保留の前のまま固定する。空になった見出しも残して下の行を動かさず、
@@ -227,11 +242,32 @@ export function SessionSectionList({
       onDelete = () => setDeleteTarget({ kind: "worktree", worktree });
     }
 
+    const parentSession = entry.parentWorktreePath
+      ? (entryByPath.get(entry.parentWorktreePath)?.session ?? null)
+      : null;
+
     return {
       onOpen: () => {
         if (session) onOpenSession(session.id);
         else if (worktree) onStartSession(worktree);
       },
+      onSplitTask:
+        onSplitTask && worktreePath
+          ? () => {
+              const branch = entry.worktree?.branch;
+              onSplitTask({
+                repoPath,
+                worktreePath,
+                branch:
+                  branch && branch !== "(detached)" && branch !== "unknown"
+                    ? branch
+                    : undefined,
+              });
+            }
+          : undefined,
+      onOpenParent: parentSession
+        ? () => onOpenSession(parentSession.id)
+        : undefined,
       onStartRename:
         onSetWorktreeDisplayName && worktreePath
           ? () => setEditingKey(entry.key)
@@ -308,10 +344,23 @@ export function SessionSectionList({
     </h2>
   );
 
+  const labelOf = (path: string): string => {
+    const entry = entryByPath.get(path);
+    return (
+      worktreeDisplayNames?.get(path)?.trim() ||
+      entry?.worktree?.branch ||
+      getBaseName(path)
+    );
+  };
+
   const renderRow = (entry: SessionListEntry) => {
     const worktreePath = worktreePathOf(entry);
     const displayName = worktreePath
       ? worktreeDisplayNames?.get(worktreePath)?.trim() || null
+      : null;
+    const parentPath = entry.parentWorktreePath;
+    const parentSession = parentPath
+      ? (entryByPath.get(parentPath)?.session ?? null)
       : null;
     return (
       <SessionListRow
@@ -326,6 +375,11 @@ export function SessionSectionList({
         }
         todoCount={
           entry.session ? (sessionTodoCounts?.get(entry.session.id) ?? 0) : 0
+        }
+        childCount={worktreePath ? (childCounts.get(worktreePath) ?? 0) : 0}
+        parentLabel={parentPath ? labelOf(parentPath) : null}
+        onOpenParent={
+          parentSession ? () => onOpenSession(parentSession.id) : undefined
         }
         previewText={
           entry.session ? (sessionPreviews.get(entry.session.id) ?? "") : ""

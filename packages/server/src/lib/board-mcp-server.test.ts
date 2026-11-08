@@ -10,6 +10,7 @@ import {
   BoardSessionRegistry,
   createBoardMcpServer,
   handleBoardOpen,
+  handleTaskStart,
   handleTodoAdd,
   handleTodoList,
 } from "./board-mcp-server.js";
@@ -58,7 +59,7 @@ describe("handleBoardOpen", () => {
 });
 
 describe("createBoardMcpServer", () => {
-  it("board_open / todo_add / todo_list の 3 ツールを登録する", () => {
+  it("board_open / todo_add / todo_list / task_start の 4 ツールを登録する", () => {
     const registerTool = vi.spyOn(McpServer.prototype, "registerTool");
 
     createBoardMcpServer(
@@ -66,6 +67,7 @@ describe("createBoardMcpServer", () => {
         openDiagram: vi.fn(async () => ({ ok: true })),
         addTodo: vi.fn(),
         listTodos: vi.fn(async () => []),
+        startTask: vi.fn(),
       },
       "/wt"
     );
@@ -74,6 +76,7 @@ describe("createBoardMcpServer", () => {
       "board_open",
       "todo_add",
       "todo_list",
+      "task_start",
     ]);
     const [, config] = registerTool.mock.calls[0] ?? [];
     const metadata = config as
@@ -138,5 +141,39 @@ describe("handleTodoAdd / handleTodoList", () => {
     expect(await handleTodoList({ listTodos }, "/w")).toEqual({
       todos: [{ id: "id-a", text: "a", note: null }],
     });
+  });
+});
+
+describe("handleTaskStart", () => {
+  it("呼び出し元の worktree と引数をそのまま渡し、結果を返す", async () => {
+    const result = {
+      worktreePath: "/r/app-fix",
+      branch: "fix",
+      promptSent: true,
+      message: "最初の文を送りました",
+    };
+    const startTask = vi.fn(async () => result);
+    expect(
+      await handleTaskStart({ startTask }, "/r/app", {
+        name: "fix",
+        prompt: "直して",
+      })
+    ).toEqual(result);
+    expect(startTask).toHaveBeenCalledWith("/r/app", {
+      name: "fix",
+      prompt: "直して",
+    });
+  });
+
+  it("失敗は error にして返す (throw しない)", async () => {
+    const startTask = vi.fn(async () => {
+      throw new Error("ブランチ 'fix' は既に別の worktree で使用中です");
+    });
+    expect(
+      await handleTaskStart({ startTask }, "/r/app", {
+        name: "fix",
+        prompt: "直して",
+      })
+    ).toEqual({ error: "ブランチ 'fix' は既に別の worktree で使用中です" });
   });
 });

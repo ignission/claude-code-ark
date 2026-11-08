@@ -12,7 +12,9 @@ import {
   Bell,
   BellOff,
   Check,
+  CornerLeftUp,
   EyeOff,
+  GitBranchPlus,
   LayoutGrid,
   MessageSquare,
   Pencil,
@@ -57,6 +59,10 @@ export interface SessionRowMenuProps {
   entry: SessionListEntry;
   /** セッションがあれば開き、未起動のworktreeなら起動する */
   onOpen: () => void;
+  /** この worktree を親にして子タスクを分離する */
+  onSplitTask?: () => void;
+  /** 子の行で、親のセッションを開く */
+  onOpenParent?: () => void;
   /** 表示名の編集を始める */
   onStartRename?: () => void;
   /** このセッションの通知。ブラウザが通知に対応していなければundefined */
@@ -120,6 +126,8 @@ export function SessionRowMenu({
   variant,
   entry,
   onOpen,
+  onSplitTask,
+  onOpenParent,
   onStartRename,
   notifications,
   onRestart,
@@ -145,6 +153,18 @@ export function SessionRowMenu({
           {entry.session ? <MessageSquare /> : <Play />}
           {entry.session ? "開く" : "セッションを起動"}
         </Menu.Item>
+        {onSplitTask && (
+          <Menu.Item onSelect={onSplitTask}>
+            <GitBranchPlus />
+            子タスクを分離...
+          </Menu.Item>
+        )}
+        {onOpenParent && (
+          <Menu.Item onSelect={onOpenParent}>
+            <CornerLeftUp />
+            親を開く
+          </Menu.Item>
+        )}
         {onStartRename && (
           <Menu.Item onSelect={onStartRename}>
             <Pencil />
