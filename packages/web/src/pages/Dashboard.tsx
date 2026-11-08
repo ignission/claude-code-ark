@@ -872,6 +872,11 @@ export default function Dashboard() {
     });
   };
 
+  // 見出しの「新しいタスク」。親なし、リポジトリは選択中のもの、ベースはサーバーが既定のブランチにする
+  const handleNewTask = () => {
+    setNewTaskInitial({ repoPath: repoPath ?? repoList[0] ?? null });
+  };
+
   // 行メニューの「子タスクを分離」。その worktree を親にし、ベースは今のブランチ
   const handleSplitTask = (target: SplitTaskTarget) => {
     setNewTaskInitial({
@@ -935,6 +940,7 @@ export default function Dashboard() {
           onUploadFile={uploadFile}
           onCopyBuffer={copyBuffer}
           onNewSession={handleNewSession}
+          onNewTask={handleNewTask}
           onSplitTask={handleSplitTask}
           getTabsForSession={getTabsForSession}
           getActiveTabForSession={getActiveTabForSession}
@@ -1037,6 +1043,7 @@ export default function Dashboard() {
               onSetWorktreeProfile={setWorktreeProfile}
               onOpenProfileManager={() => setShowProfileManager(true)}
               onNewSession={handleNewSession}
+              onNewTask={handleNewTask}
               onSplitTask={handleSplitTask}
               onOpenAbout={() => setShowAboutDialog(true)}
               metrics={hostMetrics}
@@ -1446,7 +1453,8 @@ export default function Dashboard() {
         onOpenChange={open => {
           if (!open) setNewTaskInitial(null);
         }}
-        initial={newTaskInitial ?? { repoPath: "" }}
+        repoList={repoList}
+        initial={newTaskInitial ?? { repoPath: null }}
         onStartTask={startTask}
         onStarted={handleTaskStarted}
       />

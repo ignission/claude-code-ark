@@ -54,6 +54,7 @@ function setup(response: TaskStartResponse) {
         <NewTaskDialog
           open
           onOpenChange={onOpenChange}
+          repoList={["/r/app", "/r/lib"]}
           initial={initial}
           onStartTask={onStartTask}
           onStarted={onStarted}
@@ -151,6 +152,34 @@ describe("NewTaskDialog", () => {
       parentWorktreePath: "/r/app-feat",
       todoId: "t1",
     });
+  });
+
+  it("見出しのボタンから開いたとき (親なし) はリポジトリを選ばせ、先頭を既定にする", async () => {
+    const { render, field, type, submit, onStartTask } = setup(ok);
+    render({ repoPath: null });
+    const select = document.getElementById(
+      "new-task-repo"
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("/r/app");
+    act(() => {
+      select.value = "/r/lib";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    type("new-task-name", "fix");
+    type("new-task-prompt", "直して");
+    expect(field("new-task-base").value).toBe("");
+    await submit();
+    expect(onStartTask).toHaveBeenCalledWith({
+      repoPath: "/r/lib",
+      name: "fix",
+      prompt: "直して",
+    });
+  });
+
+  it("親があるときはリポジトリを選ばせない", () => {
+    const { render } = setup(ok);
+    render({ repoPath: "/r/app", parentWorktreePath: "/r/app-feat" });
+    expect(document.getElementById("new-task-repo")).toBeNull();
   });
 
   it("失敗したら閉じずに理由を出す", async () => {

@@ -2,9 +2,12 @@
  * 新しいタスクのダイアログ。名前とプロンプトだけで、worktree の作成 → セッションの起動 →
  * 最初の文の送信をサーバーの task:start に1回で頼む (実装は server の task-start.ts)。
  *
- * セッション一覧の行メニューの「子タスクを分離」(その worktree が親、ベースは今のブランチ) と、
- * 分岐TODOの「新しいworktreeで始める」(元の worktree が親) から開く。どちらもリポジトリと親は
- * 開いた側で決まっているので、ダイアログで選ぶのは名前・プロンプト・ベースだけ。
+ * 開く入口は3つ。
+ * - サイドバー・モバイルの一覧の見出しの「新しいタスク」: 親なし。リポジトリはここで選び、
+ *   ベースは空 (サーバーがリポジトリの既定のブランチを使う)
+ * - セッション一覧の行メニューの「子タスクを分離」: その worktree が親、ベースは今のブランチ
+ * - 分岐TODOの「新しいworktreeで始める」: 元の worktree が親
+ * 親があるときはリポジトリも開いた側で決まっているので、リポジトリの選択は出さない。
  */
 
 import type { TaskStartRequest, TaskStartResponse } from "@ark/shared";
@@ -31,7 +34,8 @@ import { getBaseName } from "@/utils/pathUtils";
 
 /** 開くたびに入れる初期値。parentWorktreePath と todoId はそのまま task:start に渡す */
 export interface NewTaskInitial {
-  repoPath: string;
+  /** null は未選択 (見出しのボタンから開いたとき)。repoList の先頭を入れる */
+  repoPath: string | null;
   name?: string;
   prompt?: string;
   baseBranch?: string;
@@ -42,6 +46,8 @@ export interface NewTaskInitial {
 interface NewTaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** リポジトリの候補 (サイドバーに出しているもの)。親なしで開いたときに選ばせる */
+  repoList: readonly string[];
   initial: NewTaskInitial;
   onStartTask: (request: TaskStartRequest) => Promise<TaskStartResponse>;
   /** 起動できたとき (ダイアログは閉じたあと) */
@@ -51,10 +57,12 @@ interface NewTaskDialogProps {
 export function NewTaskDialog({
   open,
   onOpenChange,
+  repoList,
   initial,
   onStartTask,
   onStarted,
 }: NewTaskDialogProps) {
+  const [repoPath, setRepoPath] = useState("");
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
@@ -63,11 +71,12 @@ export function NewTaskDialog({
 
   // open が true になるたびに、そのときの初期値で入れ直す。開いている間に props が変わっても
   // 入力中の値は消さないので、初期値は ref 越しに読む
-  const initialRef = useRef(initial);
-  initialRef.current = initial;
+  const initialRef = useRef({ initial, repoList });
+  initialRef.current = { initial, repoList };
   useEffect(() => {
     if (!open) return;
-    const init = initialRef.current;
+    const { initial: init, repoList: repos } = initialRef.current;
+    setRepoPath(init.repoPath ?? repos[0] ?? "");
     setName(init.name ?? "");
     setPrompt(init.prompt ?? "");
     setBaseBranch(init.baseBranch ?? "");
@@ -77,7 +86,7 @@ export function NewTaskDialog({
 
   const canSubmit =
     !submitting &&
-    initial.repoPath !== "" &&
+    repoPath !== "" &&
     name.trim() !== "" &&
     prompt.trim() !== "";
 
@@ -85,9 +94,9 @@ export function NewTaskDialog({
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
-    const init = initialRef.current;
+    const { initial: init } = initialRef.current;
     const response = await onStartTask({
-      repoPath: init.repoPath,
+      repoPath,
       name: name.trim(),
       prompt: prompt.trim(),
       ...(baseBranch.trim() ? { baseBranch: baseBranch.trim() } : {}),
@@ -105,6 +114,7 @@ export function NewTaskDialog({
     onStarted(response);
   }, [
     canSubmit,
+    repoPath,
     name,
     prompt,
     baseBranch,
@@ -137,9 +147,11 @@ export function NewTaskDialog({
     [handleSubmit]
   );
 
-  const source = initial.parentWorktreePath
-    ? getBaseName(initial.parentWorktreePath)
-    : getBaseName(initial.repoPath);
+  const parentPath = initial.parentWorktreePath;
+  const repoOptions =
+    repoPath && !repoList.includes(repoPath)
+      ? [repoPath, ...repoList]
+      : repoList;
 
   return (
     <Dialog
@@ -150,11 +162,29 @@ export function NewTaskDialog({
         <DialogHeader>
           <DialogTitle>新しいタスク</DialogTitle>
           <DialogDescription>
-            {source}{" "}
-            から新しいworktreeを分け、セッションを起動してプロンプトを最初の文として送ります。
+            {parentPath
+              ? `${getBaseName(parentPath)} から新しいworktreeを分け、セッションを起動してプロンプトを最初の文として送ります。`
+              : "新しいworktreeでセッションを起動し、プロンプトを最初の文として送ります。"}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
+          {!parentPath && repoOptions.length > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="new-task-repo">リポジトリ</Label>
+              <select
+                id="new-task-repo"
+                value={repoPath}
+                onChange={e => setRepoPath(e.target.value)}
+                className="h-12 md:h-10 w-full rounded-md border border-input bg-transparent px-3 text-base md:text-sm"
+              >
+                {repoOptions.map(repo => (
+                  <option key={repo} value={repo}>
+                    {getBaseName(repo)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="new-task-name">タスク名</Label>
             <Input
@@ -185,7 +215,9 @@ export function NewTaskDialog({
             <Label htmlFor="new-task-base">ベースブランチ (省略可)</Label>
             <Input
               id="new-task-base"
-              placeholder="既定のブランチ"
+              placeholder={
+                parentPath ? "親の今のブランチ" : "リポジトリの既定のブランチ"
+              }
               value={baseBranch}
               onChange={e => setBaseBranch(e.target.value)}
               autoCapitalize="off"
