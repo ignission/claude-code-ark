@@ -566,7 +566,8 @@ export class SessionDatabase {
         profile_id = excluded.profile_id,
         profile_config_dir = excluded.profile_config_dir,
         board_mcp_config_path = excluded.board_mcp_config_path,
-        parent_worktree_path = excluded.parent_worktree_path,
+        -- 親を渡さない起動 (session:start など) で、残っていた行の親子を消さない
+        parent_worktree_path = COALESCE(excluded.parent_worktree_path, parent_worktree_path),
         updated_at = excluded.updated_at
     `);
     stmt.run(

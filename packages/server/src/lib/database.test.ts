@@ -338,6 +338,19 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
       ).toBeNull();
     });
 
+    it("親を渡さない upsert (OS の再起動後の session:start など) では親を消さない", () => {
+      const base = {
+        worktreeId: "wt",
+        worktreePath: "/repo-fix",
+        status: "active" as const,
+      };
+      testDb.upsertSession({ id: "a", ...base, parentWorktreePath: "/repo" });
+      testDb.upsertSession({ id: "b", ...base });
+      expect(
+        testDb.getSessionByWorktreePath("/repo-fix")?.parentWorktreePath
+      ).toBe("/repo");
+    });
+
     it("replaceSession (再起動) で親を渡せば引き継がれる", () => {
       testDb.upsertSession({
         id: "old",

@@ -665,8 +665,11 @@ export async function getDefaultBranch(
   }
   try {
     const worktrees = await listWorktrees(safePath);
-    const main = worktrees.find(w => w.isMain);
-    return main?.branch || undefined;
+    const branch = worktrees.find(w => w.isMain)?.branch;
+    // listWorktrees は detached を "(detached)"、不明を "unknown" で返す。ブランチ名ではないので使わない
+    return branch && branch !== "(detached)" && branch !== "unknown"
+      ? branch
+      : undefined;
   } catch {
     return undefined;
   }
