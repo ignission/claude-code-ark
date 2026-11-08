@@ -1,23 +1,6 @@
-import type { ManagedSession, Todo, Worktree } from "@ark/shared";
+import type { ManagedSession, Worktree } from "@ark/shared";
 import { describe, expect, it } from "vitest";
-import {
-  draftForCreatedWorktree,
-  findSessionIdByWorktreePath,
-  resolveTodoOrigin,
-} from "./todo-start";
-
-const todo = (over: Partial<Todo> = {}): Todo => ({
-  id: "abcdef123",
-  worktreePath: "/r/app-feat",
-  text: "ログの形式",
-  note: null,
-  createdAt: 0,
-  doneAt: null,
-  startedWorktreePath: null,
-  startedAt: null,
-  branchName: null,
-  ...over,
-});
+import { findSessionIdByWorktreePath, resolveTodoOrigin } from "./todo-start";
 
 const session = (over: Partial<ManagedSession>): ManagedSession =>
   ({
@@ -98,25 +81,5 @@ describe("resolveTodoOrigin", () => {
     expect(
       resolveTodoOrigin("/r/app-feat", [], [worktree({})], ["/other"])
     ).toBeNull();
-  });
-});
-
-describe("draftForCreatedWorktree", () => {
-  const pending = { todoId: "abcdef123", todo: todo(), originBranch: "feat" };
-  const created = (todoId: string) => ({
-    todoId,
-    worktree: worktree({ path: "/r/app-todo-abcdef" }),
-  });
-
-  it("待っているtodoIdと一致すれば、新しいworktreeのパスと、元のブランチを添えた下書きを返す", () => {
-    expect(draftForCreatedWorktree(pending, created("abcdef123"))).toEqual({
-      worktreePath: "/r/app-todo-abcdef",
-      draft: "ログの形式\n\n(分岐TODO。元のブランチ: feat)",
-    });
-  });
-
-  it("todoIdが違う・待ちが無ければnull", () => {
-    expect(draftForCreatedWorktree(pending, created("other"))).toBeNull();
-    expect(draftForCreatedWorktree(null, created("abcdef123"))).toBeNull();
   });
 });

@@ -641,3 +641,49 @@ export async function listBranches(repoPath: string): Promise<string[]> {
     .split("\n")
     .filter(b => b && !b.startsWith("origin/HEAD"));
 }
+
+/**
+ * リポジトリの既定のブランチ (新しいタスクのベースの既定値)。
+ * origin/HEAD が指すブランチがローカルにあればそれ、無ければリポジトリ本体の作業ツリーの
+ * ブランチ。どちらも分からなければ undefined (呼び出し側は git の HEAD に任せる)
+ */
+export async function getDefaultBranch(
+  repoPath: string
+): Promise<string | undefined> {
+  const safePath = validatePath(repoPath);
+  try {
+    const { stdout } = await execAsync(
+      "git symbolic-ref --quiet --short refs/remotes/origin/HEAD",
+      { cwd: safePath }
+    );
+    const remoteDefault = stdout.trim().replace(/^origin\//, "");
+    if (remoteDefault && (await branchExists(safePath, remoteDefault))) {
+      return remoteDefault;
+    }
+  } catch {
+    // origin/HEAD が無い (リモート無し・未設定) → 本体の作業ツリーを見る
+  }
+  try {
+    const worktrees = await listWorktrees(safePath);
+    const main = worktrees.find(w => w.isMain);
+    return main?.branch || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 作業ツリーの今のブランチ。detached なら undefined */
+export async function getAttachedBranch(
+  worktreePath: string
+): Promise<string | undefined> {
+  const safePath = validatePath(worktreePath);
+  try {
+    const { stdout } = await execAsync(
+      "git symbolic-ref --quiet --short HEAD",
+      { cwd: safePath }
+    );
+    return stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}

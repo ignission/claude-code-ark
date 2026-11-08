@@ -69,6 +69,8 @@ import { listDirectory } from "./lib/fs-browser.js";
 import {
   createWorktree,
   deleteWorktree,
+  getAttachedBranch,
+  getDefaultBranch,
   isGitRepository,
   listWorktrees,
   scanRepositories,
@@ -122,6 +124,11 @@ import {
   staticCacheControl,
 } from "./lib/static-cache.js";
 import { detectMultiProfileSupported, resolveGhPath } from "./lib/system.js";
+import {
+  describeDelivery,
+  startTask,
+  type TaskStartDeps,
+} from "./lib/task-start.js";
 import { TMUX_BINARY_PATH, tmuxManager } from "./lib/tmux-manager.js";
 import { describeTmuxReadFailure } from "./lib/tmux-read-result.js";
 import {
@@ -605,7 +612,76 @@ export async function startServer(
   const emitTodoChanged = () => io.emit("todo:changed");
   // socket に依存しないので connection の外で 1 回だけ作る (足すのは Claude の todo_add だけ)
   const todoHandlers = createTodoHandlers({ db, onChanged: emitTodoChanged });
+  // 新しいタスク (MCP の task_start と Socket.IO の task:start の共通の経路)。
+  // worktree:create → 自動起動 → session:send と同じ部品を順に呼ぶ
+  const taskStartDeps: TaskStartDeps = {
+    async createWorktree(repoPath, branchName, baseBranch) {
+      let worktree: Awaited<ReturnType<typeof createWorktree>>;
+      try {
+        worktree = await createWorktree(repoPath, branchName, baseBranch);
+      } catch (error) {
+        console.error(
+          `[Task] worktree の作成に失敗しました (repo=${repoPath}, branch=${branchName}, base=${baseBranch ?? "HEAD"}): ${getErrorMessage(error)}`
+        );
+        throw error;
+      }
+      io.emit("worktree:created", { repoPath, worktree });
+      try {
+        io.emit("worktree:list", {
+          repoPath,
+          worktrees: await listWorktrees(repoPath),
+        });
+      } catch {
+        // 一覧の更新失敗は起動を止めない
+      }
+      return worktree;
+    },
+    startSession(worktree, repoPath, parentWorktreePath) {
+      return sessionOrchestrator.startSession(
+        worktree.id,
+        worktree.path,
+        repoPath,
+        parentWorktreePath ? { parentWorktreePath } : {}
+      );
+    },
+    readLaunchState: sessionId =>
+      sessionOrchestrator.readLaunchState(sessionId),
+    sendMessage: (sessionId, message) =>
+      sessionOrchestrator.sendMessage(sessionId, message),
+    recordTodoStarted: (todoId, worktreePath) =>
+      recordStartedForCreatedWorktree(
+        { db, onChanged: emitTodoChanged },
+        todoId,
+        worktreePath
+      ),
+    sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+  };
   const boardDeps: BoardMcpDeps = {
+    async startTask(worktreePath, input) {
+      // 親は呼び出し元の worktree。リポジトリとベースの既定は親から引く
+      const parent = sessionOrchestrator.getSessionByWorktree(worktreePath);
+      const repoPath = parent?.repoPath;
+      if (!repoPath) {
+        throw new Error("呼び出し元の worktree のリポジトリが分かりません");
+      }
+      const baseBranch =
+        input.baseBranch?.trim() || (await getAttachedBranch(worktreePath));
+      const started = await startTask(taskStartDeps, {
+        repoPath,
+        name: input.name,
+        prompt: input.prompt,
+        ...(baseBranch ? { baseBranch } : {}),
+        parentWorktreePath: worktreePath,
+      });
+      const delivery = await started.delivery;
+      return {
+        worktreePath: started.worktreePath,
+        branch: started.branch,
+        promptSent: delivery.sent,
+        message: describeDelivery(delivery),
+      };
+    },
     async addTodo(worktreePath, input) {
       // TODO は registry 登録時の生パスで持つ (クライアントの session.worktreePath と同じ値)
       const todo = db.addTodo({ worktreePath, ...input });
@@ -1592,15 +1668,11 @@ export async function startServer(
 
     socket.on(
       "worktree:create",
-      async ({ repoPath, branchName, baseBranch, todoId }) => {
+      async ({ repoPath, branchName, baseBranch }) => {
         let worktree: Awaited<ReturnType<typeof createWorktree>>;
         try {
           worktree = await createWorktree(repoPath, branchName, baseBranch);
-          io.emit("worktree:created", {
-            repoPath,
-            worktree,
-            ...(typeof todoId === "string" ? { todoId } : {}),
-          });
+          io.emit("worktree:created", { repoPath, worktree });
         } catch (error) {
           // UI 通知だけでなくサーバーログにも残して調査可能にする (Issue #213 ③)
           console.error(
@@ -1609,13 +1681,6 @@ export async function startServer(
           socket.emit("worktree:error", getErrorMessage(error));
           return;
         }
-
-        // 分岐TODOから始めた作成なら、始めた先を記録する (失敗しても続ける)
-        recordStartedForCreatedWorktree(
-          { db, onChanged: emitTodoChanged },
-          todoId,
-          worktree.path
-        );
 
         try {
           const worktrees = await listWorktrees(repoPath);
@@ -1690,6 +1755,52 @@ export async function startServer(
           `[Worktree] 削除に失敗しました (repo=${repoPath}, path=${worktreePath}): ${getErrorMessage(error)}`
         );
         socket.emit("worktree:error", getErrorMessage(error));
+      }
+    });
+
+    // 新しいタスク。callback はセッションが起動した時点で返し、最初の文を送れなかったら
+    // session:error で知らせる (起動待ちは数秒かかるので、ダイアログを待たせない)
+    socket.on("task:start", async (data, callback) => {
+      const reply = typeof callback === "function" ? callback : () => {};
+      try {
+        const repoPath = data?.repoPath;
+        if (typeof repoPath !== "string" || !repoPath) {
+          throw new Error("リポジトリが指定されていません");
+        }
+        if (allowedRepos.length > 0 && !allowedRepos.includes(repoPath)) {
+          throw new Error("Repository not in allowed list");
+        }
+        const baseBranch =
+          (typeof data.baseBranch === "string" && data.baseBranch.trim()) ||
+          (await getDefaultBranch(repoPath));
+        const started = await startTask(taskStartDeps, {
+          repoPath,
+          name: data.name,
+          prompt: data.prompt,
+          ...(baseBranch ? { baseBranch } : {}),
+          ...(typeof data.parentWorktreePath === "string" &&
+          data.parentWorktreePath
+            ? { parentWorktreePath: data.parentWorktreePath }
+            : {}),
+          ...(typeof data.todoId === "string" && data.todoId
+            ? { todoId: data.todoId }
+            : {}),
+        });
+        reply({
+          ok: true,
+          sessionId: started.sessionId,
+          worktreePath: started.worktreePath,
+          branch: started.branch,
+        });
+        const delivery = await started.delivery;
+        if (!delivery.sent) {
+          socket.emit("session:error", {
+            sessionId: started.sessionId,
+            error: describeDelivery(delivery),
+          });
+        }
+      } catch (error) {
+        reply({ ok: false, error: getErrorMessage(error) });
       }
     });
 

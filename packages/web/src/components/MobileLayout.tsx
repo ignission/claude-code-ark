@@ -98,6 +98,8 @@ interface MobileLayoutProps {
   }>;
   onCopyBuffer?: (sessionId: string) => Promise<string | null>;
   onNewSession: () => void;
+  /** 新しいタスクのダイアログを開く */
+  onNewTask: () => void;
   // ビューアタブ状態は Dashboard から props で受け取り、ここでは useViewerTabs を呼ばない
   getTabsForSession: (sessionId: string) => ViewerTab[];
   getActiveTabForSession: (sessionId: string) => number;
@@ -206,6 +208,7 @@ export function MobileLayout({
   onUploadFile,
   onCopyBuffer,
   onNewSession,
+  onNewTask,
   getTabsForSession,
   getActiveTabForSession,
   getViewerOpenSeqForSession,
@@ -438,6 +441,7 @@ export function MobileLayout({
           onSetWorktreeProfile={onSetWorktreeProfile}
           onOpenProfileManager={onOpenProfileManager}
           onNewSession={onNewSession}
+          onNewTask={onNewTask}
           notificationControl={notificationControl}
         />
       </div>

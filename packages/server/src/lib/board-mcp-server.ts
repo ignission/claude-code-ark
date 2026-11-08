@@ -4,6 +4,7 @@
  * board_open ツール（生成した図ファイルをセッションのボードペインで開かせる）を
  * 公開する **Streamable HTTP MCP server** を 127.0.0.1 に公開する。
  * 分岐TODOの todo_add / todo_list も同じサーバーで公開する（完了・削除のツールは持たない）。
+ * 子タスクを別の worktree に起こす task_start も同じサーバーで公開する（実装は task-start.ts）。
  * 旧 board_write（Excalidraw scene への直接書き込み）は撤去済み（B-1）。
  *
  * ArkMcpServer（司令塔ツール群）との違い:
@@ -51,7 +52,29 @@ export class BoardSessionRegistry {
   }
 }
 
+export interface TaskStartToolInput {
+  name: string;
+  prompt: string;
+  baseBranch?: string;
+}
+
+export interface TaskStartToolResult {
+  worktreePath: string;
+  branch: string;
+  /** 最初の文を送れたか。送れなかった理由は message にある */
+  promptSent: boolean;
+  message: string;
+}
+
 export interface BoardMcpDeps {
+  /**
+   * 呼び出し元の worktree を親にして、子タスクの worktree とセッションを起こし、
+   * 起動を待って prompt を送る。worktree の作成か起動に失敗したら throw する
+   */
+  startTask(
+    worktreePath: string,
+    input: TaskStartToolInput
+  ): Promise<TaskStartToolResult>;
   /** 分岐TODOを足す。本文の正規化と空の拒否は DB 側で行う */
   addTodo(
     worktreePath: string,
@@ -113,6 +136,19 @@ export async function handleTodoList(
   return {
     todos: todos.map(t => ({ id: t.id, text: t.text, note: t.note })),
   };
+}
+
+/** task_start の純ロジック。子の結果は返さない (親は待たない。見るのは Ark の一覧) */
+export async function handleTaskStart(
+  deps: Pick<BoardMcpDeps, "startTask">,
+  worktreePath: string,
+  input: TaskStartToolInput
+): Promise<TaskStartToolResult | { error: string }> {
+  try {
+    return await deps.startTask(worktreePath, input);
+  } catch (error) {
+    return { error: getErrorMessage(error) };
+  }
 }
 
 /**
@@ -208,6 +244,49 @@ export function createBoardMcpServer(
       } catch (error) {
         return textResult(`todo_list 失敗: ${getErrorMessage(error)}`);
       }
+    }
+  );
+
+  server.registerTool(
+    "task_start",
+    {
+      description:
+        "子タスクを別の git worktree に起こす。呼び出し元の worktree を親にして新しいブランチの worktree を作り、" +
+        "Ark のセッションを起動し、起動を待って prompt を最初の文として送る。子は Ark の一覧で親の下に並ぶ。" +
+        "子の結果は返らないし、待たない (進み具合はユーザーが Ark で見る)。" +
+        "戻り値は新しい worktree のパスとブランチ名、prompt を送れたか (promptSent)。",
+      inputSchema: {
+        name: z
+          .string()
+          .describe(
+            "タスク名。ブランチ名と worktree のディレクトリ名になる。話題を要約した英語の kebab-case (例: fix-log-format)、3〜5語程度"
+          ),
+        prompt: z
+          .string()
+          .describe(
+            "子セッションに最初に送る文。子はこの会話を知らないので、目的・背景・終わりの条件を書く"
+          ),
+        baseBranch: z
+          .string()
+          .optional()
+          .describe(
+            "ベースのブランチ。省略時は呼び出し元の worktree の今のブランチ"
+          ),
+      },
+    },
+    async args => {
+      const result = await handleTaskStart(deps, worktreePath, {
+        name: args.name,
+        prompt: args.prompt,
+        ...(args.baseBranch === undefined
+          ? {}
+          : { baseBranch: args.baseBranch }),
+      });
+      return textResult(
+        "error" in result
+          ? `task_start 失敗: ${result.error}`
+          : JSON.stringify(result)
+      );
     }
   );
 

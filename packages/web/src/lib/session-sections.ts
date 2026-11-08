@@ -10,6 +10,10 @@
  * 会話が動くたびに場所が変わらない方がよく、従来のキーのままにする。
  * 最終更新の不明な行 (未起動・会話がまだ無い) はあなたの番の最後へ回す。
  * 同着で並びが毎秒揺れないよう、従来の比較キーはそのまま tiebreaker に残す。
+ *
+ * task_start / task:start で起こした子 (セッションに parentWorktreePath がある行) は、
+ * 親と同じセクションにいるときだけ親の直後に寄せる (nestChildEntries)。セクションの分け方は
+ * 変えないので、親と別のセクションにいる子はそのセクションに残り、行の「↳ 親」で親をたどる。
  */
 
 import type {
@@ -39,6 +43,10 @@ export interface SessionListEntry {
    * tmux の session_activity は端末の再描画でも動くので使わない
    */
   lastUpdatedAt: number | null;
+  /** 子の行なら親の worktree のパス。親の行や普通の行は null */
+  parentWorktreePath: string | null;
+  /** 親の直後に寄せた子の行 (字下げして出す) */
+  nested: boolean;
 }
 
 export interface SessionSectionGroup {
@@ -77,6 +85,8 @@ export function buildSessionEntries(
           session ? statuses.get(session.id) : undefined
         ),
         lastUpdatedAt: (session && lastUpdatedAt.get(session.id)) ?? null,
+        parentWorktreePath: session?.parentWorktreePath ?? null,
+        nested: false,
       });
     }
   }
@@ -132,10 +142,63 @@ export function sortSessionEntries(
 export function sectionize(entries: SessionListEntry[]): SessionSectionGroup[] {
   return SECTION_ORDER.map(section => ({
     section,
-    entries: entries.filter(
-      e => presentStatus(e.statusKey).section === section
+    entries: nestChildEntries(
+      entries.filter(e => presentStatus(e.statusKey).section === section)
     ),
   })).filter(g => g.entries.length > 0);
+}
+
+/**
+ * 1つのセクションの (並べ替え済みの) 行で、親が同じセクションにいる子を親の直後へ寄せる。
+ * 子どうしの順は元の並びのまま。孫も同じ規則でたどる (親子が輪になっていても止まる)
+ */
+export function nestChildEntries(
+  entries: SessionListEntry[]
+): SessionListEntry[] {
+  const pathOf = new Map<string, SessionListEntry>();
+  for (const entry of entries) {
+    const path = itemPath(entry);
+    if (path) pathOf.set(path, entry);
+  }
+  const childrenOf = new Map<string, SessionListEntry[]>();
+  const roots: SessionListEntry[] = [];
+  for (const entry of entries) {
+    const parent = entry.parentWorktreePath;
+    if (parent && parent !== itemPath(entry) && pathOf.has(parent)) {
+      const list = childrenOf.get(parent) ?? [];
+      list.push(entry);
+      childrenOf.set(parent, list);
+    } else {
+      roots.push(entry);
+    }
+  }
+  const result: SessionListEntry[] = [];
+  const placed = new Set<SessionListEntry>();
+  const place = (entry: SessionListEntry, nested: boolean) => {
+    if (placed.has(entry)) return;
+    placed.add(entry);
+    result.push(entry.nested === nested ? entry : { ...entry, nested });
+    for (const child of childrenOf.get(itemPath(entry)) ?? []) {
+      place(child, true);
+    }
+  };
+  for (const root of roots) place(root, false);
+  // 親子が輪になっていて根にたどり着けない行も落とさない
+  for (const entry of entries) place(entry, false);
+  return result;
+}
+
+/** worktree のパス → そのパスを親に持つ行の数 (セクションをまたいで数える) */
+export function countChildren(
+  entries: readonly SessionListEntry[]
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const parent = entry.parentWorktreePath;
+    if (!parent) continue;
+    counts.set(parent, (counts.get(parent) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /**
