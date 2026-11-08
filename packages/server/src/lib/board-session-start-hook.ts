@@ -17,6 +17,7 @@ export const BOARD_SESSION_CONTEXT = [
   "図、画面のイメージ、触れるモックなど、文章より絵のほうが伝わるものを見せたいときに使う。決まった形式や部品は無いので、HTML / CSS / インラインの JavaScript で、伝えたいことに合わせて自由に描く。",
   `ファイルは ${DIAGRAM_DIR}/<名前>.diagram.html に 1 ファイルで書き、<title> に一覧へ出す名前を付ける (書き込む直前に parent directory が無い場合だけ作る)。外部のファイル・フォント・画像への参照と通信は遮断されるので、すべてファイルの中に書く (画像は data URI か inline SVG)。リポジトリのファイルへのリンクは worktree 相対のパス (例: src/foo.ts#L10-L24) で書くと、押したときに Ark のファイルビューアで開く。`,
   "ユーザーに「あとで」「TODO に残して」と言われたときは、todo_add でこのセッションの TODO に足す (todo_list で既存を確かめてから)。TODO は人間が後で読むためのもので、完了と削除は人間が行う。",
+  "別の worktree で進める子タスクを起こすときは、自分で git worktree を作らず task_start を使う (Ark のセッションとして起動し、prompt を最初の文として送る。子は Ark の一覧に親の下に並び、結果は返らない)。",
 ].join("\n");
 
 function posixShellQuote(value: string): string {

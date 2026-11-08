@@ -23,6 +23,10 @@ describe("BOARD_SESSION_CONTEXT のボード", () => {
 });
 
 describe("BOARD_SESSION_CONTEXT の分岐TODO", () => {
+  it("子タスクは自分で worktree を作らず task_start で起こすよう伝える", () => {
+    expect(BOARD_SESSION_CONTEXT).toContain("task_start");
+  });
+
   it("保留した話題は todo_add で足すよう伝える", () => {
     expect(BOARD_SESSION_CONTEXT).toContain("todo_add");
     expect(BOARD_SESSION_CONTEXT).toContain("todo_list");
