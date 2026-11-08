@@ -23,6 +23,7 @@ import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { ScreenManagerDialog } from "@/components/ScreenManagerDialog";
 import { ScreenPane } from "@/components/ScreenPane";
+import type { SplitTaskTarget } from "@/components/SessionSectionList";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { SplitViewPane } from "@/components/SplitViewPane";
@@ -871,9 +872,13 @@ export default function Dashboard() {
     });
   };
 
-  // サイドバー・モバイル一覧の「新しいタスク」。リポジトリは選択中のもの
-  const handleNewTask = () => {
-    setNewTaskInitial({ repoPath: repoPath ?? repoList[0] ?? null });
+  // 行メニューの「子タスクを分離」。その worktree を親にし、ベースは今のブランチ
+  const handleSplitTask = (target: SplitTaskTarget) => {
+    setNewTaskInitial({
+      repoPath: target.repoPath,
+      ...(target.branch ? { baseBranch: target.branch } : {}),
+      parentWorktreePath: target.worktreePath,
+    });
   };
 
   // 起動できたら、そのセッションが現れたところで選ぶ
@@ -930,7 +935,7 @@ export default function Dashboard() {
           onUploadFile={uploadFile}
           onCopyBuffer={copyBuffer}
           onNewSession={handleNewSession}
-          onNewTask={handleNewTask}
+          onSplitTask={handleSplitTask}
           getTabsForSession={getTabsForSession}
           getActiveTabForSession={getActiveTabForSession}
           getViewerOpenSeqForSession={getViewerOpenSeqForSession}
@@ -1032,7 +1037,7 @@ export default function Dashboard() {
               onSetWorktreeProfile={setWorktreeProfile}
               onOpenProfileManager={() => setShowProfileManager(true)}
               onNewSession={handleNewSession}
-              onNewTask={handleNewTask}
+              onSplitTask={handleSplitTask}
               onOpenAbout={() => setShowAboutDialog(true)}
               metrics={hostMetrics}
               notificationControl={notificationControl}
@@ -1441,8 +1446,7 @@ export default function Dashboard() {
         onOpenChange={open => {
           if (!open) setNewTaskInitial(null);
         }}
-        repoList={repoList}
-        initial={newTaskInitial ?? { repoPath: null }}
+        initial={newTaskInitial ?? { repoPath: "" }}
         onStartTask={startTask}
         onStarted={handleTaskStarted}
       />

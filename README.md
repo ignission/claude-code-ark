@@ -86,7 +86,7 @@ The mobile UI has its own session list, chat view, terminal with quick keys, and
 - Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser. Ark connects with `ssh -o BatchMode=yes` as the user running the server, so that user needs a key without a passphrase (or one loaded in ssh-agent) and the host already in `known_hosts`.
 - Use a different Claude account per repository (Linux only).
 - Keep topics set aside mid-conversation in the TODO tab. Press the TODO button to the left of the chat input and Claude writes the topics it set aside down as TODOs. Only you can complete or delete one. See [Branch TODOs](#branch-todos).
-- Start a session in a new worktree from just a name and a prompt. See [New tasks](#new-tasks).
+- Split a child task off into its own worktree from a session row, with just a name and a prompt. See [New tasks](#new-tasks).
 
 ## How it works
 
@@ -181,7 +181,7 @@ Existing sessions do not get branch TODOs until `claude` is restarted, because `
 
 ## New tasks
 
-The New task button in the sidebar and the mobile session list creates a worktree, starts a session and sends the first message in one go, from just a task name and a prompt. The task name becomes the branch name. Leave the base branch empty to branch from the repository's default branch (`origin/HEAD`).
+"Split child task" in a session row's menu (right-click or `…` on desktop, `⋮` on mobile) creates a worktree, starts a session and sends the first message in one go, from just a task name and a prompt. That row's worktree becomes the parent, and the base branch is prefilled with the parent's current branch. The task name becomes the branch name. Leave the base branch empty to branch from the repository's default branch (`origin/HEAD`).
 
 Claude inside a session can do the same with the MCP tool `task_start`. The calling session's worktree becomes the parent, and the base branch defaults to the parent's current branch. The child's result is not sent back to the parent. Children are listed right under their parent in the sidebar (when both are in the same status group), the "↳ parent" chip on a child row opens the parent, and the parent row shows how many children it has.
 

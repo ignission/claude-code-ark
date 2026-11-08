@@ -294,6 +294,32 @@ describe("SessionRowMenu", () => {
     expect(props.onDelete).toHaveBeenCalledTimes(1);
   });
 
+  it("子タスクの分離と親を開くは「開く」の直後に出し、選ぶと呼ぶ", () => {
+    const onSplitTask = vi.fn();
+    const onOpenParent = vi.fn();
+    const container = mount(
+      <SessionRowMenu
+        variant="context"
+        entry={entryOf()}
+        onOpen={vi.fn()}
+        onSplitTask={onSplitTask}
+        onOpenParent={onOpenParent}
+        onStartRename={vi.fn()}
+      />
+    );
+
+    expect(itemLabels(container)).toEqual([
+      "開く",
+      "子タスクを分離...",
+      "親を開く",
+      "表示名を変更",
+    ]);
+    clickItem(container, "子タスクを分離...");
+    clickItem(container, "親を開く");
+    expect(onSplitTask).toHaveBeenCalledTimes(1);
+    expect(onOpenParent).toHaveBeenCalledTimes(1);
+  });
+
   it("このworktreeのプロファイル: 個別の選択と「リポジトリの設定を継承」を出す", () => {
     const onSelect = vi.fn();
     const onOpenProfileManager = vi.fn();

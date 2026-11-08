@@ -8,14 +8,7 @@
  */
 
 import type { HostMetrics, Screen } from "@ark/shared";
-import {
-  ChevronDown,
-  Info,
-  ListPlus,
-  Monitor,
-  Plus,
-  Settings,
-} from "lucide-react";
+import { ChevronDown, Info, Monitor, Plus, Settings } from "lucide-react";
 import type { ReactNode } from "react";
 import { SystemStatusBar } from "@/components/bridge/SystemStatusBar";
 import { Button } from "@/components/ui/button";
@@ -33,8 +26,6 @@ import {
 
 type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   onNewSession: () => void;
-  /** 新しいタスクのダイアログを開く (名前とプロンプトだけで worktree とセッションを起こす) */
-  onNewTask: () => void;
   /** Aboutダイアログを開く */
   onOpenAbout: () => void;
   /** 下部に出すCPU/MEM/DISK (未着はnull) */
@@ -49,7 +40,6 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
 
 export function SessionSidebar({
   onNewSession,
-  onNewTask,
   onOpenAbout,
   metrics,
   notificationControl,
@@ -84,16 +74,6 @@ export function SessionSidebar({
           </DropdownMenuContent>
         </DropdownMenu>
         <div className="flex-1" />
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-muted-foreground hover:text-foreground"
-          onClick={onNewTask}
-          aria-label="新しいタスク"
-          title="新しいタスク"
-        >
-          <ListPlus className="size-5" />
-        </Button>
         <Button
           variant="ghost"
           size="icon"

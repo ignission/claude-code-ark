@@ -48,13 +48,12 @@ function setup(response: TaskStartResponse) {
   const onStartTask = vi.fn(async () => response);
   const onOpenChange = vi.fn();
   const onStarted = vi.fn();
-  const render = (initial: NewTaskInitial, repoList = ["/r/app"]) =>
+  const render = (initial: NewTaskInitial) =>
     act(() =>
       root?.render(
         <NewTaskDialog
           open
           onOpenChange={onOpenChange}
-          repoList={repoList}
           initial={initial}
           onStartTask={onStartTask}
           onStarted={onStarted}

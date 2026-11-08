@@ -5,7 +5,7 @@
  * RepoGridViewはPCだけなので、「このリポジトリの全セッションを並べて見る」は渡さない。
  */
 
-import { ListPlus, Monitor, Plus } from "lucide-react";
+import { Monitor, Plus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,8 +18,6 @@ type MobileSessionListProps = Omit<
   "variant" | "selectedSessionId" | "onSelectRepoGrid"
 > & {
   onNewSession: () => void;
-  /** 新しいタスクのダイアログを開く (名前とプロンプトだけで worktree とセッションを起こす) */
-  onNewTask: () => void;
   /** 画面の管理ダイアログを開く。画面が未登録でも一覧の見出しから登録できるようにする */
   onOpenScreenManager?: () => void;
   notificationControl?: ReactNode;
@@ -27,7 +25,6 @@ type MobileSessionListProps = Omit<
 
 export function MobileSessionList({
   onNewSession,
-  onNewTask,
   onOpenScreenManager,
   notificationControl,
   ...listProps
@@ -51,16 +48,6 @@ export function MobileSessionList({
             <Monitor className="size-6" />
           </Button>
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-12 w-12"
-          onClick={onNewTask}
-          aria-label="新しいタスク"
-          title="新しいタスク"
-        >
-          <ListPlus className="size-6" />
-        </Button>
         <Button
           variant="ghost"
           size="icon"

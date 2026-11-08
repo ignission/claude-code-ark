@@ -46,6 +46,14 @@ import { getBaseName } from "@/utils/pathUtils";
 import { resolveSessionRowProfile, SessionListRow } from "./SessionListRow";
 import type { SessionRowMenuProps } from "./SessionRowMenu";
 
+/** 行メニューの「子タスクを分離」で渡すもの (分離元の worktree) */
+export interface SplitTaskTarget {
+  repoPath: string;
+  worktreePath: string;
+  /** 分離元の今のブランチ。detached・不明なら undefined */
+  branch: string | undefined;
+}
+
 export interface SessionSectionListProps {
   /** "sidebar" = PCサイドバーの行、"card" = モバイル一覧のカード */
   variant: "sidebar" | "card";
@@ -92,6 +100,8 @@ export interface SessionSectionListProps {
     enabled: boolean
   ) => void;
   onCreateWorktreeForRepo?: (repoPath: string) => void;
+  /** その worktree を親にして子タスクを分離する (新しいタスクのダイアログを開く) */
+  onSplitTask?: (target: SplitTaskTarget) => void;
   /** リポジトリの全セッションを並べて見る (RepoGridView)。PCだけ渡す */
   onSelectRepoGrid?: (repoPath: string) => void;
   onRemoveRepo?: (repoPath: string) => void;
@@ -147,6 +157,7 @@ export function SessionSectionList({
   onSetWorktreeDisplayName,
   onSessionNotificationEnabledChange,
   onCreateWorktreeForRepo,
+  onSplitTask,
   onSelectRepoGrid,
   onRemoveRepo,
   onSetRepoProfile,
@@ -240,6 +251,20 @@ export function SessionSectionList({
         if (session) onOpenSession(session.id);
         else if (worktree) onStartSession(worktree);
       },
+      onSplitTask:
+        onSplitTask && worktreePath
+          ? () => {
+              const branch = entry.worktree?.branch;
+              onSplitTask({
+                repoPath,
+                worktreePath,
+                branch:
+                  branch && branch !== "(detached)" && branch !== "unknown"
+                    ? branch
+                    : undefined,
+              });
+            }
+          : undefined,
       onOpenParent: parentSession
         ? () => onOpenSession(parentSession.id)
         : undefined,
