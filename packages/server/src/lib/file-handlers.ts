@@ -17,6 +17,7 @@ import {
   writeFileToWorktree,
 } from "./file-manager.js";
 import type { FileWatcher } from "./file-watcher.js";
+import { m } from "./i18n.js";
 
 /** 1 socket あたりの購読数の上限 */
 export const MAX_FILE_SUBSCRIPTIONS = 50;
@@ -75,7 +76,7 @@ export function createFileHandlers(deps: FileHandlersDeps) {
       if (!p) return;
       const worktreePath = deps.getWorktreePath(p.sessionId);
       if (worktreePath === undefined) {
-        return reply({ ok: false, error: "セッションが見つかりません" });
+        return reply({ ok: false, error: m().serverFiles.sessionNotFound });
       }
       // /tmp 配下はセッションの存在だけ確かめて直接読む (file:read と同じ)
       let result: Awaited<ReturnType<typeof readFileFromWorktree>>;
@@ -84,7 +85,7 @@ export function createFileHandlers(deps: FileHandlersDeps) {
         if (tmpPath === null) {
           return reply({
             ok: false,
-            error: "ファイルへのアクセスが拒否されました",
+            error: m().serverFiles.file.accessDenied,
           });
         }
         result = await readFileFromWorktree("", tmpPath);
@@ -112,7 +113,7 @@ export function createFileHandlers(deps: FileHandlersDeps) {
       if (!p) return;
       const worktreePath = deps.getWorktreePath(p.sessionId);
       if (worktreePath === undefined) {
-        return reply({ ok: false, error: "セッションが見つかりません" });
+        return reply({ ok: false, error: m().serverFiles.sessionNotFound });
       }
       const { entries, truncated } = await listDirectory(worktreePath, p.value);
       reply({ ok: true, entries, truncated });
@@ -139,7 +140,7 @@ export function createFileHandlers(deps: FileHandlersDeps) {
         return reply({
           ok: false,
           code: "error",
-          error: "セッションが見つかりません",
+          error: m().serverFiles.sessionNotFound,
         });
       }
       reply(

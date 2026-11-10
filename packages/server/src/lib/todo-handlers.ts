@@ -7,6 +7,7 @@
 
 import type { TodoListResponse, TodoOpResponse } from "@ark/shared";
 import type { SessionDatabase } from "./database.js";
+import { m } from "./i18n.js";
 
 export interface TodoHandlersDeps {
   db: Pick<
@@ -21,8 +22,6 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
-const NOT_FOUND = "TODO が見つかりません";
-
 export function createTodoHandlers(deps: TodoHandlersDeps) {
   function op(
     parse: (data: Record<string, unknown>) => (() => boolean) | null
@@ -35,7 +34,7 @@ export function createTodoHandlers(deps: TodoHandlersDeps) {
       if (!run) return;
       try {
         if (!run()) {
-          reply({ ok: false, error: NOT_FOUND });
+          reply({ ok: false, error: m().serverFiles.todo.notFound });
           return;
         }
         deps.onChanged();
@@ -104,7 +103,7 @@ export function recordStartedForCreatedWorktree(
     }
   } catch (err) {
     console.error(
-      `[Todo] 始めた先の記録に失敗しました (todo=${todoId}, worktree=${worktreePath}): ${err instanceof Error ? err.message : String(err)}`
+      `[Todo] Failed to record where the TODO was started (todo=${todoId}, worktree=${worktreePath}): ${err instanceof Error ? err.message : String(err)}`
     );
   }
 }

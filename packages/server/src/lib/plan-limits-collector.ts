@@ -94,17 +94,17 @@ export async function readAccessToken(
   try {
     raw = await readFile(path.join(configDir, ".credentials.json"), "utf8");
   } catch {
-    return { skip: "credentials が無い" };
+    return { skip: "no credentials" };
   }
   try {
     const oauth = JSON.parse(raw)?.claudeAiOauth;
     const token = oauth?.accessToken;
-    if (typeof token !== "string" || !token) return { skip: "トークンが無い" };
+    if (typeof token !== "string" || !token) return { skip: "no token" };
     if (typeof oauth.expiresAt === "number" && oauth.expiresAt <= now)
-      return { skip: "トークンの期限切れ" };
+      return { skip: "token expired" };
     return { token };
   } catch {
-    return { skip: "credentials を読めない" };
+    return { skip: "cannot read credentials" };
   }
 }
 
@@ -164,7 +164,7 @@ export class PlanLimitsCollector {
         }
         if (this.lastError.get(dir) !== message) {
           console.warn(
-            `[PlanLimits] ${dir} の使用量を読めない (前の値を残す): ${message}`
+            `[PlanLimits] Failed to read usage for ${dir} (keeping the previous value): ${message}`
           );
         }
         this.lastError.set(dir, message);

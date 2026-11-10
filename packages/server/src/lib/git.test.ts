@@ -386,7 +386,7 @@ describe("deleteWorktree", () => {
     const result = await deleteWorktree(REPO, WT);
 
     expect(result.branchCleanup).toBe("kept");
-    expect(result.branchKeptReason).toMatch(/削除に失敗/);
+    expect(result.branchKeptReason).toMatch(/Failed to delete branch/);
     // 削除失敗を「未マージ」と誤分類してリモート確認へ進まない
     expect(execCalls.some(c => c.includes("branch -r --contains"))).toBe(false);
   });
@@ -404,7 +404,7 @@ describe("deleteWorktree", () => {
     const result = await deleteWorktree(REPO, WT);
 
     expect(result.branchCleanup).toBe("kept");
-    expect(result.branchKeptReason).toMatch(/判定に失敗/);
+    expect(result.branchKeptReason).toMatch(/Failed to check whether branch/);
     // リポジトリ異常時はそれ以上ブランチ操作を重ねない
     expect(execCalls.some(c => c.includes("branch -r --contains"))).toBe(false);
     expect(execCalls.some(c => c.startsWith("git branch -D"))).toBe(false);

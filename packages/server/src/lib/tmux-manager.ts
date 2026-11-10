@@ -12,6 +12,7 @@ import path from "node:path";
 import type { SpecialKey } from "@ark/shared";
 import { nanoid } from "nanoid";
 import { errnoCode, errnoMessage } from "./errors.js";
+import { m } from "./i18n.js";
 import { resolveClaudePath, resolveTmuxPath } from "./system.js";
 import {
   describeTmuxReadFailure,
@@ -312,7 +313,7 @@ export class TmuxManager extends EventEmitter {
         // socket の権限エラー等でも同じ分岐に入る。セッションが「全消滅した」
         // ように見えたとき事後に切り分けられるよう、理由を必ず残す
         console.log(
-          `[TmuxManager] 既存セッションを検出できません: ${describeTmuxReadFailure(result.failure)}`
+          `[TmuxManager] Cannot discover existing sessions: ${describeTmuxReadFailure(result.failure)}`
         );
         return;
       }
@@ -342,7 +343,7 @@ export class TmuxManager extends EventEmitter {
             // worktreePath が空のまま復元されると orphan 判定も DB 照合も
             // 効かず黙って進むため、理由をログに残す
             console.warn(
-              `[TmuxManager] ${name}: pane_current_path を取得できません (${describeTmuxReadFailure(cwd.failure)})。worktreePath を空で復元します`
+              `[TmuxManager] ${name}: cannot get pane_current_path (${describeTmuxReadFailure(cwd.failure)}). Restoring with an empty worktreePath`
             );
           }
 
@@ -628,7 +629,7 @@ export class TmuxManager extends EventEmitter {
 
     // ホワイトリストに含まれないキーは拒否
     if (!ALLOWED_SPECIAL_KEYS.has(key)) {
-      throw new Error(`許可されていない特殊キーです: ${key}`);
+      throw new Error(m().serverLib.tmux.specialKeyNotAllowed(key));
     }
 
     // S-Tab はtmuxでは "BTab" として送信

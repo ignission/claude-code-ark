@@ -40,6 +40,7 @@ import type { ServerHandle } from "@ark/server";
 import { app, BrowserWindow, ipcMain, Menu, shell } from "electron";
 import log from "electron-log";
 import { getAvailablePort } from "./getAvailablePort.js";
+import { desktopMessages } from "./locale.js";
 import { buildAppMenu } from "./menu.js";
 import { createTray, destroyTray } from "./tray.js";
 
@@ -307,9 +308,10 @@ async function bootstrap(): Promise<void> {
       );
       try {
         const { dialog } = await import("electron");
+        const messages = desktopMessages();
         dialog.showErrorBox(
-          "Ark: bundled Claude CLI が見つかりません",
-          `配布物の取り込み漏れが疑われます。Ark.app の再インストールをお試しください。\n\n参照パス:\n${detail}\n\n詳細はログを確認してください。`
+          messages.bundledClaudeMissing.title,
+          messages.bundledClaudeMissing.body(detail)
         );
       } catch {
         // dialog 表示自体に失敗しても fail-fast 自体は継続する
@@ -407,12 +409,12 @@ async function bootstrap(): Promise<void> {
     // 隠さず、利用側に固定ポート前提が崩れたことを即座に伝える。
     if (!/^[1-9][0-9]*$/.test(envPortRaw)) {
       throw new Error(
-        `Invalid ARK_PORT: '${envPortRaw}'. 要件: 1..65535 の十進整数 (空文字 / 先頭 0 / 指数表記 / 16 進表記は不可)`
+        `Invalid ARK_PORT: '${envPortRaw}'. Must be a decimal integer in 1..65535 (empty string, leading zero, exponent and hex notation are not allowed)`
       );
     }
     const parsed = Number(envPortRaw);
     if (parsed < 1 || parsed > 65535) {
-      throw new Error(`ARK_PORT out of range: ${parsed}. 要件: 1..65535`);
+      throw new Error(`ARK_PORT out of range: ${parsed}. Must be in 1..65535`);
     }
     port = parsed;
   }

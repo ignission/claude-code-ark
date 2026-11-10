@@ -13,11 +13,11 @@ export const BOARD_SESSION_START_HOOK_FILENAME =
  * ユーザーに頼まれたとき (入力欄の TODO ボタンを含む) だけ足す。
  */
 export const BOARD_SESSION_CONTEXT = [
-  "このセッションにはボードペインがあり、board_open で自分が書いた HTML をそこに開ける。",
-  "図、画面のイメージ、触れるモックなど、文章より絵のほうが伝わるものを見せたいときに使う。決まった形式や部品は無いので、HTML / CSS / インラインの JavaScript で、伝えたいことに合わせて自由に描く。",
-  `ファイルは ${DIAGRAM_DIR}/<名前>.diagram.html に 1 ファイルで書き、<title> に一覧へ出す名前を付ける (書き込む直前に parent directory が無い場合だけ作る)。外部のファイル・フォント・画像への参照と通信は遮断されるので、すべてファイルの中に書く (画像は data URI か inline SVG)。リポジトリのファイルへのリンクは worktree 相対のパス (例: src/foo.ts#L10-L24) で書くと、押したときに Ark のファイルビューアで開く。`,
-  "ユーザーに「あとで」「TODO に残して」と言われたときは、todo_add でこのセッションの TODO に足す (todo_list で既存を確かめてから)。TODO は人間が後で読むためのもので、完了と削除は人間が行う。",
-  "別の worktree で進める子タスクを起こすときは、自分で git worktree を作らず task_start を使う (Ark のセッションとして起動し、prompt を最初の文として送る。子は Ark の一覧に親の下に並び、結果は返らない)。",
+  "This session has a board pane, and board_open opens HTML you wrote in it.",
+  "Use it when you want to show something that a picture conveys better than prose, such as a diagram, a screen mockup, or an interactive mock. There is no fixed format and no set of components, so draw freely with HTML / CSS / inline JavaScript to fit what you want to convey.",
+  `Write it as a single file at ${DIAGRAM_DIR}/<name>.diagram.html, and put the name to show in the list in <title> (create the parent directory just before writing, only if it does not exist). References to external files, fonts, and images, and network requests, are blocked, so put everything inside the file (images as data URIs or inline SVG). Write links to files in the repository as worktree-relative paths (e.g. src/foo.ts#L10-L24); clicking one opens the file in Ark's file viewer.`,
+  'When the user says something like "later" or "put it in the TODOs", add it to this session\'s TODOs with todo_add (after checking the existing ones with todo_list). TODOs are for the human to read later; the human completes and deletes them.',
+  "To start a child task that proceeds in another worktree, use task_start instead of creating a git worktree yourself (it starts as an Ark session and sends prompt as the first message. The child appears under its parent in Ark's list, and its result is not returned).",
 ].join("\n");
 
 function posixShellQuote(value: string): string {

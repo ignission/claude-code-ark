@@ -27,6 +27,7 @@ import {
 } from "@ark/shared";
 import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
+import { m } from "./i18n.js";
 import { getDataDir } from "./paths.js";
 
 const LEGACY_DIAGRAM_PREFIX = "docs/diagrams/";
@@ -566,7 +567,7 @@ export class SessionDatabase {
         profile_id = excluded.profile_id,
         profile_config_dir = excluded.profile_config_dir,
         board_mcp_config_path = excluded.board_mcp_config_path,
-        -- 親を渡さない起動 (session:start など) で、残っていた行の親子を消さない
+        -- A start without a parent (session:start etc.) must not erase the parent link of an existing row
         parent_worktree_path = COALESCE(excluded.parent_worktree_path, parent_worktree_path),
         updated_at = excluded.updated_at
     `);
@@ -1378,15 +1379,15 @@ export class SessionDatabase {
    */
   private normalizeShortcutMessage(value: unknown): string {
     if (typeof value !== "string") {
-      throw new Error("message は文字列で指定してください");
+      throw new Error(m().serverFiles.shortcut.messageNotString);
     }
     const trimmed = value.trim();
     if (trimmed.length === 0) {
-      throw new Error("message は空にできません");
+      throw new Error(m().serverFiles.shortcut.messageEmpty);
     }
     if (trimmed.length > MESSAGE_SHORTCUT_MAX_LENGTH) {
       throw new Error(
-        `message は ${MESSAGE_SHORTCUT_MAX_LENGTH} 文字以内で指定してください`
+        m().serverFiles.shortcut.messageTooLong(MESSAGE_SHORTCUT_MAX_LENGTH)
       );
     }
     return trimmed;
@@ -1423,7 +1424,7 @@ export class SessionDatabase {
       normalizedMessage = this.normalizeShortcutMessage(patch.message);
     }
     if (patch.sortOrder !== undefined && !Number.isInteger(patch.sortOrder)) {
-      throw new Error("sortOrder は整数で指定してください");
+      throw new Error(m().serverFiles.shortcut.sortOrderNotInteger);
     }
     const setClauses: string[] = [];
     const params: Array<string | number> = [];
@@ -1468,7 +1469,7 @@ export class SessionDatabase {
     branch?: string | null;
   }): Todo {
     const text = normalizeTodoText(input.text);
-    if (!text) throw new Error("TODO の本文が空です");
+    if (!text) throw new Error("TODO text is empty");
     const note = input.note?.slice(0, TODO_NOTE_MAX_LENGTH).trim() || null;
     const row: TodoRow = {
       id: nanoid(),

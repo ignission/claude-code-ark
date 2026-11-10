@@ -7,6 +7,7 @@
 
 import type { ScreenInput, ScreenPatch } from "@ark/shared";
 import { getErrorMessage } from "./errors.js";
+import { m } from "./i18n.js";
 
 export type ScreenValidation<T> =
   | { ok: true; value: T }
@@ -40,7 +41,7 @@ function validateField(
       const name = typeof value === "string" ? value.trim() : "";
       return name
         ? { ok: true, value: name }
-        : fail("名前を入力してください", "invalid_name");
+        : fail(m().serverLib.screenInput.nameRequired, "invalid_name");
     }
     case "sshHost":
     case "vncHost": {
@@ -48,7 +49,9 @@ function validateField(
       return HOST_PATTERN.test(host)
         ? { ok: true, value: host }
         : fail(
-            `${field === "sshHost" ? "SSH" : "VNC"} ホストはホスト名か IP アドレスで指定してください`,
+            m().serverLib.screenInput.invalidHost(
+              field === "sshHost" ? "SSH" : "VNC"
+            ),
             "invalid_host"
           );
     }
@@ -56,7 +59,7 @@ function validateField(
       const user = typeof value === "string" ? value.trim() : "";
       return USER_PATTERN.test(user)
         ? { ok: true, value: user }
-        : fail("SSH ユーザー名が不正です", "invalid_user");
+        : fail(m().serverLib.screenInput.invalidSshUser, "invalid_user");
     }
     case "vncUser": {
       const user = typeof value === "string" ? value.trim() : "";
@@ -68,14 +71,19 @@ function validateField(
       return port !== null
         ? { ok: true, value: port }
         : fail(
-            `${field === "sshPort" ? "SSH" : "VNC"} ポートは 1〜65535 の整数で指定してください`,
+            m().serverLib.screenInput.invalidPort(
+              field === "sshPort" ? "SSH" : "VNC"
+            ),
             "invalid_port"
           );
     }
     case "vncPassword": {
       return typeof value === "string" && value.length > 0
         ? { ok: true, value }
-        : fail("VNC パスワードを入力してください", "invalid_password");
+        : fail(
+            m().serverLib.screenInput.vncPasswordRequired,
+            "invalid_password"
+          );
     }
   }
 }
@@ -102,7 +110,7 @@ export function validateScreenInput(
   raw: unknown
 ): ScreenValidation<ScreenInput> {
   if (typeof raw !== "object" || raw === null) {
-    return fail("入力が不正です", "invalid_input");
+    return fail(m().serverLib.screenInput.invalidInput, "invalid_input");
   }
   const source: Record<string, unknown> = {
     ...DEFAULTS,
@@ -137,7 +145,7 @@ export function describeScreenDbError(e: unknown): {
 } {
   if (e instanceof Error && DUPLICATE_NAME_PATTERN.test(e.message)) {
     return {
-      message: "同じ名前の画面が既に登録されています",
+      message: m().serverLib.screenInput.duplicateName,
       code: "duplicate_name",
     };
   }
@@ -149,7 +157,7 @@ export function validateScreenPatch(
   raw: unknown
 ): ScreenValidation<ScreenPatch> {
   if (typeof raw !== "object" || raw === null) {
-    return fail("入力が不正です", "invalid_input");
+    return fail(m().serverLib.screenInput.invalidInput, "invalid_input");
   }
   const source = raw as Record<string, unknown>;
   const value: Record<string, string | number> = {};

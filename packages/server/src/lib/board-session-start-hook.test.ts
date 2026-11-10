@@ -4,18 +4,19 @@ import { BOARD_SESSION_CONTEXT } from "./board-session-start-hook.js";
 describe("BOARD_SESSION_CONTEXT のボード", () => {
   it("書いた HTML を board_open で開け、形式は自由だと伝える", () => {
     expect(BOARD_SESSION_CONTEXT).toContain("board_open");
-    expect(BOARD_SESSION_CONTEXT).toContain("自由に描く");
+    expect(BOARD_SESSION_CONTEXT).toContain("draw freely");
     expect(BOARD_SESSION_CONTEXT).toContain(".diagram.html");
   });
 
   it("撤去した規約 (デッキ・doc・コメント・作図規約) と、頼まれずに描かせる文言を残さない", () => {
     for (const removed of [
-      "デッキ",
+      "deck",
       "board_authoring_guide",
       "board_comments",
       "board_reply",
       "data-ark-author",
-      "頼まれていなくても",
+      "even if not asked",
+      "proactively",
     ]) {
       expect(BOARD_SESSION_CONTEXT).not.toContain(removed);
     }
@@ -33,8 +34,8 @@ describe("BOARD_SESSION_CONTEXT の分岐TODO", () => {
   });
 
   it("Claude 自身の判断では足さず、ユーザーに頼まれたときだけ足す", () => {
-    expect(BOARD_SESSION_CONTEXT).not.toContain("保留・後回し・別件にしたとき");
-    expect(BOARD_SESSION_CONTEXT).not.toContain("分岐TODOの判定");
-    expect(BOARD_SESSION_CONTEXT).toContain("と言われたときは、todo_add");
+    expect(BOARD_SESSION_CONTEXT).not.toContain("When you put a topic on hold");
+    expect(BOARD_SESSION_CONTEXT).not.toContain("on your own judgment");
+    expect(BOARD_SESSION_CONTEXT).toContain("When the user says");
   });
 });

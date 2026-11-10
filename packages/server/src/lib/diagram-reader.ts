@@ -16,6 +16,7 @@ import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { injectDiagramPinchLayer } from "./diagram-pinch-layer.js";
 import { errnoCode, errnoMessage } from "./errors.js";
+import { m } from "./i18n.js";
 
 export type ReadDiagramResult =
   | {
@@ -61,7 +62,7 @@ async function readRawVerified(
       return {
         ok: false,
         status: 403,
-        error: "図ファイルの実体を検証できません",
+        error: m().serverFiles.board.identityUnverifiable,
       };
     }
 
@@ -74,7 +75,7 @@ async function readRawVerified(
       return {
         ok: false,
         status: 403,
-        error: `図ファイルの実体が worktree の ${DIAGRAM_DIR} から出ています`,
+        error: m().serverFiles.board.realPathOutsideDir(DIAGRAM_DIR),
       };
     }
 
@@ -87,19 +88,19 @@ async function readRawVerified(
     // (managed-worktree.ts の失敗要因分離と同じ方針)。
     const code = errnoCode(e);
     if (code === "ENOENT") {
-      return { ok: false, status: 404, error: "図ファイルが見つかりません" };
+      return { ok: false, status: 404, error: m().serverFiles.board.notFound };
     }
     if (code === "EACCES" || code === "EPERM") {
       return {
         ok: false,
         status: 403,
-        error: `図ファイルへのアクセスが拒否されました (${code})`,
+        error: m().serverFiles.board.accessDenied(code),
       };
     }
     return {
       ok: false,
       status: 500,
-      error: `図ファイルの読み込みに失敗しました (${code}): ${errnoMessage(e)}`,
+      error: m().serverFiles.board.readFailed(code, errnoMessage(e)),
     };
   } finally {
     await fd?.close();

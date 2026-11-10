@@ -213,7 +213,7 @@ describe("cleanupLegacyContextSettings", () => {
     expect(cleanupLegacyContextSettings(worktree).changed).toBe(false);
     expect(fs.readFileSync(settingsPath, "utf-8")).toContain("ark/context");
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("JSON として読めない")
+      expect.stringContaining("is not valid JSON")
     );
   });
 

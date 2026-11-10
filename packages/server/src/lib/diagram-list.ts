@@ -6,6 +6,7 @@ import type { DiagramListItem, DiagramListResponse } from "@ark/shared";
 import { DIAGRAM_DIR } from "./diagram-path.js";
 import { readDiagramTitle } from "./diagram-reader.js";
 import { errnoCode, errnoMessage } from "./errors.js";
+import { m } from "./i18n.js";
 
 const DIAGRAM_SUFFIX = ".diagram.html";
 const MAX_WORKTREE_PATH_LENGTH = 4096;
@@ -133,23 +134,26 @@ export async function handleDiagramListRequest(
     typeof request.worktreePath !== "string" ||
     request.worktreePath.length === 0
   ) {
-    return { ok: false, error: "不正なリクエストです" };
+    return { ok: false, error: m().serverFiles.invalidRequest };
   }
   if (request.worktreePath.length > MAX_WORKTREE_PATH_LENGTH) {
-    return { ok: false, error: "worktree のパスが長すぎます" };
+    return { ok: false, error: m().serverFiles.board.worktreePathTooLong };
   }
 
   try {
     const worktreeReal = deps.resolveManagedWorktreePath(request.worktreePath);
     if (!worktreeReal) {
-      return { ok: false, error: "管理対象の worktree ではありません" };
+      return { ok: false, error: m().serverFiles.unmanagedWorktree };
     }
     const diagrams = await deps.listDiagrams(worktreeReal);
     return { ok: true, diagrams };
   } catch (error) {
     return {
       ok: false,
-      error: `図一覧の取得に失敗しました (${errnoCode(error)}): ${errnoMessage(error)}`,
+      error: m().serverFiles.board.listFailed(
+        errnoCode(error),
+        errnoMessage(error)
+      ),
     };
   }
 }

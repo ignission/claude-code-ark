@@ -152,18 +152,18 @@ export function checkManagedWorktree(
 export function describeWorktreeFailure(failure: WorktreeFailure): string {
   switch (failure.kind) {
     case "path-too-long":
-      return "パスが長すぎます";
+      return "path is too long";
     case "worktree-missing":
-      return "worktree が削除されています (パスが存在しません)";
+      return "the worktree has been removed (the path does not exist)";
     case "fs-error":
-      return `FS エラー (${failure.code}): ${failure.message}`;
+      return `filesystem error (${failure.code}): ${failure.message}`;
     case "not-directory":
-      return "ディレクトリではありません";
+      return "not a directory";
     case "not-a-worktree":
-      return "git worktree ではありません (.git がありません)";
+      return "not a git worktree (no .git)";
     case "repo-not-allowed":
       return failure.repoPath
-        ? `許可リスト (--repos) 外のリポジトリです: ${failure.repoPath}`
-        : "許可リスト (--repos) 外のリポジトリです";
+        ? `the repository is outside the allowlist (--repos): ${failure.repoPath}`
+        : "the repository is outside the allowlist (--repos)";
   }
 }
