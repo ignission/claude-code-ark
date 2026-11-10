@@ -11,12 +11,11 @@ export const git: Messages["git"] = {
 
   time: {
     justNow: "just now",
-    minutesAgo: (minutes: number) =>
-      `${minutes} ${plural(minutes, "minute", "minutes")} ago`,
-    hoursAgo: (hours: number) =>
-      `${hours} ${plural(hours, "hour", "hours")} ago`,
+    // 列が狭い (68px) ので短く書く
+    minutesAgo: (minutes: number) => `${minutes}m ago`,
+    hoursAgo: (hours: number) => `${hours}h ago`,
     yesterday: "yesterday",
-    daysAgo: (days: number) => `${days} ${plural(days, "day", "days")} ago`,
+    daysAgo: (days: number) => `${days}d ago`,
   },
 
   fileStatus: {

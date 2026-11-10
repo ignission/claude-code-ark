@@ -59,17 +59,17 @@ describe("formatRelativeTime (英語)", () => {
   beforeEach(() => setLocaleForTest("en"));
   afterEach(() => setLocaleForTest("ja"));
 
-  it("単数と複数を数で言い分ける", () => {
+  it("列に収まる短い書き方で出す", () => {
     expect(rel(now - 30_000)).toBe("just now");
-    expect(rel(at(2026, 10, 8, 11, 59))).toBe("1 minute ago");
-    expect(rel(at(2026, 10, 8, 11, 57))).toBe("3 minutes ago");
-    expect(rel(at(2026, 10, 8, 11, 0))).toBe("1 hour ago");
-    expect(rel(at(2026, 10, 7, 13, 0))).toBe("23 hours ago");
+    expect(rel(at(2026, 10, 8, 11, 59))).toBe("1m ago");
+    expect(rel(at(2026, 10, 8, 11, 57))).toBe("3m ago");
+    expect(rel(at(2026, 10, 8, 11, 0))).toBe("1h ago");
+    expect(rel(at(2026, 10, 7, 13, 0))).toBe("23h ago");
   });
 
   it("24 時間以上は暦の日数で言い、7 日以上前は日付", () => {
     expect(rel(at(2026, 10, 7, 11, 0))).toBe("yesterday");
-    expect(rel(at(2026, 10, 5, 8, 0))).toBe("3 days ago");
+    expect(rel(at(2026, 10, 5, 8, 0))).toBe("3d ago");
     expect(rel(at(2026, 10, 1, 8, 0))).toBe("2026/10/01");
   });
 });

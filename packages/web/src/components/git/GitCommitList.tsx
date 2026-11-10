@@ -459,7 +459,7 @@ function CommitCells({ commit, color, detachedHead, nowMs }: CommitCellsProps) {
       </span>
       <GitAvatar name={commit.authorName} email={commit.authorEmail} />
       <span
-        className="w-[68px] shrink-0 text-right text-[12px] text-muted-foreground tabular-nums"
+        className="w-[68px] shrink-0 whitespace-nowrap text-right text-[12px] text-muted-foreground tabular-nums"
         title={`${formatAbsoluteTime(commit.authorTime)} · ${shortSha(commit.sha)}`}
       >
         {formatRelativeTime(commit.authorTime, nowMs)}
