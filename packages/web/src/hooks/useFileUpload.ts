@@ -1,3 +1,5 @@
+import { m } from "@/lib/i18n";
+
 /**
  * クライアント側MIMEチェックは意図的にサーバー側より緩い。
  * 最終的な受理可否はサーバー（server/lib/file-upload-manager.ts）のホワイトリストが決定する。
@@ -63,7 +65,10 @@ export function validateFile(file: File): UploadValidation {
   if (file.size > MAX_FILE_SIZE) {
     return {
       ok: false,
-      reason: `${file.name}: 10MBを超えています（${(file.size / 1024 / 1024).toFixed(2)}MB）`,
+      reason: m.chat.upload.tooLarge(
+        file.name,
+        (file.size / 1024 / 1024).toFixed(2)
+      ),
     };
   }
   const mime = file.type || "application/octet-stream";
@@ -80,7 +85,7 @@ export function validateFile(file: File): UploadValidation {
 
   return {
     ok: false,
-    reason: `${file.name}: 未対応の形式です（${mime}）`,
+    reason: m.chat.upload.unsupportedType(file.name, mime),
   };
 }
 

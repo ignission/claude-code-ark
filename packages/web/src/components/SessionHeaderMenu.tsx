@@ -28,6 +28,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { m } from "@/lib/i18n";
 import {
   deleteSessionDescription,
   notificationMenuLabel,
@@ -60,8 +61,8 @@ export function SessionHeaderMenu({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            aria-label="その他の操作"
-            title="その他の操作"
+            aria-label={m.session.header.moreActions}
+            title={m.session.header.moreActions}
             className="inline-flex size-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground"
           >
             <Ellipsis className="size-5" aria-hidden="true" />
@@ -88,7 +89,7 @@ export function SessionHeaderMenu({
             onSelect={() => setShowDeleteDialog(true)}
           >
             <Trash2 />
-            セッションを削除
+            {m.session.actions.deleteSession}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -96,13 +97,17 @@ export function SessionHeaderMenu({
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>セッションを削除</AlertDialogTitle>
+            <AlertDialogTitle>
+              {m.session.actions.deleteSession}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {deleteSessionDescription(worktree)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
-            <AlertDialogCancel className="h-10">キャンセル</AlertDialogCancel>
+            <AlertDialogCancel className="h-10">
+              {m.common.cancel}
+            </AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10"
               onClick={() => {
@@ -110,7 +115,7 @@ export function SessionHeaderMenu({
                 setShowDeleteDialog(false);
               }}
             >
-              削除
+              {m.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

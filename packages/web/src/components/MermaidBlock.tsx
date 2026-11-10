@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { m } from "@/lib/i18n";
 import { renderMermaidToSvg } from "../lib/mermaid-block-utils";
 
 let seq = 0;
@@ -36,7 +37,7 @@ export function MermaidBlock({ code }: { code: string }) {
         {code}
         {error && (
           <span className="mt-1 block font-sans text-destructive text-xs">
-            図の描画に失敗しました: {error}
+            {m.chat.mermaid.renderFailed(error)}
           </span>
         )}
       </div>

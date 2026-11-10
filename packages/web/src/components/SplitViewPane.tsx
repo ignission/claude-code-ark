@@ -83,6 +83,7 @@ import {
 } from "react";
 import type { Socket } from "socket.io-client";
 import { useOpenTerminalOnAuq } from "@/hooks/useOpenTerminalOnAuq";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { focusInput } from "../lib/focus-input";
@@ -123,8 +124,8 @@ const RIGHT_TABS: readonly {
   label: string;
   icon: (typeof VIEW_MODE_ICONS)[keyof typeof VIEW_MODE_ICONS];
 }[] = [
-  { value: "board", label: "図", icon: VIEW_MODE_ICONS.board },
-  { value: "files", label: "ファイル", icon: VIEW_MODE_ICONS.files },
+  { value: "board", label: m.chat.panel.tabBoard, icon: VIEW_MODE_ICONS.board },
+  { value: "files", label: m.chat.panel.tabFiles, icon: VIEW_MODE_ICONS.files },
   { value: "git", label: "Git", icon: VIEW_MODE_ICONS.git },
   { value: "todo", label: "TODO", icon: VIEW_MODE_ICONS.todo },
 ];
@@ -417,8 +418,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       <button
         key="copy-buffer"
         type="button"
-        aria-label="端末のバッファをコピー"
-        title="端末のバッファをコピー"
+        aria-label={m.chat.terminal.copyBuffer}
+        title={m.chat.terminal.copyBuffer}
         onClick={() => {
           terminalRef.current?.copyBuffer();
           refocusTerminal();
@@ -432,8 +433,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       <button
         key="reload-terminal"
         type="button"
-        aria-label="端末を再読み込み"
-        title="端末を再読み込み"
+        aria-label={m.chat.terminal.reload}
+        title={m.chat.terminal.reload}
         onClick={() => {
           terminalRef.current?.reload();
           refocusTerminal();
@@ -688,9 +689,9 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               <button
                 type="button"
                 onClick={handleToggleWorkArea}
-                aria-label="パネル"
+                aria-label={m.chat.panel.label}
                 aria-pressed={showWorkArea}
-                title={showWorkArea ? "パネルを閉じる" : "パネルを開く"}
+                title={showWorkArea ? m.chat.panel.close : m.chat.panel.open}
                 className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors ${
                   showWorkArea
                     ? "bg-muted text-foreground"
@@ -701,7 +702,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                   className="size-4.5"
                   aria-hidden="true"
                 />
-                <span className="@max-2xl:sr-only">パネル</span>
+                <span className="@max-2xl:sr-only">{m.chat.panel.label}</span>
               </button>
               <SessionHeaderMenu
                 worktree={props.worktree}
@@ -741,7 +742,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           <>
             <button
               type="button"
-              aria-label="左右の幅を調整"
+              aria-label={m.chat.panel.resize}
               onMouseDown={handleResizerMouseDown}
               className={cn(
                 // 見える線は 1px (bg-border)。掴める幅は before で左右へ 3px ずつ広げる
@@ -767,7 +768,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               <div className="flex h-12 shrink-0 items-stretch gap-2 border-b border-border pr-2 pl-3 text-[13px]">
                 <div
                   role="tablist"
-                  aria-label="パネルの表示"
+                  aria-label={m.chat.panel.views}
                   className="inline-flex min-w-0 items-stretch gap-4"
                 >
                   {rightTabs.map((tab, index) => {
@@ -806,8 +807,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 <div className="flex-1" />
                 <button
                   type="button"
-                  aria-label="パネルを閉じる"
-                  title="パネルを閉じる"
+                  aria-label={m.chat.panel.close}
+                  title={m.chat.panel.close}
                   onClick={handleCloseWorkArea}
                   className="inline-flex size-8 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >

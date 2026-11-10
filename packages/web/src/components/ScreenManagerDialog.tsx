@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { m } from "@/lib/i18n";
 
 interface ScreenManagerDialogProps {
   open: boolean;
@@ -85,44 +86,48 @@ function validateForm(
   kind: "add" | "edit"
 ): { ok: true } | { ok: false; field: FormField; message: string } {
   if (!values.name.trim()) {
-    return { ok: false, field: "name", message: "名前を入力してください" };
+    return { ok: false, field: "name", message: m.screen.manager.nameRequired };
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(values.sshHost.trim())) {
     return {
       ok: false,
       field: "sshHost",
-      message: "SSH ホストはホスト名か IP アドレスで指定してください",
+      message: m.screen.manager.sshHostInvalid,
     };
   }
   if (parsePort(values.sshPort) === null) {
     return {
       ok: false,
       field: "sshPort",
-      message: "SSH ポートは 1〜65535 の整数で指定してください",
+      message: m.screen.manager.sshPortInvalid,
     };
   }
   if (!/^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(values.sshUser.trim())) {
-    return { ok: false, field: "sshUser", message: "SSH ユーザー名が不正です" };
+    return {
+      ok: false,
+      field: "sshUser",
+      message: m.screen.manager.sshUserInvalid,
+    };
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(values.vncHost.trim())) {
     return {
       ok: false,
       field: "vncHost",
-      message: "VNC ホストはホスト名か IP アドレスで指定してください",
+      message: m.screen.manager.vncHostInvalid,
     };
   }
   if (parsePort(values.vncPort) === null) {
     return {
       ok: false,
       field: "vncPort",
-      message: "VNC ポートは 1〜65535 の整数で指定してください",
+      message: m.screen.manager.vncPortInvalid,
     };
   }
   if (kind === "add" && values.vncPassword.length === 0) {
     return {
       ok: false,
       field: "vncPassword",
-      message: "VNC パスワードを入力してください",
+      message: m.screen.manager.vncPasswordRequired,
     };
   }
   return { ok: true };
@@ -220,15 +225,15 @@ export function ScreenManagerDialog({
       >
         <AlertDialogContent className="bg-card border-border">
           <AlertDialogHeader>
-            <AlertDialogTitle>画面を削除しますか？</AlertDialogTitle>
+            <AlertDialogTitle>{m.screen.manager.deleteTitle}</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingDelete
-                ? `「${pendingDelete.name}」の接続設定を削除します。接続先のホストには何もしません。`
+                ? m.screen.manager.deleteDescription(pendingDelete.name)
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>キャンセル</AlertDialogCancel>
+            <AlertDialogCancel>{m.common.cancel}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 if (pendingDelete) {
@@ -238,7 +243,7 @@ export function ScreenManagerDialog({
               }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              削除
+              {m.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -265,28 +270,25 @@ function ListView({
       <DialogHeader className="px-5 py-4 border-b border-border">
         <DialogTitle className="flex items-center gap-2">
           <Monitor className="w-4 h-4 text-muted-foreground" />
-          画面の管理
+          {m.screen.manager.title}
         </DialogTitle>
-        <DialogDescription>
-          SSH で届くホストの VNC 画面 (macOS の画面共有など) を Ark
-          の中に表示します。
-        </DialogDescription>
+        <DialogDescription>{m.screen.manager.description}</DialogDescription>
       </DialogHeader>
 
       <div className="px-5 py-3 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs text-muted-foreground font-medium">
-            登録済みの画面 ({screens.length})
+            {m.screen.manager.registered(screens.length)}
           </span>
           <Button type="button" size="sm" onClick={onAdd}>
             <Plus className="w-3 h-3 mr-1" />
-            新規追加
+            {m.screen.manager.add}
           </Button>
         </div>
 
         {screens.length === 0 ? (
           <div className="text-center py-10 text-sm text-muted-foreground border border-dashed border-border rounded-md">
-            画面が未登録です。
+            {m.screen.manager.empty}
           </div>
         ) : (
           <div className="space-y-2">
@@ -307,7 +309,7 @@ function ListView({
                     <button
                       type="button"
                       onClick={() => onEdit(screen.id)}
-                      title="編集"
+                      title={m.screen.manager.edit}
                       className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
                     >
                       <Pencil className="w-3.5 h-3.5" />
@@ -315,7 +317,7 @@ function ListView({
                     <button
                       type="button"
                       onClick={() => onAskDelete(screen)}
-                      title="削除"
+                      title={m.common.delete}
                       className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -330,7 +332,7 @@ function ListView({
 
       <div className="px-5 py-3 border-t border-border flex justify-end">
         <Button type="button" variant="outline" size="sm" onClick={onClose}>
-          閉じる
+          {m.common.close}
         </Button>
       </div>
     </>
@@ -347,49 +349,49 @@ const FIELD_LABELS: Array<{
   {
     field: "name",
     id: "screen-name",
-    label: "名前",
-    placeholder: "例: ビルド VM",
+    label: m.screen.manager.fields.name,
+    placeholder: m.screen.manager.fields.namePlaceholder,
   },
   {
     field: "sshHost",
     id: "screen-ssh-host",
-    label: "SSH ホスト",
-    placeholder: "ホスト名か IP アドレス",
+    label: m.screen.manager.fields.sshHost,
+    placeholder: m.screen.manager.fields.hostPlaceholder,
   },
   {
     field: "sshPort",
     id: "screen-ssh-port",
-    label: "SSH ポート",
+    label: m.screen.manager.fields.sshPort,
     placeholder: "22",
   },
   {
     field: "sshUser",
     id: "screen-ssh-user",
-    label: "SSH ユーザー",
+    label: m.screen.manager.fields.sshUser,
     placeholder: "",
   },
   {
     field: "vncHost",
     id: "screen-vnc-host",
-    label: "VNC ホスト (SSH ホストから見た宛先)",
+    label: m.screen.manager.fields.vncHost,
     placeholder: "127.0.0.1",
   },
   {
     field: "vncPort",
     id: "screen-vnc-port",
-    label: "VNC ポート",
+    label: m.screen.manager.fields.vncPort,
     placeholder: "5900",
   },
   {
     field: "vncUser",
     id: "screen-vnc-user",
-    label: "VNC ユーザー名 (macOS の画面共有では必須)",
+    label: m.screen.manager.fields.vncUser,
     placeholder: "",
   },
   {
     field: "vncPassword",
     id: "screen-vnc-password",
-    label: "VNC パスワード",
+    label: m.screen.manager.fields.vncPassword,
     placeholder: "",
     type: "password",
   },
@@ -427,12 +429,14 @@ function AddOrEditView({
     <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
       <DialogHeader className="px-5 py-4 border-b border-border">
         <DialogTitle>
-          {kind === "add" ? "画面を追加" : "画面を編集"}
+          {kind === "add"
+            ? m.screen.manager.addTitle
+            : m.screen.manager.editTitle}
         </DialogTitle>
         <DialogDescription>
           {kind === "add"
-            ? "Ark のサーバから SSH 鍵で繋がるホストを指定します。"
-            : "パスワードは空のままにすると変更しません。"}
+            ? m.screen.manager.addDescription
+            : m.screen.manager.editDescription}
         </DialogDescription>
       </DialogHeader>
 
@@ -465,10 +469,10 @@ function AddOrEditView({
 
       <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>
-          キャンセル
+          {m.common.cancel}
         </Button>
         <Button type="submit" size="sm">
-          {kind === "add" ? "追加" : "保存"}
+          {kind === "add" ? m.screen.manager.submitAdd : m.common.save}
         </Button>
       </div>
     </form>

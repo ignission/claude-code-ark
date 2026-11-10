@@ -15,6 +15,7 @@
 
 import type { ManagedSession, SessionGridSnapshot } from "@ark/shared";
 import { useEffect } from "react";
+import { m } from "@/lib/i18n";
 import { resolveStatusKey } from "@/lib/status-tone";
 import { StatusChip } from "./StatusChip";
 
@@ -60,13 +61,13 @@ export function RepoGridView({
           {repoPath}
         </span>
         <span className="ml-auto text-xs text-muted-foreground">
-          {sessions.length} sessions
+          {m.session.dashboard.sessionCount(sessions.length)}
         </span>
       </div>
       <div className="flex-1 overflow-auto p-4">
         {sessions.length === 0 ? (
           <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-            このリポジトリにはまだセッションがありません
+            {m.session.list.repoEmpty}
           </div>
         ) : (
           <div className="grid gap-4 grid-cols-1 md:grid-cols-2 2xl:grid-cols-3">

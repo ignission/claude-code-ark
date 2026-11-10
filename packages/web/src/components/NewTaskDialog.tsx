@@ -30,6 +30,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { m } from "@/lib/i18n";
 import { getBaseName } from "@/utils/pathUtils";
 
 /** 開くたびに入れる初期値。parentWorktreePath と todoId はそのまま task:start に渡す */
@@ -160,17 +161,19 @@ export function NewTaskDialog({
     >
       <DialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-lg mx-auto">
         <DialogHeader>
-          <DialogTitle>新しいタスク</DialogTitle>
+          <DialogTitle>{m.dialogs.newTask.title}</DialogTitle>
           <DialogDescription>
             {parentPath
-              ? `${getBaseName(parentPath)} から新しいworktreeを分け、セッションを起動してプロンプトを最初の文として送ります。`
-              : "新しいworktreeでセッションを起動し、プロンプトを最初の文として送ります。"}
+              ? m.dialogs.newTask.descriptionWithParent(getBaseName(parentPath))
+              : m.dialogs.newTask.description}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           {!parentPath && repoOptions.length > 1 && (
             <div className="space-y-2">
-              <Label htmlFor="new-task-repo">リポジトリ</Label>
+              <Label htmlFor="new-task-repo">
+                {m.dialogs.newTask.repository}
+              </Label>
               <select
                 id="new-task-repo"
                 value={repoPath}
@@ -186,7 +189,7 @@ export function NewTaskDialog({
             </div>
           )}
           <div className="space-y-2">
-            <Label htmlFor="new-task-name">タスク名</Label>
+            <Label htmlFor="new-task-name">{m.dialogs.newTask.taskName}</Label>
             <Input
               id="new-task-name"
               placeholder="fix-log-format"
@@ -200,10 +203,10 @@ export function NewTaskDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="new-task-prompt">プロンプト</Label>
+            <Label htmlFor="new-task-prompt">{m.dialogs.newTask.prompt}</Label>
             <Textarea
               id="new-task-prompt"
-              placeholder="最初に送る文"
+              placeholder={m.dialogs.newTask.promptPlaceholder}
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
               onKeyDown={handlePromptKeyDown}
@@ -212,11 +215,15 @@ export function NewTaskDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="new-task-base">ベースブランチ (省略可)</Label>
+            <Label htmlFor="new-task-base">
+              {m.dialogs.newTask.baseBranch}
+            </Label>
             <Input
               id="new-task-base"
               placeholder={
-                parentPath ? "親の今のブランチ" : "リポジトリの既定のブランチ"
+                parentPath
+                  ? m.dialogs.newTask.parentBranchPlaceholder
+                  : m.dialogs.newTask.defaultBranchPlaceholder
               }
               value={baseBranch}
               onChange={e => setBaseBranch(e.target.value)}
@@ -239,14 +246,14 @@ export function NewTaskDialog({
             disabled={submitting}
             className="h-12 md:h-10"
           >
-            キャンセル
+            {m.common.cancel}
           </Button>
           <Button
             onClick={() => void handleSubmit()}
             disabled={!canSubmit}
             className="h-12 md:h-10"
           >
-            {submitting ? "起動中..." : "起動する"}
+            {submitting ? m.dialogs.newTask.starting : m.dialogs.newTask.start}
           </Button>
         </DialogFooter>
       </DialogContent>

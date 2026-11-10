@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useIsMobile } from "@/hooks/useMobile";
+import { m } from "@/lib/i18n";
 
 interface FolderBrowserDialogProps {
   isOpen: boolean;
@@ -137,7 +138,7 @@ function FolderBrowserContent({
           }}
           placeholder="/path/to/directory"
           className="h-12 flex-1 font-mono text-base md:h-10 md:text-sm"
-          aria-label="現在のパス"
+          aria-label={m.dialogs.folderBrowser.currentPath}
         />
         <Button
           type="button"
@@ -145,7 +146,7 @@ function FolderBrowserContent({
           onClick={() => listing?.parent && void load(listing.parent)}
           disabled={isLoading || !listing || listing.parent === null}
           className="h-12 shrink-0 md:h-10"
-          aria-label="親ディレクトリへ移動"
+          aria-label={m.dialogs.folderBrowser.goToParent}
         >
           <ArrowUp className="h-4 w-4" />
         </Button>
@@ -155,7 +156,7 @@ function FolderBrowserContent({
           onClick={() => void load(listing?.path)}
           disabled={isLoading}
           className="h-12 shrink-0 md:h-10"
-          aria-label="再読み込み"
+          aria-label={m.dialogs.folderBrowser.reload}
         >
           <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
         </Button>
@@ -180,13 +181,13 @@ function FolderBrowserContent({
           {listing === null && isLoading ? (
             <div className="flex items-center justify-center gap-2 px-3 py-8 text-xs text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              読み込み中…
+              {m.dialogs.folderBrowser.loading}
             </div>
           ) : visibleEntries.length === 0 ? (
             <div className="px-3 py-8 text-center text-xs text-muted-foreground">
               {(listing?.entries.length ?? 0) > 0
-                ? "隠しフォルダのみ（下のチェックボックスで表示）"
-                : "サブフォルダなし"}
+                ? m.dialogs.folderBrowser.hiddenOnly
+                : m.dialogs.folderBrowser.noSubfolders}
             </div>
           ) : (
             visibleEntries.map(entry => (
@@ -218,7 +219,7 @@ function FolderBrowserContent({
           htmlFor="folder-browser-show-hidden"
           className="cursor-pointer text-xs text-muted-foreground"
         >
-          隠しフォルダを表示
+          {m.dialogs.folderBrowser.showHidden}
         </Label>
       </div>
 
@@ -232,7 +233,7 @@ function FolderBrowserContent({
             className="h-12"
           >
             <FolderOpen className="mr-2 h-4 w-4" />
-            このフォルダを選択
+            {m.dialogs.folderBrowser.selectThisFolder}
           </Button>
           <Button
             type="button"
@@ -240,13 +241,13 @@ function FolderBrowserContent({
             onClick={onClose}
             className="h-12"
           >
-            キャンセル
+            {m.common.cancel}
           </Button>
         </DrawerFooter>
       ) : (
         <DialogFooter className="px-1 pt-2">
           <Button type="button" variant="outline" onClick={onClose}>
-            キャンセル
+            {m.common.cancel}
           </Button>
           <Button
             type="button"
@@ -254,7 +255,7 @@ function FolderBrowserContent({
             disabled={isConfirmDisabled}
           >
             <FolderOpen className="mr-2 h-4 w-4" />
-            このフォルダを選択
+            {m.dialogs.folderBrowser.selectThisFolder}
           </Button>
         </DialogFooter>
       )}
@@ -267,10 +268,11 @@ function FolderBrowserDesktop(props: FolderBrowserDialogProps) {
     <Dialog open={props.isOpen} onOpenChange={props.onOpenChange}>
       <DialogContent className="mx-auto flex max-h-[85vh] w-[calc(100%-2rem)] max-w-2xl flex-col bg-card">
         <DialogHeader>
-          <DialogTitle>{props.title ?? "フォルダを選択"}</DialogTitle>
+          <DialogTitle>
+            {props.title ?? m.dialogs.folderBrowser.title}
+          </DialogTitle>
           <DialogDescription>
-            {props.description ??
-              "ディレクトリを移動して、選択したいフォルダを開いた状態で「このフォルダを選択」を押してください。"}
+            {props.description ?? m.dialogs.folderBrowser.description}
           </DialogDescription>
         </DialogHeader>
         <FolderBrowserContent
@@ -290,10 +292,11 @@ function FolderBrowserMobile(props: FolderBrowserDialogProps) {
     <Drawer open={props.isOpen} onOpenChange={props.onOpenChange}>
       <DrawerContent className="flex max-h-[90dvh] flex-col">
         <DrawerHeader>
-          <DrawerTitle>{props.title ?? "フォルダを選択"}</DrawerTitle>
+          <DrawerTitle>
+            {props.title ?? m.dialogs.folderBrowser.title}
+          </DrawerTitle>
           <DrawerDescription>
-            {props.description ??
-              "ディレクトリを移動して、選択したいフォルダを開いた状態で「このフォルダを選択」を押してください。"}
+            {props.description ?? m.dialogs.folderBrowser.description}
           </DrawerDescription>
         </DrawerHeader>
         <div className="flex flex-1 flex-col overflow-hidden px-4">

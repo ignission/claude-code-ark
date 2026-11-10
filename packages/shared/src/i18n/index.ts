@@ -11,6 +11,7 @@
 import { en } from "./en";
 import { ja, type Messages } from "./ja";
 
+export { plural } from "./plural";
 export type { Messages };
 
 export const LOCALES = ["ja", "en"] as const;
@@ -41,9 +42,4 @@ export function resolveLocale(
   const first = preferred[0]?.toLowerCase();
   if (first === undefined) return FALLBACK_LOCALE;
   return first === "ja" || first.startsWith("ja-") ? "ja" : FALLBACK_LOCALE;
-}
-
-/** 英語の単数と複数を数で選ぶ (`plural(1, "file", "files")` は "file") */
-export function plural(count: number, one: string, other: string): string {
-  return count === 1 ? one : other;
 }

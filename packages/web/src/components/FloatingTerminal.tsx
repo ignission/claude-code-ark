@@ -39,6 +39,7 @@ import {
   useEffect,
   useRef,
 } from "react";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 interface FloatingTerminalProps {
@@ -61,7 +62,7 @@ interface FloatingTerminalProps {
 export function FloatingTerminal({
   open,
   onClose,
-  title = "端末",
+  title = m.chat.terminal.title,
   actions,
   variant = "window",
   onOpened,
@@ -148,8 +149,8 @@ export function FloatingTerminal({
           {actions}
           <button
             type="button"
-            aria-label="端末を閉じる"
-            title="端末を閉じる"
+            aria-label={m.chat.terminal.close}
+            title={m.chat.terminal.close}
             onClick={onClose}
             className={cn(
               "inline-flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",

@@ -4,6 +4,7 @@
  */
 
 import type { PlanLimits, PlanLimitWindow } from "@ark/shared";
+import { m } from "./i18n";
 
 /** これを超えたら色を変える */
 export const PLAN_LIMIT_HIGH_PERCENT = 80;
@@ -81,7 +82,11 @@ export function planLimitRows(limits: PlanLimits, now: Date): PlanLimitRow[] {
       high: w.percent > PLAN_LIMIT_HIGH_PERCENT,
     });
   };
-  add("5h", "5時間枠", limits.fiveHour);
-  add("週", "週枠", limits.sevenDay);
+  add("5h", m.session.planLimits.fiveHourName, limits.fiveHour);
+  add(
+    m.session.planLimits.weekShort,
+    m.session.planLimits.weekName,
+    limits.sevenDay
+  );
   return rows;
 }

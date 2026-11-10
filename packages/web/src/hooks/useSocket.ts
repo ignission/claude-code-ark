@@ -46,6 +46,7 @@ import {
   reloadForBuild,
 } from "../lib/build-version";
 import { requestDiagramDelete } from "../lib/diagram-delete-transport";
+import { m } from "../lib/i18n";
 import { mergePlanLimits } from "../lib/plan-limits";
 import { mergePrStatuses } from "../lib/pr-status";
 import type {
@@ -584,11 +585,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       }
       if (promptedBuildId === served) return;
       promptedBuildId = served;
-      toast("新しい版があります", {
-        description: "書きかけの入力があるため、自動では読み込み直していません",
+      toast(m.session.update.newBuildTitle, {
+        description: m.session.update.newBuildDescription,
         duration: Number.POSITIVE_INFINITY,
         action: {
-          label: "読み込み直す",
+          label: m.session.update.reload,
           onClick: () => reloadForBuild(served),
         },
       });
@@ -1124,7 +1125,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
     socket.on("shortcut:error", ({ message, code }) => {
       console.error(`[shortcut] ${code ?? "error"}: ${message}`);
-      toast.error(`ショートカット操作に失敗: ${message}`);
+      toast.error(m.session.socket.shortcutFailed(message));
     });
 
     // Usage取得イベント
@@ -1143,7 +1144,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         if (prev) {
           const okCount = report.entries.filter(e => e.status === "ok").length;
           toast.success(
-            `Usage取得完了: ${okCount}/${report.entries.length} プロファイル`
+            m.session.socket.usageDone(okCount, report.entries.length)
           );
         }
         return false;
@@ -1154,7 +1155,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setUsageError(message);
       setUsageRequesting(false);
       setUsageProgress(null);
-      toast.error(`Usage取得に失敗: ${message}`);
+      toast.error(m.session.socket.usageFailed(message));
     });
 
     // Cleanup on unmount
@@ -1218,18 +1219,20 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     return new Promise((resolve, reject) => {
       const socket = socketRef.current;
       if (!socket?.connected) {
-        reject(new Error("ソケットが切断されています"));
+        reject(new Error(m.session.socket.disconnected));
         return;
       }
       const timeoutId = window.setTimeout(() => {
-        reject(new Error("ディレクトリ取得がタイムアウトしました"));
+        reject(new Error(m.session.socket.listDirectoryTimeout));
       }, 10000);
       socket.emit("fs:list", { path }, response => {
         window.clearTimeout(timeoutId);
         if (response.result) {
           resolve(response.result);
         } else {
-          reject(new Error(response.error ?? "ディレクトリ取得に失敗しました"));
+          reject(
+            new Error(response.error ?? m.session.socket.listDirectoryFailed)
+          );
         }
       });
     });
@@ -1240,7 +1243,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       return new Promise((resolve, reject) => {
         const socket = socketRef.current;
         if (!socket?.connected) {
-          reject(new Error("ソケットが切断されています"));
+          reject(new Error(m.session.socket.disconnected));
           return;
         }
 
@@ -1248,7 +1251,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         const timeoutId = window.setTimeout(() => {
           if (settled) return;
           settled = true;
-          reject(new Error("図一覧の取得がタイムアウトしました"));
+          reject(new Error(m.session.socket.listDiagramsTimeout));
         }, 10000);
 
         socket.emit("diagram:list", { worktreePath }, response => {
@@ -1295,12 +1298,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       new Promise(resolve => {
         const socket = socketRef.current;
         if (!socket?.connected) {
-          resolve({ ok: false, error: "ソケットが切断されています" });
+          resolve({ ok: false, error: m.session.socket.disconnected });
           return;
         }
         // worktree の作成とセッションの起動まで。git の操作を含むので長めに待つ
         const timeoutId = window.setTimeout(() => {
-          resolve({ ok: false, error: "タスクの起動がタイムアウトしました" });
+          resolve({ ok: false, error: m.session.socket.taskStartTimeout });
         }, 60_000);
         socket.emit("task:start", request, response => {
           window.clearTimeout(timeoutId);
@@ -1386,7 +1389,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       return new Promise((resolve, reject) => {
         const socket = socketRef.current;
         if (!socket?.connected) {
-          reject(new Error("ソケットが切断されています"));
+          reject(new Error(m.session.socket.disconnected));
           return;
         }
         // 複数アップロードの同時実行で誤った Promise が解決されないよう requestId で紐付ける
@@ -1397,7 +1400,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         const timeoutId = window.setTimeout(() => {
           socket.off("file-upload:uploaded", onUploaded);
           socket.off("file-upload:error", onError);
-          reject(new Error("アップロードがタイムアウトしました"));
+          reject(new Error(m.session.socket.uploadTimeout));
         }, 30000);
         const onUploaded = (result: {
           requestId: string;
@@ -1598,16 +1601,14 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     // 未接続でemitすると永遠に応答が返らず、ボタンがリロードまでdisabledになる。
     // socket未確立 or 切断中なら何もせずユーザに通知する。
     if (!socketRef.current?.connected) {
-      toast.error(
-        "サーバーに接続されていません。少し待ってから再試行してください"
-      );
+      toast.error(m.session.socket.notConnected);
       return;
     }
     setUsageError(null);
     setUsageRequesting(true);
     setUsageProgress(null);
     socketRef.current.emit("usage:request");
-    toast.info("Usage取得を開始しました（数十秒かかります）");
+    toast.info(m.session.socket.usageStarted);
   }, [usageRequesting]);
 
   const clearUsageError = useCallback(() => {

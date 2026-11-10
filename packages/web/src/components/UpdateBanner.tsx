@@ -15,6 +15,7 @@ import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { m } from "@/lib/i18n";
 
 interface UpdateInfo {
   latestVersion: string;
@@ -67,22 +68,22 @@ export function UpdateBanner() {
 
   return (
     <Alert className="m-2 border-primary/30 bg-primary/10">
-      <AlertTitle>新しいバージョンが利用可能です</AlertTitle>
+      <AlertTitle>{m.session.update.available}</AlertTitle>
       <AlertDescription className="flex flex-wrap items-center gap-3 mt-1">
         <span>Ark {info.latestVersion}</span>
         <code className="bg-muted px-2 py-1 rounded text-xs">
           {BREW_UPGRADE_COMMAND}
         </code>
         <Button size="sm" variant="outline" onClick={handleCopy}>
-          コピー
+          {m.session.actions.copy}
         </Button>
         <Button size="sm" variant="ghost" onClick={handleOpenChangelog}>
-          変更点
+          {m.session.update.changelog}
         </Button>
         <Button
           size="sm"
           variant="ghost"
-          aria-label="閉じる"
+          aria-label={m.common.close}
           onClick={() => setDismissedVersion(info.latestVersion)}
         >
           <X />

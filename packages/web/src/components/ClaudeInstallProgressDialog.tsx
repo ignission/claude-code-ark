@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { m } from "@/lib/i18n";
 
 export type ClaudeInstallState =
   | { type: "idle" }
@@ -36,19 +37,19 @@ export interface ClaudeInstallProgressDialogProps {
 function renderDescription(state: ClaudeInstallState): string {
   switch (state.type) {
     case "idle":
-      return "待機中";
+      return m.dialogs.claudeInstall.idle;
     case "checking":
-      return "Claude CLI のインストール状態を確認しています...";
+      return m.dialogs.claudeInstall.checking;
     case "already-installed":
-      return `Claude CLI は既にインストール済みです: ${state.path}`;
+      return m.dialogs.claudeInstall.alreadyInstalled(state.path);
     case "node-missing":
       return state.message;
     case "installing":
-      return "Claude CLI をインストール中...";
+      return m.dialogs.claudeInstall.installing;
     case "completed":
-      return `インストールが完了しました: ${state.path}`;
+      return m.dialogs.claudeInstall.completed(state.path);
     case "failed":
-      return `インストールに失敗しました: ${state.error}`;
+      return m.dialogs.claudeInstall.failed(state.error);
   }
 }
 
@@ -61,7 +62,7 @@ export function ClaudeInstallProgressDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Claude CLI セットアップ</DialogTitle>
+          <DialogTitle>{m.dialogs.claudeInstall.title}</DialogTitle>
           <DialogDescription>{renderDescription(state)}</DialogDescription>
         </DialogHeader>
         {state.type === "installing" && (

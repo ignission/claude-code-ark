@@ -102,6 +102,7 @@ import {
   FLOATING_BAR_BOTTOM,
   floatingBarReserve,
 } from "@/lib/floating-composer";
+import { m } from "@/lib/i18n";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
 import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
@@ -261,7 +262,7 @@ function WorkingIndicator({
     >
       {dots}
       <span aria-hidden="true">{label}</span>
-      <span className="sr-only">Claudeが作業しています</span>
+      <span className="sr-only">{m.chat.messages.claudeWorking}</span>
     </div>
   );
 }
@@ -289,8 +290,8 @@ const TerminalStrip = memo(function TerminalStrip({
     <button
       type="button"
       data-testid="chat-terminal-strip"
-      aria-label="端末を開く"
-      title="端末を開く"
+      aria-label={m.chat.messages.openTerminal}
+      title={m.chat.messages.openTerminal}
       onClick={onOpen}
       className={cn(
         "group flex w-full select-none items-start gap-2 rounded-xl border border-border/60 bg-muted/40 py-1.5 pr-2 pl-3 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -313,7 +314,9 @@ const TerminalStrip = memo(function TerminalStrip({
             {liveTail}
           </span>
         ) : (
-          <span className="font-sans text-[12px]">端末を開く</span>
+          <span className="font-sans text-[12px]">
+            {m.chat.messages.openTerminal}
+          </span>
         )}
       </span>
       <Maximize2
@@ -335,8 +338,8 @@ function workingIndicatorLabel(
   hasActiveAuq: boolean
 ): string | null {
   if (hasActiveAuq) return null;
-  if (bridgeStatus === "THINK") return "考えています";
-  if (bridgeStatus === "TOOL") return "作業しています";
+  if (bridgeStatus === "THINK") return m.chat.messages.thinking;
+  if (bridgeStatus === "TOOL") return m.chat.messages.working;
   // 送った直後の、状態がまだ切り替わっていない間だけ。停止・問題・確認待ちでは出さない
   // (送信が届かず吹き出しが残っても、止まったセッションに「考えています」を出し続けない)
   if (
@@ -345,7 +348,7 @@ function workingIndicatorLabel(
       bridgeStatus === "IDLE" ||
       bridgeStatus === "READY")
   ) {
-    return "考えています";
+    return m.chat.messages.thinking;
   }
   return null;
 }
@@ -356,7 +359,7 @@ function PendingMessageCard({ text }: { text: string }) {
       <div className="flex max-w-[78%] items-start gap-2 whitespace-pre-wrap break-words rounded-xl rounded-br-[4px] bg-primary/14 px-3.5 py-2.5 text-[15px] leading-[1.6] text-foreground opacity-60">
         <Loader2
           role="img"
-          aria-label="送信中"
+          aria-label={m.chat.sending}
           className="mt-1 size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
         />
         <span className="min-w-0">{text}</span>
@@ -488,7 +491,7 @@ function FileLink({
     <span className="my-2 inline-flex max-w-full flex-col gap-1 rounded-md border border-border bg-muted/30 p-2 align-top">
       {missing ? (
         <span className="flex min-h-20 max-w-full items-center justify-center rounded bg-muted px-3 py-6 text-sm text-muted-foreground">
-          ファイルが見つかりません
+          {m.chat.messages.fileNotFound}
         </span>
       ) : (
         <img
@@ -552,10 +555,10 @@ function createMarkdownComponents(sessionId: string): Components {
     img: ({ alt }) => (
       <span
         className="inline-flex items-center gap-1 rounded-sm bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-        title="モデル出力由来の外部画像は自動表示しません"
+        title={m.chat.messages.externalImageBlocked}
       >
         <ImageOff aria-hidden="true" className="size-3.5 shrink-0" />
-        {alt || "画像"}
+        {alt || m.chat.messages.image}
       </span>
     ),
     a: ({ href, children }) => {
@@ -644,7 +647,7 @@ function CompactMarkerCard() {
       <div className="flex-1 border-t border-dashed border-border" />
       <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
         <Scissors aria-hidden="true" className="size-3" />
-        会話を要約しました (/compact)
+        {m.chat.messages.compacted}
       </span>
       <div className="flex-1 border-t border-dashed border-border" />
     </div>
@@ -727,8 +730,8 @@ function AskUserQuestionResultCard({
         <span className="font-medium">
           {result
             ? isDecline
-              ? "質問はキャンセルされました"
-              : "質問への回答"
+              ? m.chat.messages.questionCancelled
+              : m.chat.messages.questionAnswered
             : "AskUserQuestion"}
         </span>
       </div>
@@ -802,7 +805,7 @@ function ToolCallRow({
         aria-hidden="true"
         className={`size-3.5 shrink-0 ${running ? "text-status-busy" : "opacity-60"}`}
       />
-      {running && <span className="sr-only">実行中:</span>}
+      {running && <span className="sr-only">{m.chat.messages.running}</span>}
       <span className="shrink-0 font-medium text-foreground">{tool}</span>
       {summary && (
         <span className="min-w-0 truncate font-mono opacity-70">{summary}</span>
@@ -846,9 +849,9 @@ function ToolCallCard({
 /** 完了通知の `<status>` を短い日本語にする。知らない値はそのまま出す */
 function systemNoteStatusLabel(status: string | undefined): string | null {
   if (!status) return null;
-  if (status === "completed") return "完了";
-  if (status === "failed") return "失敗";
-  if (status === "killed") return "停止";
+  if (status === "completed") return m.chat.messages.statusCompleted;
+  if (status === "failed") return m.chat.messages.statusFailed;
+  if (status === "killed") return m.chat.messages.statusKilled;
   return status;
 }
 
@@ -871,7 +874,10 @@ function SystemNoteCard({
   const [expanded, setExpanded] = useState(false);
   const Chevron = expanded ? ChevronDown : ChevronRight;
   const statusLabel = systemNoteStatusLabel(status);
-  const label = source === "task-notification" ? "作業の通知" : "システム";
+  const label =
+    source === "task-notification"
+      ? m.chat.messages.taskNotification
+      : m.chat.messages.system;
   return (
     <div className="px-4 py-1.5">
       <button
@@ -930,7 +936,7 @@ function ToolGroupCard({
       >
         <Chevron aria-hidden="true" className="size-4 shrink-0" />
         <span className="font-semibold text-foreground">
-          作業{calls.length}件
+          {m.chat.messages.toolCalls(calls.length)}
         </span>
       </button>
       {expanded ? (
@@ -1011,7 +1017,7 @@ function AwaitingPad({
       <div className="flex min-w-0 items-center gap-2">
         <StatusChip statusKey="AWAITING" />
         <span className="min-w-0 text-[13px] font-semibold text-foreground">
-          Claudeが入力を求めています
+          {m.chat.awaiting.title}
         </span>
       </div>
       {awaitingText && (
@@ -1021,15 +1027,15 @@ function AwaitingPad({
       )}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {(["1", "2", "3", "4", "5", "6"] as const).map(d =>
-          keyBtn(d, d, `${d}を送信 (選択肢ジャンプ/トグル)`)
+          keyBtn(d, d, m.chat.awaiting.sendDigit(d))
         )}
         <span className="w-2" />
-        {keyBtn("↑", "Up", "フォーカスを上へ")}
-        {keyBtn("↓", "Down", "フォーカスを下へ")}
-        {keyBtn("→", "Right", "次のタブ / Submitへ")}
-        {keyBtn("Space", "Space", "チェックをトグル")}
-        {keyBtn("Enter", "Enter", "フォーカス中の項目を選択/確定")}
-        {keyBtn("Esc", "Escape", "キャンセル")}
+        {keyBtn("↑", "Up", m.chat.awaiting.focusUp)}
+        {keyBtn("↓", "Down", m.chat.awaiting.focusDown)}
+        {keyBtn("→", "Right", m.chat.awaiting.nextTab)}
+        {keyBtn("Space", "Space", m.chat.awaiting.toggleCheck)}
+        {keyBtn("Enter", "Enter", m.chat.awaiting.selectFocused)}
+        {keyBtn("Esc", "Escape", m.common.cancel)}
       </div>
       <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-background py-1 pr-1 pl-3 focus-within:border-primary">
         <input
@@ -1042,8 +1048,8 @@ function AwaitingPad({
               submitFreeText();
             }
           }}
-          aria-label="自由入力"
-          placeholder="自由入力: 先にType somethingの番号を押してから入力 (Enterで確定)"
+          aria-label={m.chat.awaiting.freeText}
+          placeholder={m.chat.awaiting.freeTextPlaceholder}
           className="min-w-0 flex-1 bg-transparent py-0.5 text-[13px] placeholder:text-muted-foreground focus:outline-none"
         />
         <button
@@ -1052,7 +1058,7 @@ function AwaitingPad({
           disabled={!freeText.trim()}
           className="shrink-0 rounded-md bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-30"
         >
-          入力して確定
+          {m.chat.awaiting.submitFreeText}
         </button>
       </div>
     </div>
@@ -1082,7 +1088,7 @@ function SidechainGroupCard({
       >
         <Chevron aria-hidden="true" className="size-3.5 shrink-0" />
         <Bot aria-hidden="true" className="size-3.5 shrink-0" />
-        <span>サブエージェント ({events.length}件)</span>
+        <span>{m.chat.messages.subagent(events.length)}</span>
       </button>
       {expanded && (
         <div className="mt-1 border-l-2 border-border pl-2 opacity-80">
@@ -1183,7 +1189,7 @@ const ChatEventList = memo(function ChatEventList({
   if (!hasEvents && pending.length === 0 && localSlashCommands.length === 0) {
     return (
       <div className="pt-8 text-center text-sm text-muted-foreground">
-        このセッションの履歴はまだありません
+        {m.chat.messages.noHistory}
       </div>
     );
   }
@@ -1191,7 +1197,7 @@ const ChatEventList = memo(function ChatEventList({
     <>
       {hasMore && (
         <div className="flex justify-center py-2 text-sm text-muted-foreground">
-          読み込み中...
+          {m.common.loading}
         </div>
       )}
       {renderItems.map(item => {
@@ -1689,7 +1695,7 @@ export function SplitChatPane({
         for (const file of dedup) {
           const v = validateFile(file);
           if (!v.ok) {
-            toast.error(v.reason ?? `${file.name}: 未対応のファイル`);
+            toast.error(v.reason ?? m.chat.composer.unsupportedFile(file.name));
             continue;
           }
           try {
@@ -1708,7 +1714,10 @@ export function SplitChatPane({
             });
           } catch (err) {
             toast.error(
-              `${file.name}: アップロード失敗 (${err instanceof Error ? err.message : String(err)})`
+              m.chat.composer.uploadFailed(
+                file.name,
+                err instanceof Error ? err.message : String(err)
+              )
             );
           }
         }
@@ -1760,13 +1769,13 @@ export function SplitChatPane({
     try {
       const files = await readClipboardImages();
       if (files.length === 0) {
-        toast.info("クリップボードに画像がありません");
+        toast.info(m.chat.composer.clipboardNoImage);
         return;
       }
       await uploadAndAppend(files);
     } catch (err) {
       console.error("Failed to read clipboard:", err);
-      toast.error("クリップボードを読み取れませんでした");
+      toast.error(m.chat.composer.clipboardReadFailed);
     }
   }, [onUploadFile, uploadAndAppend]);
 
@@ -1918,8 +1927,8 @@ export function SplitChatPane({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             className={`${ROUND_ICON_BUTTON} ${composerSize.button}`}
-            aria-label="ファイルを添付"
-            title="ファイルを添付 (D&D・貼り付けも可)"
+            aria-label={m.chat.composer.attachFile}
+            title={m.chat.composer.attachFileHint}
             disabled={uploadingCount > 0}
           >
             {uploadingCount > 0 ? (
@@ -1943,7 +1952,7 @@ export function SplitChatPane({
             aria-label={label}
             // 添付の途中で送ると、あとから入力欄に足される @path が届かない
             disabled={uploadingCount > 0}
-            title={`${label} (入力欄の文が対象)`}
+            title={m.chat.composer.quickActionHint(label)}
           >
             <Icon className="size-5" />
           </button>
@@ -1956,13 +1965,13 @@ export function SplitChatPane({
         onKeyDown={handleKeyDown}
         onPaste={onUploadFile ? handlePaste : undefined}
         data-focus-target="chat-input"
-        aria-label="メッセージ"
+        aria-label={m.chat.composer.message}
         placeholder={
           isMobile
-            ? "メッセージを入力"
+            ? m.chat.composer.placeholderMobile
             : onUploadFile
-              ? "メッセージを入力 (Enterで送信、Shift+Enterで改行。画像はD&D・貼り付けも可)"
-              : "メッセージを入力 (Enterで送信、Shift+Enterで改行)"
+              ? m.chat.composer.placeholderWithUpload
+              : m.chat.composer.placeholder
         }
         rows={1}
         className={`field-sizing-content max-h-32 min-w-0 flex-1 resize-none rounded-xl border border-border px-3.5 text-[15px] leading-[1.4] placeholder:text-muted-foreground focus:border-primary focus:outline-none ${composerSize.input}`}
@@ -1972,14 +1981,14 @@ export function SplitChatPane({
       <button
         type="submit"
         disabled={!inputValue.trim()}
-        aria-label="送信"
+        aria-label={m.chat.send}
         className={`inline-flex shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:cursor-not-allowed disabled:opacity-40 ${composerSize.button}`}
       >
         <ArrowUp className="size-5" />
       </button>
       {isDragging && onUploadFile && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-background/90 text-sm font-medium text-primary">
-          ここにドロップ
+          {m.chat.composer.dropHere}
         </div>
       )}
     </form>
@@ -2041,8 +2050,8 @@ export function SplitChatPane({
             onClick={scrollToBottom}
             className="absolute left-1/2 z-10 flex size-9 -translate-x-1/2 items-center justify-center rounded-full bg-foreground/85 text-background shadow-card transition-colors hover:bg-foreground"
             style={{ bottom: bottomReserve ?? "12px" }}
-            title="最新まで一気にスクロール"
-            aria-label="最新まで一気にスクロール"
+            title={m.chat.composer.scrollToLatest}
+            aria-label={m.chat.composer.scrollToLatest}
           >
             <ArrowDown className="size-4" />
           </button>

@@ -1,6 +1,7 @@
 import { Bell, BellOff, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { m } from "@/lib/i18n";
 
 interface NotificationPermissionButtonProps {
   supported: boolean;
@@ -21,10 +22,10 @@ export function NotificationPermissionButton({
   const denied = permission === "denied";
   const granted = permission === "granted";
   const label = granted
-    ? "ブラウザ通知は許可済み"
+    ? m.session.browserNotifications.granted
     : denied
-      ? "ブラウザ通知はブラウザ設定で拒否されています"
-      : "ブラウザ通知を有効にする";
+      ? m.session.browserNotifications.denied
+      : m.session.browserNotifications.enable;
 
   return (
     <Button

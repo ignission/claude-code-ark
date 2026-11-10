@@ -8,6 +8,7 @@ import { Loader2, RefreshCw, Unplug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildScreenWsUrl } from "@/lib/auth-token";
+import { m } from "@/lib/i18n";
 import { keepLocalCursorUntilServerCursor } from "@/lib/screen-cursor";
 import {
   forwardLocalPaste,
@@ -28,12 +29,10 @@ type Status =
   | { kind: "connected" }
   | { kind: "disconnected"; reason: string };
 
-const DEFAULT_ERROR_REASON = "接続に失敗しました";
-const UNREGISTERED_REASON =
-  "画面の設定が見つかりません。画面の管理から登録し直してください";
-const UNAVAILABLE_REASON =
-  "サーバーに繋がりません。しばらくしてから再接続してください";
-const MANUAL_DISCONNECT_REASON = "切断しました";
+const DEFAULT_ERROR_REASON = m.screen.pane.connectFailed;
+const UNREGISTERED_REASON = m.screen.pane.unregistered;
+const UNAVAILABLE_REASON = m.screen.pane.unavailable;
+const MANUAL_DISCONNECT_REASON = m.screen.pane.manualDisconnect;
 /** 接続中に右上へ出す小さなボタン。普段は薄く、hover で浮く */
 const CORNER_BUTTON_CLASS =
   "rounded-md bg-background/60 p-1.5 text-muted-foreground opacity-40 transition-opacity hover:opacity-100 hover:text-foreground";
@@ -169,7 +168,9 @@ export function ScreenPane({
           if (!cancelled) setStatus({ kind: "connected" });
         });
         rfb.addEventListener("securityfailure", event => {
-          securityReason = `認証に失敗しました (${event.detail.reason ?? "理由不明"})`;
+          securityReason = m.screen.pane.authFailed(
+            event.detail.reason ?? m.screen.pane.unknownReason
+          );
         });
         observeSize(container);
         // macOS の画面共有はカーソル形状を送らないので、届くまでは
@@ -190,7 +191,9 @@ export function ScreenPane({
             ? MANUAL_DISCONNECT_REASON
             : securityReason ||
               closeReason ||
-              (event.detail.clean ? "切断されました" : "接続が切れました");
+              (event.detail.clean
+                ? m.screen.pane.closedCleanly
+                : m.screen.pane.connectionLost);
           setStatus({ kind: "disconnected", reason });
         });
       } catch (error) {
@@ -230,8 +233,7 @@ export function ScreenPane({
   if (!secure) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-muted-foreground px-6 text-center">
-        リモート画面は HTTPS か localhost でだけ使えます (認証に WebCrypto
-        が要るため)
+        {m.screen.pane.insecureContext}
       </div>
     );
   }
@@ -244,8 +246,8 @@ export function ScreenPane({
           <button
             type="button"
             onClick={() => setAttempt(n => n + 1)}
-            aria-label="再接続"
-            title="再接続"
+            aria-label={m.screen.pane.reconnect}
+            title={m.screen.pane.reconnect}
             className={CORNER_BUTTON_CLASS}
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -253,8 +255,8 @@ export function ScreenPane({
           <button
             type="button"
             onClick={() => disconnectRef.current?.()}
-            aria-label="切断"
-            title="切断"
+            aria-label={m.screen.pane.disconnect}
+            title={m.screen.pane.disconnect}
             className={CORNER_BUTTON_CLASS}
           >
             <Unplug className="h-3.5 w-3.5" />
@@ -269,7 +271,7 @@ export function ScreenPane({
           className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/80"
         >
           <Loader2 className="h-5 w-5 animate-spin mr-2" />
-          {screen.name} に接続中...
+          {m.screen.pane.connecting(screen.name)}
         </div>
       )}
       {status.kind === "disconnected" && (
@@ -284,7 +286,7 @@ export function ScreenPane({
             onClick={() => setAttempt(n => n + 1)}
           >
             <RefreshCw className="h-3.5 w-3.5 mr-1" />
-            再接続
+            {m.screen.pane.reconnect}
           </Button>
         </div>
       )}

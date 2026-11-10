@@ -56,6 +56,7 @@ import { useSocket } from "@/hooks/useSocket";
 import { useTodos } from "@/hooks/useTodos";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { requestChatDraft } from "@/lib/chat-draft-store";
+import { m } from "@/lib/i18n";
 import {
   type ChatViewRequest,
   createChatViewRequest,
@@ -719,7 +720,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (deletedWorktreeId) {
-      toast.success("Worktreeを削除しました");
+      toast.success(m.session.dashboard.worktreeDeleted);
       clearDeletedWorktreeId();
     }
   }, [deletedWorktreeId, clearDeletedWorktreeId]);
@@ -747,11 +748,11 @@ export default function Dashboard() {
 
   const handleDeleteWorktree = (worktree: Worktree) => {
     if (worktree.isMain) {
-      toast.error("Cannot delete the main worktree");
+      toast.error(m.session.dashboard.cannotDeleteMainWorktree);
       return;
     }
     deleteWorktree(worktree.path);
-    toast.info("Worktreeを削除中...");
+    toast.info(m.session.dashboard.worktreeDeleting);
   };
 
   const handleStartSession = (worktree: Worktree) => {
@@ -780,9 +781,9 @@ export default function Dashboard() {
     // 選択セッションの切り替えは sessions 変化を検出する useEffect に任せる
     // （削除失敗時に optimistic update で別セッションへ誤遷移するのを防ぐため）。
     if (worktree && !worktree.isMain) {
-      toast.success("セッションを削除しました");
+      toast.success(m.session.dashboard.sessionDeleted);
     } else {
-      toast.info("セッションを停止しました");
+      toast.info(m.session.dashboard.sessionStopped);
     }
   };
 
@@ -892,7 +893,7 @@ export default function Dashboard() {
     branch: string;
   }) => {
     setPendingSelectWorktreePath(response.worktreePath);
-    toast.success(`タスクを起動しました: ${response.branch}`);
+    toast.success(m.session.dashboard.taskStarted(response.branch));
   };
 
   // 元のworktreeのリポジトリが分かるときだけ、新しいworktreeで始められる
@@ -1062,7 +1063,7 @@ export default function Dashboard() {
                   className="mb-2 rounded-panel bg-status-error/15 px-4 py-2 flex items-center gap-2 text-status-error text-sm font-medium shrink-0"
                 >
                   <WifiOff className="w-4 h-4" aria-hidden="true" />
-                  <span>サーバーとつながっていません</span>
+                  <span>{m.session.strip.disconnected}</span>
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative">
@@ -1271,7 +1272,7 @@ export default function Dashboard() {
                     <div className="text-center">
                       <Terminal className="w-12 h-12 text-muted-foreground/50 mx-auto mb-4" />
                       <p className="text-muted-foreground">
-                        サイドバーの「+」からセッションを作成
+                        {m.session.dashboard.emptyHint}
                       </p>
                     </div>
                   </div>
@@ -1291,18 +1292,20 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle>Quick Tunnel</DialogTitle>
             <DialogDescription>
-              公開するポートを選択してください
+              {m.session.dashboard.tunnelSelectPort}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Port</Label>
+              <Label>{m.session.dashboard.tunnelPort}</Label>
               <Select
                 value={selectedPort?.toString() ?? ""}
                 onValueChange={v => setSelectedPort(Number(v))}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="ポートを選択..." />
+                  <SelectValue
+                    placeholder={m.session.dashboard.tunnelPortPlaceholder}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {listeningPorts.map(p => (
@@ -1314,7 +1317,7 @@ export default function Dashboard() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>またはポート番号を入力</Label>
+              <Label>{m.session.dashboard.tunnelPortInput}</Label>
               <Input
                 type="number"
                 placeholder="3000"
@@ -1332,7 +1335,7 @@ export default function Dashboard() {
               variant="outline"
               onClick={() => setShowPortSelector(false)}
             >
-              キャンセル
+              {m.common.cancel}
             </Button>
             <Button
               onClick={() => {
@@ -1346,7 +1349,7 @@ export default function Dashboard() {
               {tunnelLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : null}
-              Start Tunnel
+              {m.session.dashboard.tunnelStart}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1358,7 +1361,7 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle>Quick Tunnel</DialogTitle>
             <DialogDescription>
-              外部からアクセスするためのURLです
+              {m.session.dashboard.tunnelUrlDescription}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1391,7 +1394,9 @@ export default function Dashboard() {
               </div>
             )}
             <div className="space-y-2">
-              <Label className="text-sm font-medium">Auth Token</Label>
+              <Label className="text-sm font-medium">
+                {m.session.dashboard.tunnelAuthToken}
+              </Label>
               <div className="flex gap-2">
                 <Input
                   value={tunnelToken ?? ""}
@@ -1421,7 +1426,7 @@ export default function Dashboard() {
               {tunnelLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : null}
-              Stop Tunnel
+              {m.session.dashboard.tunnelStop}
             </Button>
           </DialogFooter>
         </DialogContent>

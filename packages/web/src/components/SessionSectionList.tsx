@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useGroupedWorktreeItems } from "@/hooks/useGroupedWorktreeItems";
 import { useHeldOrder, useListHold } from "@/hooks/useHeldOrder";
+import { m } from "@/lib/i18n";
 import { deleteSessionDescription } from "@/lib/session-header";
 import {
   buildSessionEntries,
@@ -126,7 +127,7 @@ function worktreePathOf(entry: SessionListEntry): string | null {
 
 function deleteDescription(target: DeleteTarget): string {
   if (target.kind === "worktree") {
-    return "このWorktreeを削除しますか？関連するブランチも削除されます。";
+    return m.session.list.deleteWorktreeConfirm;
   }
   return deleteSessionDescription(target.worktree);
 }
@@ -431,8 +432,8 @@ export function SessionSectionList({
       >
         {visibleRows.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-            <p>セッションがありません</p>
-            <p className="mt-1 text-xs">「+」から新規作成</p>
+            <p>{m.session.list.empty}</p>
+            <p className="mt-1 text-xs">{m.session.list.emptyHint}</p>
           </div>
         ) : (
           visibleRows.map(row =>
@@ -451,8 +452,8 @@ export function SessionSectionList({
           <AlertDialogHeader>
             <AlertDialogTitle>
               {deleteTarget?.kind === "worktree"
-                ? "Worktreeを削除"
-                : "セッションを削除"}
+                ? m.session.actions.deleteWorktree
+                : m.session.actions.deleteSession}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {deleteTarget ? deleteDescription(deleteTarget) : ""}
@@ -460,7 +461,7 @@ export function SessionSectionList({
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
             <AlertDialogCancel className="h-12 md:h-10">
-              キャンセル
+              {m.common.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
@@ -476,7 +477,7 @@ export function SessionSectionList({
                 setDeleteTarget(null);
               }}
             >
-              削除
+              {m.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -490,14 +491,16 @@ export function SessionSectionList({
       >
         <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md mx-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>セッションを再起動しますか？</AlertDialogTitle>
+            <AlertDialogTitle>
+              {m.session.list.restartConfirmTitle}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              このセッションを再起動するとClaude会話履歴・実行中コマンド・ターミナル内容がすべて失われます。続行しますか？
+              {m.session.list.restartConfirmBody}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
             <AlertDialogCancel className="h-12 md:h-10">
-              キャンセル
+              {m.common.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
               className="h-12 md:h-10"
@@ -506,7 +509,7 @@ export function SessionSectionList({
                 setRestartSessionId(null);
               }}
             >
-              再起動
+              {m.session.actions.restart}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -520,16 +523,18 @@ export function SessionSectionList({
       >
         <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md mx-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>リポジトリをサイドバーから除外</AlertDialogTitle>
+            <AlertDialogTitle>
+              {m.session.list.removeRepoTitle}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {removeRepoPath
-                ? `「${getBaseName(removeRepoPath)}」をサイドバー一覧から非表示にします。Worktreeやセッション、リポジトリ自体は削除されません。再度リポジトリを選択すれば復元できます。`
+                ? m.session.list.removeRepoBody(getBaseName(removeRepoPath))
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
             <AlertDialogCancel className="h-12 md:h-10">
-              キャンセル
+              {m.common.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
               className="h-12 md:h-10"
@@ -538,7 +543,7 @@ export function SessionSectionList({
                 setRemoveRepoPath(null);
               }}
             >
-              除外
+              {m.session.list.removeRepoAction}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

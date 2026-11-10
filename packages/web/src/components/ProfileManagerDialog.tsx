@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { m } from "@/lib/i18n";
 
 interface ProfileManagerDialogProps {
   open: boolean;
@@ -50,13 +51,17 @@ function validateForm(
   const trimmedName = name.trim();
   const trimmedDir = configDir.trim();
   if (!trimmedName) {
-    return { ok: false, field: "name", message: "名前を入力してください" };
+    return {
+      ok: false,
+      field: "name",
+      message: m.dialogs.profile.nameRequired,
+    };
   }
   if (!trimmedDir) {
     return {
       ok: false,
       field: "configDir",
-      message: "設定ディレクトリを入力してください",
+      message: m.dialogs.profile.configDirRequired,
     };
   }
   const isAbsolute = trimmedDir.startsWith("/");
@@ -65,7 +70,7 @@ function validateForm(
     return {
       ok: false,
       field: "configDir",
-      message: "絶対パス（/ または ~/ で始まる）を指定してください",
+      message: m.dialogs.profile.absolutePathRequired,
     };
   }
   return { ok: true };
@@ -154,15 +159,15 @@ export function ProfileManagerDialog({
       >
         <AlertDialogContent className="bg-card border-border">
           <AlertDialogHeader>
-            <AlertDialogTitle>プロファイルを削除しますか？</AlertDialogTitle>
+            <AlertDialogTitle>{m.dialogs.profile.deleteTitle}</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingDelete
-                ? `「${pendingDelete.name}」を削除します。このプロファイルを紐付けたリポジトリは紐付けが解除されます。設定ディレクトリ自体は削除されません。`
+                ? m.dialogs.profile.deleteDescription(pendingDelete.name)
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>キャンセル</AlertDialogCancel>
+            <AlertDialogCancel>{m.common.cancel}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 if (pendingDelete) {
@@ -172,7 +177,7 @@ export function ProfileManagerDialog({
               }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              削除
+              {m.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -203,21 +208,18 @@ function ListView({
       <DialogHeader className="px-5 py-4 border-b border-border">
         <DialogTitle className="flex items-center gap-2">
           <UsersRound className="w-4 h-4 text-muted-foreground" />
-          プロファイル管理
+          {m.dialogs.profile.title}
         </DialogTitle>
-        <DialogDescription>
-          Claude CLI の設定ディレクトリ (CLAUDE_CONFIG_DIR)
-          をリポジトリ単位で使い分けます。
-        </DialogDescription>
+        <DialogDescription>{m.dialogs.profile.description}</DialogDescription>
       </DialogHeader>
 
       {/* Linuxのみバッジ */}
       <div className="px-5 py-3 text-xs text-muted-foreground bg-muted/30 border-b border-border">
         <p className="flex items-center gap-2 flex-wrap">
           <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 font-medium text-foreground">
-            Linuxのみ
+            {m.dialogs.profile.linuxOnly}
           </span>
-          <span>macOS/Windowsでは利用できません</span>
+          <span>{m.dialogs.profile.unavailableOnOtherOs}</span>
         </p>
       </div>
 
@@ -225,17 +227,17 @@ function ListView({
       <div className="px-5 py-3 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs text-muted-foreground font-medium">
-            登録済みプロファイル ({profiles.length})
+            {m.dialogs.profile.registered(profiles.length)}
           </span>
           <Button type="button" size="sm" onClick={onAdd}>
             <Plus className="w-3 h-3 mr-1" />
-            新規追加
+            {m.dialogs.profile.add}
           </Button>
         </div>
 
         {profiles.length === 0 ? (
           <div className="text-center py-10 text-sm text-muted-foreground border border-dashed border-border rounded-md">
-            プロファイルが未登録です。
+            {m.dialogs.profile.empty}
           </div>
         ) : (
           <div className="space-y-2">
@@ -253,7 +255,7 @@ function ListView({
 
       <div className="px-5 py-3 border-t border-border flex justify-end">
         <Button type="button" variant="outline" size="sm" onClick={onClose}>
-          閉じる
+          {m.common.close}
         </Button>
       </div>
     </>
@@ -284,7 +286,7 @@ function ProfileRow({
           <button
             type="button"
             onClick={onEdit}
-            title="編集"
+            title={m.dialogs.profile.edit}
             className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
           >
             <Pencil className="w-3.5 h-3.5" />
@@ -292,7 +294,7 @@ function ProfileRow({
           <button
             type="button"
             onClick={onAskDelete}
-            title="削除"
+            title={m.common.delete}
             className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -345,7 +347,7 @@ function AddOrEditView({
       <DialogHeader className="px-5 py-4 border-b border-border">
         <DialogTitle className="flex items-center gap-2">
           <UsersRound className="w-4 h-4 text-primary" />
-          {isAdd ? "新規プロファイル追加" : "プロファイル編集"}
+          {isAdd ? m.dialogs.profile.addTitle : m.dialogs.profile.editTitle}
         </DialogTitle>
       </DialogHeader>
 
@@ -355,7 +357,7 @@ function AddOrEditView({
             htmlFor="profile-name"
             className="text-xs font-medium mb-1.5 block"
           >
-            名前
+            {m.dialogs.profile.name}
           </Label>
           <Input
             id="profile-name"
@@ -365,7 +367,7 @@ function AddOrEditView({
               setName(e.target.value);
               if (error?.field === "name") setError(null);
             }}
-            placeholder="例: 仕事Max"
+            placeholder={m.dialogs.profile.namePlaceholder}
             autoFocus
             className="bg-background border-border"
           />
@@ -373,7 +375,7 @@ function AddOrEditView({
             <p className="text-xs text-destructive mt-1">{error.message}</p>
           )}
           <p className="text-xs text-muted-foreground mt-1">
-            ダッシュボードに表示される名前です
+            {m.dialogs.profile.nameHint}
           </p>
         </div>
 
@@ -382,7 +384,7 @@ function AddOrEditView({
             htmlFor="profile-config-dir"
             className="text-xs font-medium mb-1.5 block"
           >
-            設定ディレクトリ{" "}
+            {m.dialogs.profile.configDir}{" "}
             <span className="text-muted-foreground font-normal">
               (CLAUDE_CONFIG_DIR)
             </span>
@@ -402,7 +404,7 @@ function AddOrEditView({
             <p className="text-xs text-destructive mt-1">{error.message}</p>
           )}
           <p className="text-xs text-muted-foreground mt-1">
-            設定の保存先。各プロファイルで別ディレクトリにする
+            {m.dialogs.profile.configDirHint}
           </p>
         </div>
 
@@ -410,10 +412,7 @@ function AddOrEditView({
           <div className="bg-primary/5 border border-primary/20 rounded-md p-3 flex gap-2">
             <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
             <div className="text-xs text-foreground/80">
-              <p>
-                追加後、このプロファイルを紐付けたリポジトリでセッションを起動すると、
-                claude CLIが自動でログイン画面を表示します。
-              </p>
+              <p>{m.dialogs.profile.loginNotice}</p>
             </div>
           </div>
         )}
@@ -421,16 +420,16 @@ function AddOrEditView({
 
       <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>
-          キャンセル
+          {m.common.cancel}
         </Button>
         <Button type="submit" size="sm">
           {isAdd ? (
             <>
               <Plus className="w-3.5 h-3.5 mr-1" />
-              追加
+              {m.dialogs.profile.submitAdd}
             </>
           ) : (
-            "保存"
+            m.common.save
           )}
         </Button>
       </div>

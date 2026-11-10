@@ -7,6 +7,7 @@
  */
 
 import type { BridgeSessionStatus } from "@ark/shared";
+import { m } from "./i18n";
 import type { MobileSessionViewMode } from "./mobile-session-view-mode";
 
 export type StatusKey = BridgeSessionStatus | "NOT_STARTED" | "UNKNOWN";
@@ -34,7 +35,7 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
   // AWAITING は質問と許可プロンプトの両方を含むので「質問」ではなく「確認待ち」
   AWAITING: {
     tone: "awaiting",
-    label: "確認待ち",
+    label: m.session.status.awaiting,
     icon: "question",
     section: "your-turn",
     priority: 1,
@@ -42,7 +43,7 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
   },
   ERR: {
     tone: "error",
-    label: "問題",
+    label: m.session.status.error,
     icon: "alert",
     section: "your-turn",
     priority: 2,
@@ -51,7 +52,7 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
   // IDLE は「出力があり入力を待っている」だけで、成功を意味しない
   IDLE: {
     tone: "idle",
-    label: "入力待ち",
+    label: m.session.status.idle,
     icon: "message",
     section: "your-turn",
     priority: 3,
@@ -59,7 +60,7 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
   },
   TOOL: {
     tone: "busy",
-    label: "作業中",
+    label: m.session.status.working,
     icon: "dots",
     section: "working",
     priority: 4,
@@ -67,7 +68,7 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
   },
   THINK: {
     tone: "busy",
-    label: "作業中",
+    label: m.session.status.working,
     icon: "dots",
     section: "working",
     priority: 4,
@@ -75,7 +76,7 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
   },
   READY: {
     tone: "neutral",
-    label: "待機",
+    label: m.session.status.ready,
     icon: "minus",
     section: "resting",
     priority: 5,
@@ -83,7 +84,7 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
   },
   STOP: {
     tone: "neutral",
-    label: "停止",
+    label: m.session.status.stopped,
     icon: "stop",
     section: "resting",
     priority: 6,
@@ -91,7 +92,7 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
   },
   NOT_STARTED: {
     tone: "neutral",
-    label: "未起動",
+    label: m.session.status.notStarted,
     icon: "play",
     section: "resting",
     priority: 7,
@@ -126,9 +127,9 @@ export const SECTION_ORDER: readonly SessionSection[] = [
 ];
 
 export const SECTION_LABELS: Readonly<Record<SessionSection, string>> = {
-  "your-turn": "あなたの番",
-  working: "作業中",
-  resting: "休止中",
+  "your-turn": m.session.sections.yourTurn,
+  working: m.session.sections.working,
+  resting: m.session.sections.resting,
 };
 
 /**
@@ -182,7 +183,7 @@ export function resolveStatusStrip(input: {
   if (!input.isConnected) {
     return {
       tone: "error",
-      text: "サーバーとつながっていません",
+      text: m.session.strip.disconnected,
       offerChat: false,
     };
   }
@@ -190,15 +191,17 @@ export function resolveStatusStrip(input: {
     case "AWAITING":
       return {
         tone: "awaiting",
-        text: input.hasActiveAuq ? "質問があります" : "確認を求めています",
+        text: input.hasActiveAuq
+          ? m.session.strip.question
+          : m.session.strip.confirmation,
         offerChat: input.viewMode !== "chat",
       };
     case "THINK":
-      return { tone: "busy", text: "考えています", offerChat: false };
+      return { tone: "busy", text: m.session.strip.thinking, offerChat: false };
     case "TOOL":
-      return { tone: "busy", text: "作業しています", offerChat: false };
+      return { tone: "busy", text: m.session.strip.working, offerChat: false };
     case "ERR":
-      return { tone: "error", text: "問題が起きています", offerChat: false };
+      return { tone: "error", text: m.session.strip.error, offerChat: false };
     default:
       return null;
   }

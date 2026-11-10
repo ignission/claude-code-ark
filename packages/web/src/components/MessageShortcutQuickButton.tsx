@@ -17,6 +17,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { m } from "@/lib/i18n";
 import { previewOf } from "./MessageShortcutMenu";
 
 export interface MessageShortcutQuickButtonProps {
@@ -44,8 +45,8 @@ export function MessageShortcutQuickButton({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="メッセージのショートカット"
-          title="メッセージのショートカット"
+          aria-label={m.chat.shortcuts.buttonLabel}
+          title={m.chat.shortcuts.buttonLabel}
           className={`inline-flex shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground ${className}`}
         >
           <Zap className="size-5" aria-hidden="true" />
@@ -55,11 +56,11 @@ export function MessageShortcutQuickButton({
           スクロールさせる (DropdownMenuContent が max-h と overflow を持つ) */}
       <DropdownMenuContent align={align} side={side} className="w-64">
         <DropdownMenuLabel className="text-xs text-muted-foreground">
-          メッセージショートカット
+          {m.chat.shortcuts.title}
         </DropdownMenuLabel>
         {shortcuts.length === 0 ? (
           <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-            ショートカットがありません
+            {m.chat.shortcuts.none}
           </DropdownMenuLabel>
         ) : (
           shortcuts.map(shortcut => (
@@ -75,7 +76,7 @@ export function MessageShortcutQuickButton({
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onManage}>
           <Settings />
-          ショートカットを管理
+          {m.chat.shortcuts.manage}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -40,6 +40,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { m } from "@/lib/i18n";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
@@ -182,13 +183,13 @@ export const TerminalPane = memo(function TerminalPane({
       const text = await onCopyBuffer();
       if (text) {
         await navigator.clipboard.writeText(text);
-        toast.success("端末のバッファをコピーしました");
+        toast.success(m.chat.terminal.bufferCopied);
       } else {
-        toast.info("コピーできる内容がありません");
+        toast.info(m.chat.terminal.nothingToCopy);
       }
     } catch (err) {
       console.error("Failed to copy:", err);
-      toast.error("バッファをコピーできませんでした");
+      toast.error(m.chat.terminal.copyBufferFailed);
     }
   };
 
@@ -230,7 +231,9 @@ export const TerminalPane = memo(function TerminalPane({
       const v = validateFile(file);
       if (!v.ok) {
         console.warn(v.reason);
-        errors.push(`${file.name}: ${v.reason ?? "未対応のファイルです"}`);
+        errors.push(
+          `${file.name}: ${v.reason ?? m.chat.upload.unsupportedFile}`
+        );
         continue;
       }
       try {
@@ -239,8 +242,8 @@ export const TerminalPane = memo(function TerminalPane({
         const preview = isImage ? `data:${mimeType};base64,${base64}` : null;
         next.push({ base64, mimeType, filename, preview, size: file.size });
       } catch (err) {
-        console.error("ファイル読み込みに失敗:", err);
-        errors.push(`${file.name}: 読み込みに失敗しました`);
+        console.error("Failed to read file:", err);
+        errors.push(m.chat.upload.readFailed(file.name));
       }
     }
     if (next.length > 0) {
@@ -316,9 +319,9 @@ export const TerminalPane = memo(function TerminalPane({
       setPendingFiles([]);
       setUploadMessage("");
     } catch (err) {
-      console.error("ファイルアップロード失敗:", err);
+      console.error("Failed to upload file:", err);
       setUploadError(
-        err instanceof Error ? err.message : "アップロードに失敗しました"
+        err instanceof Error ? err.message : m.chat.upload.uploadFailed
       );
     } finally {
       setIsSending(false);
@@ -457,7 +460,7 @@ export const TerminalPane = memo(function TerminalPane({
       {isDragging && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-primary/15 border-4 border-dashed border-primary pointer-events-none">
           <div className="text-2xl font-semibold text-primary bg-card/90 px-6 py-4 rounded-lg shadow-card">
-            ファイルをドロップして送信
+            {m.chat.upload.dropToSend}
           </div>
         </div>
       )}
@@ -504,7 +507,7 @@ export const TerminalPane = memo(function TerminalPane({
             >
               <div className="text-center">
                 <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4" />
-                <p>端末を起動しています</p>
+                <p>{m.chat.terminal.starting}</p>
               </div>
             </div>
           )}
@@ -550,7 +553,7 @@ export const TerminalPane = memo(function TerminalPane({
         >
           <div className="bg-card border border-border rounded-lg p-4 max-w-md w-full">
             <h3 className="text-sm font-semibold mb-3">
-              ファイルを送信（{pendingFiles.length}件）
+              {m.chat.upload.sendFilesTitle(pendingFiles.length)}
             </h3>
             <div className="space-y-2 max-h-60 overflow-y-auto mb-3">
               {pendingFiles.map((pf, idx) => (
@@ -585,7 +588,7 @@ export const TerminalPane = memo(function TerminalPane({
                       setPendingFiles(prev => prev.filter((_, i) => i !== idx))
                     }
                     disabled={isSending}
-                    title="このファイルを取り除く"
+                    title={m.chat.upload.removeFile}
                   >
                     <X className="w-4 h-4" />
                   </Button>
@@ -596,7 +599,7 @@ export const TerminalPane = memo(function TerminalPane({
               autoFocus
               value={uploadMessage}
               onChange={e => setUploadMessage(e.target.value)}
-              placeholder="メッセージを追加（任意）"
+              placeholder={m.chat.upload.messagePlaceholder}
               className="min-h-[60px] resize-none text-sm mb-3"
               rows={2}
               disabled={isSending}
@@ -611,14 +614,14 @@ export const TerminalPane = memo(function TerminalPane({
                 onClick={handleCancelPending}
                 disabled={isSending}
               >
-                キャンセル
+                {m.common.cancel}
               </Button>
               <Button
                 size="sm"
                 onClick={handleSendWithFiles}
                 disabled={isSending}
               >
-                {isSending ? "送信中..." : "送信"}
+                {isSending ? m.chat.upload.sendingButton : m.chat.send}
               </Button>
             </div>
           </div>
@@ -634,7 +637,7 @@ export const TerminalPane = memo(function TerminalPane({
             className="text-xs underline shrink-0"
             onClick={() => setUploadError(null)}
           >
-            閉じる
+            {m.common.close}
           </button>
         </div>
       )}

@@ -79,7 +79,7 @@ export function useTtydReconnect(
         if (!exhaustedRef.current) {
           exhaustedRef.current = true;
           console.warn(
-            "[ark] ttyd の自動再接続を諦めました。手動でリロードしてください"
+            "[ark] Gave up reconnecting to ttyd. Reload the page manually"
           );
         }
       } else {
@@ -87,7 +87,7 @@ export function useTtydReconnect(
       }
 
       if (result.reload) {
-        console.info("[ark] ttyd が切断されたため iframe を貼り直します");
+        console.info("[ark] ttyd disconnected; reloading the iframe");
         reload();
       }
     };

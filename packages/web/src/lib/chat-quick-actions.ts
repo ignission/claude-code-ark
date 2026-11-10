@@ -4,28 +4,17 @@
  * どちらも Claude への普通のメッセージとして送る (ボードと TODO の使い方は
  * SessionStart hook が伝えてある)。入力欄に文があれば、それを対象として前に置く。
  */
+import { m } from "@/lib/i18n";
 
 export type ChatQuickAction = "diagram" | "todo";
 
 export const CHAT_QUICK_ACTION_LABEL: Readonly<
   Record<ChatQuickAction, string>
-> = {
-  diagram: "ボードに図解させる",
-  todo: "TODOに残させる",
-};
+> = m.chat.quickActions.label;
 
 const INSTRUCTION: Readonly<
   Record<ChatQuickAction, { alone: string; withText: string }>
-> = {
-  diagram: {
-    alone: "直前の説明をボードに図解して。",
-    withText: "これをボードに図解して。",
-  },
-  todo: {
-    alone: "この会話で保留にした話題をTODOに残して。",
-    withText: "これをTODOに残して。",
-  },
-};
+> = m.chat.quickActions.prompt;
 
 export function buildChatQuickActionMessage(
   action: ChatQuickAction,

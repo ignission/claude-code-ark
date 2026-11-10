@@ -7,6 +7,7 @@
  */
 
 import type { ContextUsage } from "@/lib/context-usage";
+import { m } from "@/lib/i18n";
 
 const RADIUS = 8;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -22,7 +23,11 @@ export function ContextUsageRing({ usage }: { usage: ContextUsage }) {
   const ratio = Math.min(usage.tokens / usage.window, 1);
   const percent = Math.round(ratio * 100);
   const high = ratio >= HIGH_RATIO;
-  const label = `コンテキスト ${usage.tokens.toLocaleString()} / ${usage.window.toLocaleString()} トークン (${percent}%)。上限は推定`;
+  const label = m.session.contextUsage.label(
+    usage.tokens.toLocaleString(),
+    usage.window.toLocaleString(),
+    percent
+  );
   return (
     <span
       role="img"

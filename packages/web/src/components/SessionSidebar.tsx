@@ -70,7 +70,7 @@ export function SessionSidebar({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label="Arkのメニュー"
+              aria-label={m.session.sidebar.arkMenu}
               className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[15px] font-semibold tracking-[-0.01em] text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
             >
               Ark
@@ -109,8 +109,8 @@ export function SessionSidebar({
           size="icon"
           className="h-8 w-8 text-muted-foreground hover:text-foreground"
           onClick={onNewTask}
-          aria-label="新しいタスク"
-          title="新しいタスク"
+          aria-label={m.session.sidebar.newTask}
+          title={m.session.sidebar.newTask}
         >
           <ListPlus className="size-5" />
         </Button>
@@ -119,8 +119,8 @@ export function SessionSidebar({
           size="icon"
           className="h-8 w-8 text-muted-foreground hover:text-foreground"
           onClick={onNewSession}
-          aria-label="新規セッション"
-          title="新規セッション"
+          aria-label={m.session.sidebar.newSession}
+          title={m.session.sidebar.newSession}
         >
           <Plus className="size-5" />
         </Button>
@@ -132,9 +132,9 @@ export function SessionSidebar({
                 variant={selectedScreenId ? "default" : "ghost"}
                 size="icon"
                 className="h-8 w-8"
-                aria-label="画面"
+                aria-label={m.session.sidebar.screens}
                 aria-pressed={selectedScreenId !== null}
-                title="画面"
+                title={m.session.sidebar.screens}
               >
                 <Monitor className="size-5" />
               </Button>
@@ -152,7 +152,7 @@ export function SessionSidebar({
               {screens.length > 0 && <DropdownMenuSeparator />}
               <DropdownMenuItem onSelect={onOpenScreenManager}>
                 <Settings />
-                画面の管理...
+                {m.session.sidebar.manageScreens}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
