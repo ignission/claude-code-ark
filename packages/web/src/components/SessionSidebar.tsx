@@ -8,7 +8,7 @@
  */
 
 import type { HostMetrics, Screen } from "@ark/shared";
-import { LOCALES, type Locale } from "@ark/shared/i18n";
+import { LOCALES } from "@ark/shared/i18n";
 import {
   Check,
   ChevronDown,
@@ -29,14 +29,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { changeLocale, locale, m } from "@/lib/i18n";
+import { changeLocale, LOCALE_NAMES, locale, m } from "@/lib/i18n";
 import {
   SessionSectionList,
   type SessionSectionListProps,
 } from "./SessionSectionList";
-
-/** 言語の名前は、その言語自身で書く (読めない言語に切り替えても戻れるように) */
-const LOCALE_NAMES: Record<Locale, string> = { ja: "日本語", en: "English" };
 
 type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   onNewSession: () => void;

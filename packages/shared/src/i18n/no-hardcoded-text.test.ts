@@ -23,7 +23,7 @@ const DICTIONARY_DIR = "packages/shared/src/i18n/";
  */
 const ALLOWED: Record<string, string> = {
   // 言語の名前は、その言語自身で書く
-  "packages/web/src/components/SessionSidebar.tsx": "日本語",
+  "packages/web/src/lib/i18n.ts": "日本語",
 };
 
 const JAPANESE = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
@@ -79,7 +79,10 @@ function listSourceFiles(dir: string): string[] {
   })) {
     const rel = `${dir}/${entry.name}`;
     if (entry.isDirectory()) files.push(...listSourceFiles(rel));
-    else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name))
+    else if (
+      /\.tsx?$/.test(entry.name) &&
+      !/(\.test|test-helpers)\.tsx?$/.test(entry.name)
+    )
       files.push(rel);
   }
   return files;

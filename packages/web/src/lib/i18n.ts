@@ -17,6 +17,12 @@ import {
 
 export const LOCALE_STORAGE_KEY = "ark.locale";
 
+/** 言語の名前は、その言語自身で書く (読めない言語に切り替えても戻れるように) */
+export const LOCALE_NAMES: Record<Locale, string> = {
+  ja: "日本語",
+  en: "English",
+};
+
 function readSavedLocale(): string | null {
   try {
     return globalThis.localStorage?.getItem(LOCALE_STORAGE_KEY) ?? null;
