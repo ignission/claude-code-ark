@@ -1550,7 +1550,7 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     act(() => window.dispatchEvent(new MouseEvent("mouseup")));
     expect(localStorage.getItem("ark-split-left-width")).toBe("360");
 
-    // 右端まで寄せても、作業エリア 360px + リサイザ 8px を残す (1000 - 360 - 8)
+    // 右端まで寄せても、作業エリア 360px + リサイザ 1px を残す (1000 - 360 - 1)
     act(() =>
       resizers(container)[0].dispatchEvent(
         new MouseEvent("mousedown", { bubbles: true })
@@ -1560,7 +1560,7 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
       window.dispatchEvent(new MouseEvent("mousemove", { clientX: 950 }))
     );
     act(() => window.dispatchEvent(new MouseEvent("mouseup")));
-    expect(localStorage.getItem("ark-split-left-width")).toBe("632");
+    expect(localStorage.getItem("ark-split-left-width")).toBe("639");
   });
 });
 

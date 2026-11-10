@@ -61,13 +61,13 @@ export function SessionSidebar({
 }: SessionSidebarProps) {
   return (
     <div className="h-full flex flex-col">
-      <div className="flex h-14 shrink-0 items-center gap-1 pl-3 pr-2">
+      <div className="flex h-12 shrink-0 items-center gap-1 pl-2 pr-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
               aria-label="Arkのメニュー"
-              className="inline-flex h-9 items-center gap-1 rounded-sm px-2 text-[17px] font-semibold tracking-[-0.01em] text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+              className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[15px] font-semibold tracking-[-0.01em] text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
             >
               Ark
               <ChevronDown
@@ -148,7 +148,7 @@ export function SessionSidebar({
         <SessionSectionList variant="sidebar" {...listProps} />
       </div>
 
-      <div className="shrink-0 px-2 pb-2">
+      <div className="shrink-0 border-t border-sidebar-border px-2 py-1.5">
         <SystemStatusBar metrics={metrics} compact />
       </div>
     </div>

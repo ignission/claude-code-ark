@@ -41,8 +41,8 @@ export function SystemStatusBar({
     </span>
   );
 
-  // compact はサイドバーの最小幅 (180px) でも枠に収まるよう、
-  // CPU と MEM/DISK を2行に分け、別タブのアイコンを省く (title で示す)
+  // compact はサイドバーの最小幅 (180px) でも収まるよう、CPU と MEM/DISK を2行に分ける。
+  // 枠と地を持たないので、リンクだと分かるよう CPU の行の末尾に小さい別タブのアイコンを置く
   if (compact) {
     return (
       <a
@@ -50,9 +50,15 @@ export function SystemStatusBar({
         target="_blank"
         rel="noopener noreferrer"
         title="Bridgeを別タブで開く"
-        className="flex flex-col gap-1 rounded-lg border border-border bg-muted px-2 py-1.5 text-xs text-foreground select-none transition-colors hover:bg-accent cursor-pointer"
+        className="flex flex-col gap-1 rounded-md px-2 py-1.5 font-mono text-[11px] text-foreground select-none transition-colors hover:bg-sidebar-accent cursor-pointer"
       >
-        {cpuItem}
+        <span className="flex items-center gap-1.5">
+          {cpuItem}
+          <ExternalLink
+            className="size-3 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+        </span>
         <span className="flex items-center justify-between gap-2">
           <Metric label="MEM" percent={mem} />
           <Metric label="DISK" percent={disk} />

@@ -48,7 +48,7 @@
   --shadow-panel: var(--elevation-panel);
   --color-panel: var(--panel);
   --color-well: var(--well);
-  --radius-panel: 1.125rem;
+  --radius-panel: var(--radius);
 
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Inter", "Hiragino Sans",
@@ -59,62 +59,56 @@
 
 :root {
   color-scheme: light dark;
-  --radius: 0.75rem;
+  /* Graphite: 地は色みを持たない。色を付けるのは状態 (--status-*) と差分だけにする */
+  --radius: 0.375rem;
 
-  --background: oklch(0.985 0.005 80);
-  --foreground: oklch(0.24 0.02 60);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.21 0 0);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.24 0.02 60);
+  --card-foreground: oklch(0.21 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.24 0.02 60);
-  --primary: oklch(0.5 0.16 262);
+  --popover-foreground: oklch(0.21 0 0);
+  --primary: oklch(0.21 0 0);
   --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.955 0.008 80);
-  --secondary-foreground: oklch(0.24 0.02 60);
-  --muted: oklch(0.955 0.008 80);
-  --muted-foreground: oklch(0.48 0.02 60);
-  --accent: oklch(0.94 0.01 80);
-  --accent-foreground: oklch(0.24 0.02 60);
+  --secondary: oklch(0.965 0 0);
+  --secondary-foreground: oklch(0.21 0 0);
+  --muted: oklch(0.965 0 0);
+  --muted-foreground: oklch(0.5 0 0);
+  --accent: oklch(0.955 0 0);
+  --accent-foreground: oklch(0.21 0 0);
   --destructive: oklch(0.55 0.2 25);
   --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.9 0.01 80);
-  --input: oklch(0.9 0.01 80);
-  --ring: oklch(0.5 0.16 262);
-  --sidebar: oklch(0.985 0.005 80);
-  --sidebar-foreground: oklch(0.24 0.02 60);
-  --sidebar-primary: oklch(0.5 0.16 262);
+  --border: oklch(0.915 0 0);
+  --input: oklch(0.88 0 0);
+  /* フォーカスの輪だけは色を残す (前景色の輪は選択中の面と見分けにくい) */
+  --ring: oklch(0.55 0.15 255);
+  --sidebar: oklch(0.975 0 0);
+  --sidebar-foreground: oklch(0.21 0 0);
+  --sidebar-primary: oklch(0.21 0 0);
   --sidebar-primary-foreground: oklch(0.99 0 0);
-  --sidebar-accent: oklch(0.955 0.008 80);
-  --sidebar-accent-foreground: oklch(0.24 0.02 60);
-  --sidebar-border: oklch(0.9 0.01 80);
-  --sidebar-ring: oklch(0.5 0.16 262);
+  --sidebar-accent: oklch(0.94 0 0);
+  --sidebar-accent-foreground: oklch(0.21 0 0);
+  --sidebar-border: oklch(0.915 0 0);
+  --sidebar-ring: oklch(0.55 0.15 255);
 
   --status-busy: oklch(0.52 0.14 240);
   --status-idle: oklch(0.55 0.15 150);
   --status-awaiting: oklch(0.56 0.15 70);
   --status-error: oklch(0.55 0.2 25);
-  --status-neutral: oklch(0.55 0.015 60);
+  --status-neutral: oklch(0.6 0 0);
 
-  --elevation-card:
-    0 1px 2px oklch(0 0 0 / 0.06), 0 4px 12px oklch(0 0 0 / 0.05);
-  --glass: oklch(1 0 0 / 0.72);
+  --elevation-card: 0 1px 2px oklch(0 0 0 / 0.05);
+  --glass: oklch(1 0 0 / 0.85);
 
-  /* 浮かぶパネル: PC の画面は、色のついた壁紙の上にパネルをすき間で離して置く。
-     区切りは線ではなく、すき間と影と面の濃淡で作る */
-  --wallpaper:
-    radial-gradient(60rem 40rem at 8% 0%, oklch(0.9 0.04 300), transparent 60%),
-    radial-gradient(
-      52rem 40rem at 100% 100%,
-      oklch(0.92 0.035 60),
-      transparent 60%
-    ),
-    oklch(0.925 0.02 250);
-  --panel: oklch(1 0 0);
-  --panel-glass: oklch(1 0 0 / 0.55);
-  --panel-edge: oklch(1 0 0 / 0.8);
+  /* PC の画面の区切り: 面は地に置き、1px の線で分ける。影は重なるもの (端末の窓・
+     メニュー・ダイアログ) にだけ使う */
+  --wallpaper: var(--sidebar);
+  --panel: var(--background);
+  --panel-glass: var(--sidebar);
+  --panel-edge: transparent;
   --elevation-panel:
-    0 1px 2px oklch(0.3 0.05 280 / 0.05), 0 8px 24px oklch(0.3 0.05 280 / 0.09);
-  --well: oklch(0.965 0.004 270);
+    0 1px 2px oklch(0 0 0 / 0.06), 0 12px 32px oklch(0 0 0 / 0.12);
+  --well: oklch(0.975 0 0);
 
   /* Git タブ: グラフのレーンの色 (8 色を循環)、ファイルの状態の色、差分の地色 */
   --git-lane-0: #2563eb;
@@ -138,64 +132,54 @@
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: light dark;
-    --radius: 0.75rem;
+    --radius: 0.375rem;
 
-    --background: oklch(0.19 0.01 60);
-    --foreground: oklch(0.93 0.01 80);
-    --card: oklch(0.23 0.01 60);
-    --card-foreground: oklch(0.93 0.01 80);
-    --popover: oklch(0.23 0.01 60);
-    --popover-foreground: oklch(0.93 0.01 80);
-    --primary: oklch(0.74 0.13 262);
-    --primary-foreground: oklch(0.18 0.03 262);
-    --secondary: oklch(0.27 0.01 60);
-    --secondary-foreground: oklch(0.93 0.01 80);
-    --muted: oklch(0.27 0.01 60);
-    --muted-foreground: oklch(0.72 0.015 80);
-    --accent: oklch(0.29 0.01 60);
-    --accent-foreground: oklch(0.93 0.01 80);
+    /* 地は黒に近い無彩色。端末 (ttyd) の地と同じにはしない (端末の窓の縁が消える) */
+    --background: oklch(0.155 0 0);
+    --foreground: oklch(0.94 0 0);
+    --card: oklch(0.195 0 0);
+    --card-foreground: oklch(0.94 0 0);
+    --popover: oklch(0.195 0 0);
+    --popover-foreground: oklch(0.94 0 0);
+    --primary: oklch(0.94 0 0);
+    --primary-foreground: oklch(0.155 0 0);
+    --secondary: oklch(0.22 0 0);
+    --secondary-foreground: oklch(0.94 0 0);
+    --muted: oklch(0.22 0 0);
+    --muted-foreground: oklch(0.67 0 0);
+    --accent: oklch(0.24 0 0);
+    --accent-foreground: oklch(0.94 0 0);
     --destructive: oklch(0.74 0.16 25);
     --destructive-foreground: oklch(0.18 0.03 25);
-    --border: oklch(0.3 0.01 60);
-    --input: oklch(0.3 0.01 60);
-    --ring: oklch(0.74 0.13 262);
-    --sidebar: oklch(0.19 0.01 60);
-    --sidebar-foreground: oklch(0.93 0.01 80);
-    --sidebar-primary: oklch(0.74 0.13 262);
-    --sidebar-primary-foreground: oklch(0.18 0.03 262);
-    --sidebar-accent: oklch(0.27 0.01 60);
-    --sidebar-accent-foreground: oklch(0.93 0.01 80);
-    --sidebar-border: oklch(0.3 0.01 60);
-    --sidebar-ring: oklch(0.74 0.13 262);
+    --border: oklch(0.255 0 0);
+    --input: oklch(0.3 0 0);
+    --ring: oklch(0.72 0.13 255);
+    --sidebar: oklch(0.12 0 0);
+    --sidebar-foreground: oklch(0.94 0 0);
+    --sidebar-primary: oklch(0.94 0 0);
+    --sidebar-primary-foreground: oklch(0.155 0 0);
+    --sidebar-accent: oklch(0.2 0 0);
+    --sidebar-accent-foreground: oklch(0.94 0 0);
+    --sidebar-border: oklch(0.235 0 0);
+    --sidebar-ring: oklch(0.72 0.13 255);
 
     --status-busy: oklch(0.76 0.12 240);
     --status-idle: oklch(0.78 0.13 150);
     --status-awaiting: oklch(0.82 0.14 75);
     --status-error: oklch(0.74 0.16 25);
-    --status-neutral: oklch(0.65 0.015 60);
+    --status-neutral: oklch(0.6 0 0);
 
-    --elevation-card: 0 1px 2px oklch(0 0 0 / 0.3);
-    --glass: oklch(0.23 0.01 60 / 0.72);
+    --elevation-card: 0 0 0 1px oklch(1 0 0 / 0.04);
+    --glass: oklch(0.155 0 0 / 0.85);
 
-    /* 暗い配色では影が見えないので、パネルを壁紙より明るい面にして浮かせる */
-    --wallpaper:
-      radial-gradient(
-        60rem 40rem at 8% 0%,
-        oklch(0.2 0.04 300),
-        transparent 60%
-      ),
-      radial-gradient(
-        52rem 40rem at 100% 100%,
-        oklch(0.19 0.03 60),
-        transparent 60%
-      ),
-      oklch(0.13 0.012 260);
-    --panel: oklch(0.225 0.008 270);
-    --panel-glass: oklch(0.225 0.008 270 / 0.6);
-    --panel-edge: oklch(1 0 0 / 0.07);
+    --wallpaper: var(--sidebar);
+    --panel: var(--background);
+    --panel-glass: var(--sidebar);
+    --panel-edge: transparent;
+    /* 暗い配色では影が見えにくいので、重なるものには線も足す */
     --elevation-panel:
-      0 1px 2px oklch(0 0 0 / 0.4), 0 10px 28px oklch(0 0 0 / 0.35);
-    --well: oklch(0.185 0.008 270);
+      0 0 0 1px oklch(1 0 0 / 0.08), 0 16px 40px oklch(0 0 0 / 0.6);
+    --well: oklch(0.13 0 0);
 
     --git-lane-0: #6ea8ff;
     --git-lane-1: #5bd68a;
@@ -257,33 +241,19 @@
     min-width: 0;
   }
 
-  /* 壁紙。PC の画面の一番下の面 */
+  /* PC の画面の一番下の面 (サイドバーと同じ色) */
   .app-wallpaper {
     background: var(--wallpaper);
   }
-  /* 浮かぶパネル。大きな面には backdrop-filter を使わない
-     (ttyd の iframe と CodeMirror が描き直すたびにぼかしが走るため) */
+  /* メインペインの面。区切りは隣との間の 1px の線 (リサイザ) で作り、角も影も付けない */
   .panel {
     background: var(--panel);
-    border-radius: var(--radius-panel);
-    box-shadow:
-      inset 0 0 0 1px var(--panel-edge),
-      var(--elevation-panel);
   }
   .panel-glass {
     background: var(--panel-glass);
-    border-radius: var(--radius-panel);
-    box-shadow:
-      inset 0 0 0 1px var(--panel-edge),
-      var(--elevation-panel);
-  }
-  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-    .panel-glass {
-      background: var(--panel);
-    }
   }
 
-  /* 浮かぶガラスバー。操作とナビゲーションの層だけに使う (設計書 6 節) */
+  /* 浮かぶガラスバー。会話に重なる入力欄など、操作の層だけに使う */
   .glass-bar {
     background: var(--glass);
     -webkit-backdrop-filter: blur(18px) saturate(170%);

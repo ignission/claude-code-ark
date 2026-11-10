@@ -10,8 +10,8 @@
 
 export const LEFT_MIN_WIDTH = 360;
 export const WORK_AREA_MIN_WIDTH = 360;
-/** リサイザの幅 (w-2 = 8px。パネルの間のすき間を兼ねる) */
-export const RESIZER_WIDTH = 8;
+/** リサイザの幅 (w-px。左と作業エリアの間の線を兼ねる。掴める幅は線の外へ広げてある) */
+export const RESIZER_WIDTH = 1;
 /** 保存した幅が無いときの左ペインの幅 (会話の 1 行が読みやすく、端末で 60 桁強が入る幅) */
 export const LEFT_DEFAULT_WIDTH = 520;
 

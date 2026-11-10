@@ -325,8 +325,11 @@ export function SessionSectionList({
       key={row.key}
       data-section={row.section}
       className={cn(
-        "mt-4 flex h-7 items-center gap-2 text-[13px] font-semibold text-muted-foreground first:mt-0",
-        variant === "sidebar" ? "px-3" : "px-1"
+        "mt-4 flex h-7 items-center gap-2 font-semibold text-muted-foreground first:mt-0",
+        // sidebar の見出しは小さい大文字の間隔で、行の題と読み分ける
+        variant === "sidebar"
+          ? "px-2.5 text-[11px] tracking-[0.06em]"
+          : "px-1 text-[13px]"
       )}
     >
       <span>{SECTION_LABELS[row.section]}</span>
@@ -334,7 +337,7 @@ export function SessionSectionList({
         <span
           data-testid="section-count"
           className={cn(
-            "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-bold text-background",
+            "inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-sm px-1 font-mono text-[11px] font-bold tabular-nums tracking-normal text-background",
             TONE_CLASSES.awaiting.solidBg
           )}
         >
@@ -422,7 +425,7 @@ export function SessionSectionList({
         data-session-list=""
         className={cn(
           "flex flex-col",
-          variant === "sidebar" ? "gap-1" : "gap-2"
+          variant === "sidebar" ? "gap-px" : "gap-2"
         )}
         {...bindings}
       >

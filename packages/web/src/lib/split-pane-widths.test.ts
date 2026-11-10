@@ -22,8 +22,8 @@ describe("fitLeftWidth", () => {
   });
 
   it("両方の最小幅が入らないときは、作業エリアを優先して左を縮める", () => {
-    // 600 - 360 - 8 = 232
-    expect(fitLeftWidth(600, 520)).toBe(232);
+    // 600 - 360 - 1 = 239
+    expect(fitLeftWidth(600, 520)).toBe(239);
     expect(fitLeftWidth(300, 520)).toBe(0);
   });
 

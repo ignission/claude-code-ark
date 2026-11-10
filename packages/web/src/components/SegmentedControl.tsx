@@ -2,7 +2,7 @@
  * SegmentedControl - 表示の切り替え
  *
  * モバイル下部バーの「会話 / 図」で使う。
- * 選択中の項目を丸いカプセル (bg-card + shadow-card) で持ち上げる。
+ * 選択中の項目を、くぼみ (bg-muted) の上の地の色の面で持ち上げる。
  * 各項目はaria-pressedを持つトグルボタンで、選択の状態は親が持つ。
  */
 
@@ -41,7 +41,7 @@ export function SegmentedControl<V extends string>({
   return (
     <fieldset
       className={cn(
-        "m-0 inline-flex min-w-0 shrink-0 items-center gap-0.5 rounded-full border-0 bg-muted p-0.5 dark:bg-background",
+        "m-0 inline-flex min-w-0 shrink-0 items-center gap-0.5 rounded-lg border-0 bg-muted p-0.5",
         className
       )}
     >
@@ -57,9 +57,9 @@ export function SegmentedControl<V extends string>({
             aria-pressed={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              "inline-flex h-7 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-semibold transition-colors",
+              "inline-flex h-7 items-center gap-1.5 rounded-md px-3.5 text-[13px] font-medium transition-colors",
               selected
-                ? "bg-card text-foreground shadow-card"
+                ? "bg-background text-foreground shadow-card"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
