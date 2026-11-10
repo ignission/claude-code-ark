@@ -12,7 +12,11 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../..");
 
 /** 見る場所。多言語化が済んだパッケージを足していく */
-const SCANNED_DIRS = ["packages/web/src"];
+const SCANNED_DIRS = [
+  "packages/web/src",
+  "packages/server/src",
+  "packages/desktop/src",
+];
 
 /** 辞書そのもの */
 const DICTIONARY_DIR = "packages/shared/src/i18n/";

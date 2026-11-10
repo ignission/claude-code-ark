@@ -80,6 +80,12 @@ import { createGitViewHandlers } from "./lib/git-view-handlers.js";
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
+import {
+  hasLocaleHint,
+  localeFromHeaders,
+  rememberLocale,
+  runWithLocale,
+} from "./lib/i18n.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
   checkManagedWorktree,
@@ -466,6 +472,16 @@ export async function startServer(
 
   // JSON body parser（Settings API用）
   app.use(express.json({ limit: "10kb" }));
+
+  // 利用者に見せる文の言語を、リクエストごとに決める (lib/i18n.ts)。
+  // hook や MCP からの呼び出しは言語の手がかりを持たないので、最後に見た利用者の言語のままにする
+  app.use((req, _res, next) => {
+    if (hasLocaleHint(req.headers)) {
+      runWithLocale(localeFromHeaders(req.headers), next);
+    } else {
+      next();
+    }
+  });
 
   // ===== AskUserQuestion hook 受け口 =====
   // セッション内 claude の PreToolUse hook (auq-hook-bridge が --settings で
@@ -1470,6 +1486,11 @@ export async function startServer(
 
   io.on("connection", socket => {
     console.log(`Client connected: ${socket.id}`);
+
+    // このソケットのイベントは、接続したブラウザの言語で処理する (lib/i18n.ts)
+    const socketLocale = localeFromHeaders(socket.handshake.headers);
+    rememberLocale(socketLocale);
+    socket.use((_packet, next) => runWithLocale(socketLocale, next));
 
     // このソケット接続で選択中のリポジトリパス
     let currentRepoPath: string | null = null;
