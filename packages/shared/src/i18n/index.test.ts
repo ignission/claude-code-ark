@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getMessages, plural, resolveLocale } from "./index";
+import { getMessages, plural, readLocaleCookie, resolveLocale } from "./index";
 
 describe("resolveLocale", () => {
   it("保存済みの選択を、ブラウザの言語より優先する", () => {
@@ -33,5 +33,18 @@ describe("plural", () => {
     expect(plural(1, "file", "files")).toBe("file");
     expect(plural(0, "file", "files")).toBe("files");
     expect(plural(2, "file", "files")).toBe("files");
+  });
+});
+
+describe("readLocaleCookie", () => {
+  it("ほかの cookie に混ざった値を取り出す", () => {
+    expect(readLocaleCookie("a=1; ark_locale=en; b=2")).toBe("en");
+    expect(readLocaleCookie("ark_locale=ja")).toBe("ja");
+  });
+
+  it("無ければ null を返す", () => {
+    expect(readLocaleCookie("a=1; xark_locale=en")).toBeNull();
+    expect(readLocaleCookie("")).toBeNull();
+    expect(readLocaleCookie(undefined)).toBeNull();
   });
 });

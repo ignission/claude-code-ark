@@ -43,3 +43,25 @@ export function resolveLocale(
   if (first === undefined) return FALLBACK_LOCALE;
   return first === "ja" || first.startsWith("ja-") ? "ja" : FALLBACK_LOCALE;
 }
+
+/**
+ * 利用者が選んだ言語を持つ cookie の名前。
+ *
+ * cookie に置くのは、サーバーにも届かせるため (socket の接続にも fetch にも自動で付く)。
+ * cookie はポートを区別しないので、起動ごとにポートが変わるデスクトップアプリでも選択が残る。
+ */
+export const LOCALE_COOKIE = "ark_locale";
+
+/** `Cookie` ヘッダか `document.cookie` の文字列から、選んだ言語の値を取り出す (無ければ null) */
+export function readLocaleCookie(
+  cookieHeader: string | null | undefined
+): string | null {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq !== -1 && part.slice(0, eq).trim() === LOCALE_COOKIE) {
+      return part.slice(eq + 1).trim();
+    }
+  }
+  return null;
+}
