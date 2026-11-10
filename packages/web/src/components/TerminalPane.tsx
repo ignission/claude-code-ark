@@ -743,7 +743,7 @@ export const TerminalPane = memo(function TerminalPane({
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Type message... (Enter to send)"
+                  placeholder={m.chat.terminalInputPlaceholder}
                   className="min-h-[44px] max-h-32 resize-none font-mono text-sm bg-input"
                   rows={1}
                 />

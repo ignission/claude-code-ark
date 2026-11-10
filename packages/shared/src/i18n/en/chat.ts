@@ -137,4 +137,5 @@ export const chat: Messages["chat"] = {
   mermaid: {
     renderFailed: (error: string) => `Failed to render the diagram: ${error}`,
   },
+  terminalInputPlaceholder: "Type a message... (Enter to send)",
 };
