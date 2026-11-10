@@ -194,7 +194,7 @@ export interface SplitChatPaneHandle {
 
 /** 入力欄の横の丸いアイコンボタン (添付・図解・TODO)。大きさはCOMPOSER_SIZEで足す */
 const ROUND_ICON_BUTTON =
-  "inline-flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50";
+  "inline-flex shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50";
 
 /**
  * 入力欄まわりの寸法と入力欄の地の色 (参照モック)。
@@ -368,7 +368,7 @@ function PendingMessageCard({ text }: { text: string }) {
 function SlashCommandCard({ name, args }: { name: string; args?: string }) {
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
-      <div className="rounded-full bg-muted px-3 py-1 text-sm font-medium text-muted-foreground">
+      <div className="rounded-md bg-muted px-3 py-1 text-sm font-medium text-muted-foreground">
         {name}
         {args ? ` ${args}` : ""}
       </div>
@@ -1031,7 +1031,7 @@ function AwaitingPad({
         {keyBtn("Enter", "Enter", "フォーカス中の項目を選択/確定")}
         {keyBtn("Esc", "Escape", "キャンセル")}
       </div>
-      <div className="mt-2 flex items-center gap-2 rounded-full border border-border bg-background py-1 pr-1 pl-3 focus-within:border-primary">
+      <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-background py-1 pr-1 pl-3 focus-within:border-primary">
         <input
           type="text"
           value={freeText}
@@ -1050,7 +1050,7 @@ function AwaitingPad({
           type="button"
           onClick={submitFreeText}
           disabled={!freeText.trim()}
-          className="shrink-0 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-30"
+          className="shrink-0 rounded-md bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-30"
         >
           入力して確定
         </button>
@@ -1867,7 +1867,7 @@ export function SplitChatPane({
             </span>
           )}
           {/* 種類は文言で見分ける。状態の色をカテゴリの色に転用しない */}
-          <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+          <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
             {cmd.source}
           </span>
         </button>
@@ -1895,7 +1895,7 @@ export function SplitChatPane({
         setIsDragging(false);
       }}
       onDrop={handleDrop}
-      className={`relative flex items-end gap-1.5 rounded-[20px] ${
+      className={`relative flex items-end gap-1.5 rounded-xl ${
         isDragging ? "ring-2 ring-primary/50" : ""
       }`}
     >
@@ -1965,7 +1965,7 @@ export function SplitChatPane({
               : "メッセージを入力 (Enterで送信、Shift+Enterで改行)"
         }
         rows={1}
-        className={`field-sizing-content max-h-32 min-w-0 flex-1 resize-none rounded-[20px] border border-border px-3.5 text-[15px] leading-[1.4] placeholder:text-muted-foreground focus:border-primary focus:outline-none ${composerSize.input}`}
+        className={`field-sizing-content max-h-32 min-w-0 flex-1 resize-none rounded-xl border border-border px-3.5 text-[15px] leading-[1.4] placeholder:text-muted-foreground focus:border-primary focus:outline-none ${composerSize.input}`}
       />
       {contextUsage && <ContextUsageRing usage={contextUsage} />}
       {planLimits && <PlanLimitsBadge limits={planLimits} />}
@@ -1973,12 +1973,12 @@ export function SplitChatPane({
         type="submit"
         disabled={!inputValue.trim()}
         aria-label="送信"
-        className={`inline-flex shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:cursor-not-allowed disabled:opacity-40 ${composerSize.button}`}
+        className={`inline-flex shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:cursor-not-allowed disabled:opacity-40 ${composerSize.button}`}
       >
         <ArrowUp className="size-5" />
       </button>
       {isDragging && onUploadFile && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[20px] border-2 border-dashed border-primary bg-background/90 text-sm font-medium text-primary">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-background/90 text-sm font-medium text-primary">
           ここにドロップ
         </div>
       )}
@@ -2074,7 +2074,7 @@ export function SplitChatPane({
               (端末・図モードのバーにはTask 10が付ける) */}
           <div
             data-mobile-bottom-bar=""
-            className="glass-bar flex shrink-0 flex-col gap-2 rounded-[28px] p-2"
+            className="glass-bar flex shrink-0 flex-col gap-2 rounded-2xl p-2"
           >
             {composerAccessory}
             {composerForm}

@@ -23,6 +23,11 @@ interface StatusChipProps {
    * `hidden` (display:none) は渡さないこと
    */
   labelClassName?: string;
+  /**
+   * true なら地の塗りと枠を付けず、アイコン (と文言) を状態の色で出すだけにする。
+   * 一覧の行のように、見出しが状態を言っていて、行には目印だけが要る場所で使う
+   */
+  bare?: boolean;
 }
 
 /** セッションの状態を「アイコン + 文言」のチップで出す。色だけに頼らない */
@@ -30,6 +35,7 @@ export function StatusChip({
   statusKey,
   className,
   labelClassName,
+  bare = false,
 }: StatusChipProps) {
   const p = presentStatus(statusKey);
 
@@ -51,10 +57,14 @@ export function StatusChip({
     <span
       data-status={statusKey}
       className={cn(
-        "inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[12px] font-semibold leading-none",
-        p.outlined
-          ? "border border-border text-muted-foreground"
-          : [tone.softBg, tone.text],
+        "inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-sm px-1.5 text-[12px] font-semibold leading-none",
+        bare
+          ? p.outlined
+            ? "text-muted-foreground"
+            : tone.text
+          : p.outlined
+            ? "border border-border text-muted-foreground"
+            : [tone.softBg, tone.text],
         className
       )}
     >

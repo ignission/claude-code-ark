@@ -131,7 +131,7 @@ const RIGHT_TABS: readonly {
 
 /** 上部バーの1タップ操作と `…`、端末の窓の操作に共通の見た目 (32px・角丸・押すと紙色) */
 const HEADER_ICON_BUTTON =
-  "inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground";
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground";
 
 interface SplitViewPaneProps {
   socket: TypedSocket | null;
@@ -654,20 +654,20 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               左の箱は basis-0 なので、折り返すのは操作が収まらないときだけ。
               操作の並びだけでパネルの幅を超えるとき (860px のウィンドウで左が 168px に
               なる) は、並びの中でも折り返す */}
-          <header className="@container min-h-13 shrink-0 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 py-2 pl-5 pr-3">
+          <header className="@container min-h-12 shrink-0 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 border-b border-border py-1.5 pl-4 pr-2">
             <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5 overflow-hidden">
               {/* 主ラベルを先に守り、ブランチから省略する。縮み率をブランチ側に
               大きく振ることで、ブランチが尽きるまで主ラベルは縮まない。
               主ラベルも縮めるのは、右側 (1タップの操作) が増えて左が
               狭まったとき、状態チップを押し出して上部バーからはみ出さないため */}
               <span
-                className="min-w-0 max-w-[60%] truncate text-[17px] font-semibold tracking-[-0.01em]"
+                className="min-w-0 max-w-[60%] truncate text-[15px] font-semibold tracking-[-0.01em]"
                 title={labels.primary}
               >
                 {labels.primary}
               </span>
               <span
-                className="min-w-0 shrink-[999] truncate text-[13px] text-muted-foreground @max-2xl:sr-only"
+                className="min-w-0 shrink-[999] truncate font-mono text-[12px] text-muted-foreground @max-2xl:sr-only"
                 title={labels.branch}
               >
                 {labels.branch}
@@ -691,7 +691,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 aria-label="パネル"
                 aria-pressed={showWorkArea}
                 title={showWorkArea ? "パネルを閉じる" : "パネルを開く"}
-                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] font-semibold transition-colors ${
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors ${
                   showWorkArea
                     ? "bg-muted text-foreground"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -744,14 +744,15 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               aria-label="左右の幅を調整"
               onMouseDown={handleResizerMouseDown}
               className={cn(
-                "group relative w-2 shrink-0 cursor-col-resize bg-transparent",
+                // 見える線は 1px (bg-border)。掴める幅は before で左右へ 3px ずつ広げる
+                "group relative z-10 w-px shrink-0 cursor-col-resize bg-border before:absolute before:inset-y-0 before:-inset-x-[3px] before:content-['']",
                 !showWorkArea && "hidden"
               )}
             >
               <span
                 className={cn(
-                  "absolute inset-y-4 left-0.5 right-0.5 rounded-full transition-colors group-hover:bg-primary/40",
-                  isDragging && "bg-primary/60"
+                  "absolute inset-y-0 -inset-x-px transition-colors group-hover:bg-ring/70",
+                  isDragging && "bg-ring/70"
                 )}
               />
             </button>
@@ -763,11 +764,11 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               )}
             >
               {/* タブ列: 図 / ファイル / Git と、作業エリアを閉じる × */}
-              <div className="flex h-13 shrink-0 items-center gap-2 pr-3 pl-3 text-[13px]">
+              <div className="flex h-12 shrink-0 items-stretch gap-2 border-b border-border pr-2 pl-3 text-[13px]">
                 <div
                   role="tablist"
                   aria-label="パネルの表示"
-                  className="inline-flex min-w-0 items-center gap-0.5 rounded-full bg-muted p-0.5 dark:bg-background"
+                  className="inline-flex min-w-0 items-stretch gap-4"
                 >
                   {rightTabs.map((tab, index) => {
                     const selected = tab.value === rightTab;
@@ -782,19 +783,19 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                         tabIndex={selected ? 0 : -1}
                         onClick={() => selectRightTab(tab.value)}
                         onKeyDown={e => handleRightTabKeyDown(e, index)}
-                        // 選択中は丸いカプセルで持ち上げる
+                        // 選択中は下線で示す (タブ列の下の線に重ねる)
                         className={cn(
-                          "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3.5 font-semibold transition-colors",
+                          "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 font-medium transition-colors",
                           selected
-                            ? "bg-card text-foreground shadow-card"
-                            : "text-muted-foreground hover:text-foreground"
+                            ? "border-foreground text-foreground"
+                            : "border-transparent text-muted-foreground hover:text-foreground"
                         )}
                       >
                         <tab.icon className="size-4" aria-hidden="true" />
                         <span>{tab.label}</span>
                         {tab.value === "todo" &&
                           (props.todoOpenCount ?? 0) > 0 && (
-                            <span className="rounded-full bg-primary px-1.5 text-[11px] leading-4 text-primary-foreground">
+                            <span className="rounded-sm bg-muted px-1.5 font-mono text-[11px] leading-4 text-muted-foreground tabular-nums">
                               {props.todoOpenCount}
                             </span>
                           )}
@@ -808,7 +809,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                   aria-label="パネルを閉じる"
                   title="パネルを閉じる"
                   onClick={handleCloseWorkArea}
-                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  className="inline-flex size-8 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
                   <X className="size-4" aria-hidden="true" />
                 </button>
@@ -851,7 +852,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 {peek !== null && (
                   <div
                     data-testid="split-view-peek"
-                    className="mr-2 mb-2 ml-2 w-1/2 min-w-[320px] shrink-0 overflow-hidden rounded-xl bg-well @max-[700px]:w-auto @max-[700px]:min-w-0 @max-[700px]:flex-1"
+                    className="w-1/2 min-w-[320px] shrink-0 overflow-hidden border-l border-border bg-well @max-[700px]:w-auto @max-[700px]:min-w-0 @max-[700px]:flex-1 @max-[700px]:border-l-0"
                   >
                     {peek(peekVisible)}
                   </div>

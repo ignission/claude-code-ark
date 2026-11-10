@@ -232,7 +232,8 @@ export function SessionListRow({
   if (branch) {
     detailSegments.push({
       key: "branch",
-      node: <span className="text-foreground/80">{branch}</span>,
+      // ブランチは機械が付けた名前なので等幅にする (差分の量や CPU と同じ扱い)
+      node: <span className="font-mono text-foreground/80">{branch}</span>,
     });
   }
   if (previewText) {
@@ -242,13 +243,15 @@ export function SessionListRow({
   const row = (
     <div
       className={cn(
-        "group rounded-lg border transition-colors",
+        "group rounded-md border transition-colors",
         entry.nested && (variant === "sidebar" ? "ml-4" : "ml-5"),
+        // sidebar の行は地に置き、選んだ行だけを面と線で示す (影は付けない)。
+        // card (モバイル) は指で押す的なので、行ごとの面を残す
         variant === "sidebar"
           ? cn(
-              "px-3 py-2.5",
+              "px-2.5 py-1.5",
               selected
-                ? "border-border bg-card shadow-card"
+                ? "border-sidebar-border bg-background"
                 : "border-transparent hover:bg-sidebar-accent"
             )
           : cn(
@@ -291,7 +294,8 @@ export function SessionListRow({
             <StatusChip
               statusKey={entry.statusKey}
               labelClassName="sr-only"
-              className="px-1"
+              className="px-0.5"
+              bare={variant === "sidebar"}
             />
             {editing ? (
               <input
@@ -312,7 +316,10 @@ export function SessionListRow({
               <span
                 data-testid="session-row-label"
                 className={cn(
-                  "min-w-0 flex-1 truncate text-[15px] font-semibold",
+                  "min-w-0 flex-1 truncate",
+                  variant === "sidebar"
+                    ? "text-[14px] font-medium"
+                    : "text-[15px] font-semibold",
                   quiet ? "text-muted-foreground" : "text-foreground"
                 )}
               >
@@ -334,7 +341,14 @@ export function SessionListRow({
             childCount > 0 ||
             parentLabel !== null ||
             detailSegments.length > 0) && (
-            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground">
+            <div
+              className={cn(
+                "flex min-w-0 items-center gap-1.5 text-muted-foreground",
+                variant === "sidebar"
+                  ? "mt-0.5 text-[12px]"
+                  : "mt-1 text-[13px]"
+              )}
+            >
               {parentLabel !== null && (
                 <button
                   type="button"
@@ -349,7 +363,7 @@ export function SessionListRow({
                   }}
                   onMouseDown={event => event.stopPropagation()}
                   onKeyDown={event => event.stopPropagation()}
-                  className="inline-flex h-5 max-w-[8rem] shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 text-xs text-muted-foreground enabled:hover:text-foreground"
+                  className="inline-flex h-5 max-w-[8rem] shrink-0 items-center gap-0.5 rounded-sm bg-muted px-1.5 text-xs text-muted-foreground enabled:hover:text-foreground"
                 >
                   <CornerDownRight
                     className="size-3 shrink-0"
@@ -361,7 +375,7 @@ export function SessionListRow({
               {profile && (
                 <span
                   data-testid="session-row-profile"
-                  className="inline-flex h-5 max-w-[9rem] shrink-0 items-center gap-1 rounded-full bg-muted px-2 text-xs font-medium text-muted-foreground"
+                  className="inline-flex h-5 max-w-[9rem] shrink-0 items-center gap-1 rounded-sm bg-muted px-2 text-xs font-medium text-muted-foreground"
                 >
                   <span className="truncate">{profile.name}</span>
                   {profile.individual && <span className="shrink-0">個別</span>}
@@ -380,7 +394,7 @@ export function SessionListRow({
                   onMouseDown={event => event.stopPropagation()}
                   onKeyDown={event => event.stopPropagation()}
                   className={cn(
-                    "inline-flex h-5 shrink-0 items-center rounded-full px-2 text-xs font-medium tabular-nums hover:underline",
+                    "inline-flex h-5 shrink-0 items-center rounded-sm px-2 text-xs font-medium tabular-nums hover:underline",
                     PR_BADGE_TONE[badge.tone]
                   )}
                 >
@@ -393,7 +407,7 @@ export function SessionListRow({
                   data-testid="session-row-children"
                   aria-label={`子のタスク ${childCount} 件`}
                   title={`子のタスク ${childCount} 件`}
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded-sm bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
                 >
                   <CornerDownRight className="size-3" aria-hidden="true" />
                   {childCount}
@@ -405,7 +419,7 @@ export function SessionListRow({
                   data-testid="session-row-todo"
                   aria-label={`未完了の TODO ${todoCount} 件`}
                   title={`未完了の TODO ${todoCount} 件`}
-                  className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
+                  className="shrink-0 rounded-sm bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
                 >
                   {todoCount}
                 </span>
@@ -463,7 +477,7 @@ export function SessionListRow({
       {staleProfile && (
         <div className="mt-2 flex items-center gap-1.5">
           <span
-            className="inline-flex h-6 items-center gap-1 rounded-full bg-status-awaiting/15 px-2 text-xs font-semibold text-status-awaiting"
+            className="inline-flex h-6 items-center gap-1 rounded-sm bg-status-awaiting/15 px-2 text-xs font-semibold text-status-awaiting"
             title="プロファイルの割り当てが変わりました。このセッションは元の設定で動いています"
           >
             <TriangleAlert className="size-3.5" aria-hidden="true" />
@@ -473,7 +487,7 @@ export function SessionListRow({
             <button
               type="button"
               onClick={menu.onRestart}
-              className="inline-flex h-6 items-center gap-1 rounded-full bg-status-awaiting/15 px-2 text-xs font-semibold text-status-awaiting transition-colors hover:bg-status-awaiting/25"
+              className="inline-flex h-6 items-center gap-1 rounded-sm bg-status-awaiting/15 px-2 text-xs font-semibold text-status-awaiting transition-colors hover:bg-status-awaiting/25"
             >
               <RotateCw className="size-3.5" aria-hidden="true" />
               再起動

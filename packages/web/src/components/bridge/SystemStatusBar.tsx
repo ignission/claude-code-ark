@@ -50,7 +50,7 @@ export function SystemStatusBar({
         target="_blank"
         rel="noopener noreferrer"
         title="Bridgeを別タブで開く"
-        className="flex flex-col gap-1 rounded-lg border border-border bg-muted px-2 py-1.5 text-xs text-foreground select-none transition-colors hover:bg-accent cursor-pointer"
+        className="flex flex-col gap-1 rounded-md px-2 py-1.5 font-mono text-[11px] text-foreground select-none transition-colors hover:bg-sidebar-accent cursor-pointer"
       >
         {cpuItem}
         <span className="flex items-center justify-between gap-2">

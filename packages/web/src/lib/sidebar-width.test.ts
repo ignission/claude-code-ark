@@ -14,11 +14,11 @@ describe("sidebarMaxWidth", () => {
   });
 
   it("狭いウィンドウでは、メインペインの最低幅を残せるところまで下げる", () => {
-    // 壁紙の余白 (左右 8px ずつ) とパネルの間のすき間 (8px) も引く
-    // 860 - 24 - 480 = 356
-    expect(sidebarMaxWidth(860)).toBe(860 - 24 - MAIN_PANE_MIN_WIDTH);
-    // 768 - 24 - 480 = 264
-    expect(sidebarMaxWidth(768)).toBe(768 - 24 - MAIN_PANE_MIN_WIDTH);
+    // 面は画面の端まで敷き、間の線はサイドバーの幅の内側なので、引くのはメインペインの最低幅だけ
+    // 860 - 480 = 380
+    expect(sidebarMaxWidth(860)).toBe(860 - MAIN_PANE_MIN_WIDTH);
+    // 768 - 480 = 288
+    expect(sidebarMaxWidth(768)).toBe(768 - MAIN_PANE_MIN_WIDTH);
   });
 
   it("サイドバーの最低幅は下回らない (PCレイアウトが出ない幅での保険)", () => {
@@ -39,8 +39,8 @@ describe("clampSidebarWidth", () => {
   });
 
   it("保存済みの幅が新しい上限を超えていれば、上限まで丸める", () => {
-    expect(clampSidebarWidth(450, 860)).toBe(356);
-    expect(clampSidebarWidth(450, 768)).toBe(264);
+    expect(clampSidebarWidth(450, 860)).toBe(380);
+    expect(clampSidebarWidth(450, 768)).toBe(288);
     expect(clampSidebarWidth(450, 1024)).toBe(450);
   });
 

@@ -6,7 +6,7 @@
  * FloatingTerminal) が入る。860pxのウィンドウで450pxのサイドバーを許すと、
  * メインペインは386pxしか残らず、端末の窓が最小の幅を取れない。
  *
- * そこで「ウィンドウ幅 − パネルの外の余白とすき間 − メインペインの最低幅」でも
+ * そこで「ウィンドウ幅 − 面の外の余白とすき間 (今はどちらも 0) − メインペインの最低幅」でも
  * 頭打ちにする。
  */
 
@@ -23,11 +23,11 @@ export const SIDEBAR_DEFAULT_WIDTH = 300;
  */
 export const MAIN_PANE_MIN_WIDTH = 480;
 
-/** 壁紙の余白 (`p-2`)。サイドバーとメインペインの外側の左右に付く */
-export const LAYOUT_PADDING_WIDTH = 8;
-/** サイドバーとメインペインの間のすき間 (`gap-2`) */
-export const LAYOUT_GAP_WIDTH = 8;
-/** 2 枚のパネルの外に取られる幅 (左右の余白 + すき間) */
+/** 画面の外側の余白。面は画面の端まで敷くので 0 */
+export const LAYOUT_PADDING_WIDTH = 0;
+/** サイドバーとメインペインの間のすき間。間の線 (`border-r`) はサイドバーの幅の内側に引くので 0 */
+export const LAYOUT_GAP_WIDTH = 0;
+/** 2 枚の面の外に取られる幅 (左右の余白 + 間の線) */
 const LAYOUT_CHROME_WIDTH = LAYOUT_PADDING_WIDTH * 2 + LAYOUT_GAP_WIDTH;
 
 /** このウィンドウ幅で許すサイドバーの最大幅 */

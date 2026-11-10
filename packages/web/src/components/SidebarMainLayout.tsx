@@ -81,7 +81,7 @@ export function SidebarMainLayout({
       setResizing(true);
 
       const handleMouseMove = (ev: MouseEvent) => {
-        // 壁紙の余白 (p-2) のぶんだけ、ポインタの位置から引く
+        // 画面の外側の余白のぶんだけ、ポインタの位置から引く (今は 0)
         const newWidth = clampSidebarWidth(
           ev.clientX - LAYOUT_PADDING_WIDTH,
           viewportWidth()
@@ -121,19 +121,20 @@ export function SidebarMainLayout({
   }, []);
 
   return (
-    <div className="app-wallpaper h-[100dvh] flex relative gap-2 p-2">
+    <div className="app-wallpaper h-[100dvh] flex relative">
       {resizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
       <div
-        className="shrink-0 relative flex flex-col"
+        className="shrink-0 relative flex flex-col border-r border-sidebar-border"
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="panel-glass flex-1 min-h-0 overflow-hidden">
           {sidebar}
         </div>
+        {/* 掴める幅は 7px、見える線は border-r の 1px。乗せたときとドラッグ中だけ線に色を出す */}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: リサイズハンドルはマウス操作専用 */}
         <div
-          className={`absolute inset-y-4 -right-2 w-2 rounded-full cursor-col-resize hover:bg-primary/40 transition-colors ${
-            resizing ? "bg-primary/40" : "bg-transparent"
+          className={`absolute inset-y-0 -right-1 z-10 w-[7px] cursor-col-resize bg-clip-content px-[3px] hover:bg-ring/70 transition-colors ${
+            resizing ? "bg-ring/70" : "bg-transparent"
           }`}
           onMouseDown={handleSidebarResizeStart}
         />
