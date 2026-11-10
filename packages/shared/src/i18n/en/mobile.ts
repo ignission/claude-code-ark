@@ -18,7 +18,7 @@ export const mobile: Messages["mobile"] = {
     screenTab: "Screens",
   },
   quickActions: {
-    attachFile: "Attach file",
+    attachFile: "Attach files",
     pasteImage: "Paste image",
     slashCommands: "Slash commands",
   },
@@ -30,7 +30,7 @@ export const mobile: Messages["mobile"] = {
   session: {
     unsupportedFile: "Unsupported file",
     readFailed: "Failed to read the file",
-    clipboardNoImage: "No image in the clipboard",
+    clipboardNoImage: "No image on the clipboard",
     clipboardReadFailed: "Couldn't read the clipboard",
     uploadFailed: "Upload failed",
     copyTerminalBuffer: "Copy terminal buffer",

@@ -78,7 +78,7 @@ export const chat: Messages["chat"] = {
     tabFiles: "Files",
   },
   viewer: {
-    diagram: "Diagram",
+    diagram: "Board",
   },
   upload: {
     tooLarge: (name: string, sizeMb: string) =>
