@@ -14,9 +14,9 @@ Arkは、git worktreeごとにClaude Codeのセッションを1つ動かし、�
 
 <p align="center">
   <img
-    src=".github/assets/ark-board.png"
+    src=".github/assets/ark-board.ja.png"
     width="880"
-    alt="PCのArk。左にセッション一覧、中央に会話、右のボードにClaudeが描いたシーケンス図"
+    alt="PCのArk。左にセッション一覧、中央に会話、右のボードにClaudeが描いた図"
   />
 </p>
 
@@ -59,7 +59,7 @@ Claudeは、図、画面のイメージ、触れるモックなど、文章よ�
 
 <p align="center">
   <img
-    src=".github/assets/ark-git.png"
+    src=".github/assets/ark-git.ja.png"
     width="880"
     alt="Gitタブ。上にブランチの札つきのコミットグラフ、下に選んだコミットの差分"
   />
@@ -72,9 +72,9 @@ Claudeは、図、画面のイメージ、触れるモックなど、文章よ�
 
 <p align="center">
   <img
-    src=".github/assets/ark-mobile-sessions.png"
+    src=".github/assets/ark-mobile-sessions.ja.png"
     width="260"
-    alt="スマホのセッション一覧。「あなたの番」と「休止中」に分かれている"
+    alt="スマホのセッション一覧。3つのセッションが「あなたの番」に並んでいる"
   />
 </p>
 
@@ -85,6 +85,7 @@ Claudeは、図、画面のイメージ、触れるモックなど、文章よ�
 - 画像、PDF、テキスト、Excelのファイルを、貼り付け・ドラッグ&ドロップ・ファイル選択でClaudeに送れます。
 - SSHで届くホストのVNC画面 (macOSの画面共有など) を、ブラウザで開けます。Arkはサーバーの実行ユーザーで `ssh -o BatchMode=yes` を起動するので、そのユーザーにパスフレーズ無しの鍵 (またはssh-agentに登録済みの鍵) があり、接続先が `known_hosts` に登録済みである必要があります。
 - リポジトリごとに別のClaudeアカウントを使えます (Linuxのみ)。
+- 画面は日本語と英語で使えます。ブラウザの言語に合わせて出し、セッション一覧の上のArkメニューから切り替えられます。macOSアプリ自身のダイアログは、OSの言語に合わせます。
 - 会話の途中で保留にした話題を、TODOタブに残せます。入力欄の左のTODOボタンを押すと、ClaudeがTODOとして書き留めます。完了と削除は人間だけが行います。[分岐TODO](#分岐todo)を参照してください。
 - 名前とプロンプトだけで、新しいworktreeのセッションを起動できます。一覧の見出しからは親なしで、セッションの行からは子タスクとして分離できます。[新しいタスク](#新しいタスク)を参照してください。
 
@@ -215,7 +216,6 @@ TODOの行からは、その話題の会話を元のセッションか新しいw
 - **Gitタブとファイルの編集はPCだけです。** スマホではファイルを読み取り専用で開きます。
 - **リポジトリごとのアカウント切り替えはLinuxだけです。** macOSはClaudeの認証情報をKeychainに保存するためです。
 - **音声モードはiPhone向けです。** 画面を点けてArkを前面に出している間だけ動きます。
-- **UIは日本語です。**
 
 ## 開発
 
