@@ -4,11 +4,13 @@
  * ヘッダー (ワードマークのメニュー・新規作成・通知許可・ブラウザ) と、
  * 注意の順に並べたセッション一覧 (SessionSectionList) と、
  * 下部に常に出すCPU/MEM/DISK (押すとBridgeを別タブで開く) を出す。
- * About はワードマークのメニューから開く。
+ * About と言語の切り替えはワードマークのメニューにある。
  */
 
 import type { HostMetrics, Screen } from "@ark/shared";
+import { LOCALES, type Locale } from "@ark/shared/i18n";
 import {
+  Check,
   ChevronDown,
   Info,
   ListPlus,
@@ -23,13 +25,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { changeLocale, locale, m } from "@/lib/i18n";
 import {
   SessionSectionList,
   type SessionSectionListProps,
 } from "./SessionSectionList";
+
+/** 言語の名前は、その言語自身で書く (読めない言語に切り替えても戻れるように) */
+const LOCALE_NAMES: Record<Locale, string> = { ja: "日本語", en: "English" };
 
 type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   onNewSession: () => void;
@@ -81,6 +88,22 @@ export function SessionSidebar({
               <Info />
               About Ark
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>{m.common.language}</DropdownMenuLabel>
+            {LOCALES.map(code => (
+              <DropdownMenuItem
+                key={code}
+                lang={code}
+                onSelect={() => changeLocale(code)}
+              >
+                {code === locale ? (
+                  <Check aria-hidden="true" />
+                ) : (
+                  <span className="size-4" aria-hidden="true" />
+                )}
+                {LOCALE_NAMES[code]}
+              </DropdownMenuItem>
+            ))}
           </DropdownMenuContent>
         </DropdownMenu>
         <div className="flex-1" />
