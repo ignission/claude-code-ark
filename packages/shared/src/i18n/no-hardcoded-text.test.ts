@@ -28,45 +28,6 @@ const ALLOWED: Record<string, string> = {
   "packages/web/src/lib/speech-text.ts": "。！？",
 };
 
-/**
- * まだ置き換えていないファイル (Gitタブ、ファイル、ボード、TODO、モバイル、音声)。
- * 次の変更で置き換え、この一覧ごと消す。ここへ新しく足さない。
- */
-const PENDING = new Set([
-  "packages/web/src/components/DiagramPane.tsx",
-  "packages/web/src/components/DiagramSwitcher.tsx",
-  "packages/web/src/components/FileEditor.tsx",
-  "packages/web/src/components/FilePane.tsx",
-  "packages/web/src/components/FilePeek.tsx",
-  "packages/web/src/components/FileTree.tsx",
-  "packages/web/src/components/FileViewerPane.tsx",
-  "packages/web/src/components/git/GitCommitDetail.tsx",
-  "packages/web/src/components/git/GitCommitList.tsx",
-  "packages/web/src/components/git/GitPane.tsx",
-  "packages/web/src/components/git/GitRefLabels.tsx",
-  "packages/web/src/components/git/GitSidebar.tsx",
-  "packages/web/src/components/git/useGitOps.tsx",
-  "packages/web/src/components/HtmlViewerPane.tsx",
-  "packages/web/src/components/MobileLayout.tsx",
-  "packages/web/src/components/MobileQuickActionRow.tsx",
-  "packages/web/src/components/MobileSessionList.tsx",
-  "packages/web/src/components/MobileSessionViewModeToggle.tsx",
-  "packages/web/src/components/MobileSessionView.tsx",
-  "packages/web/src/components/TodoPane.tsx",
-  "packages/web/src/components/VoiceModeOverlay.tsx",
-  "packages/web/src/hooks/useVoiceMode.ts",
-  "packages/web/src/lib/diagram-browser.ts",
-  "packages/web/src/lib/diagram-delete-state.ts",
-  "packages/web/src/lib/diagram-delete-transport.ts",
-  "packages/web/src/lib/file-api.ts",
-  "packages/web/src/lib/git-api.ts",
-  "packages/web/src/lib/git-format.ts",
-  "packages/web/src/lib/speech-text.ts",
-  "packages/web/src/lib/todo-api.ts",
-  "packages/web/src/lib/todo-draft.ts",
-  "packages/web/src/lib/voice-mode-machine.ts",
-]);
-
 const JAPANESE = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
 const JAPANESE_OR_PUNCT =
   /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}、。「」！？]/u;
@@ -132,7 +93,7 @@ function listSourceFiles(dir: string): string[] {
 function findViolations(): string[] {
   const violations: string[] = [];
   for (const file of SCANNED_DIRS.flatMap(listSourceFiles)) {
-    if (file.startsWith(DICTIONARY_DIR) || PENDING.has(file)) continue;
+    if (file.startsWith(DICTIONARY_DIR)) continue;
     const allowed = new Set(ALLOWED[file] ?? "");
     const lines = stripComments(
       readFileSync(path.join(REPO_ROOT, file), "utf8")

@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import type { GitApi } from "@/lib/git-api";
+import { m } from "@/lib/i18n";
 
 /** サイドバーとコミット一覧の右クリック、上部のボタンから呼ぶ操作 */
 export interface GitOpsActions {
@@ -93,7 +94,7 @@ export function useGitOps(
       try {
         const res = await run();
         if (res.ok) toast.success(success);
-        else toast.error(res.error ?? "失敗しました");
+        else toast.error(res.error ?? m.git.ops.failed);
       } finally {
         busyRef.current = null;
         setBusy(null);
@@ -107,7 +108,7 @@ export function useGitOps(
     async (name: string, sha: string, upstream?: GitBranchUpstream) => {
       if (!api) return;
       const res = await api.createBranch(name, sha, upstream);
-      if (res.ok) toast.success(`ブランチ ${name} を戻しました`);
+      if (res.ok) toast.success(m.git.ops.branchRestored(name));
       else toast.error(res.error);
       onChanged();
     },
@@ -121,14 +122,14 @@ export function useGitOps(
       if (res.ok) {
         toast.success(
           res.removedWorktree
-            ? `ブランチ ${name} を作業ツリーごと削除しました`
-            : `ブランチ ${name} を削除しました`,
+            ? m.git.ops.branchDeletedWithWorktree(name)
+            : m.git.ops.branchDeleted(name),
           {
             description: res.removedWorktree
-              ? `${res.sha.slice(0, 7)} (元に戻すで戻るのはブランチだけです)`
+              ? m.git.ops.undoRestoresBranchOnly(res.sha.slice(0, 7))
               : res.sha.slice(0, 7),
             action: {
-              label: "元に戻す",
+              label: m.git.ops.undo,
               onClick: () => void restoreBranch(name, res.sha, res.upstream),
             },
           }
@@ -166,19 +167,15 @@ export function useGitOps(
       setConfirm({ kind: "remote-delete", remote, trackingName }),
     pushBranch: name => {
       if (!api) return;
-      void remoteOp("push", () => api.push(name), `${name} を push しました`);
+      void remoteOp("push", () => api.push(name), m.git.ops.pushed(name));
     },
     fetch: () => {
       if (!api) return;
-      void remoteOp("fetch", () => api.fetch(), "fetch しました");
+      void remoteOp("fetch", () => api.fetch(), m.git.ops.fetched);
     },
     pull: () => {
       if (!api || !currentBranch) return;
-      void remoteOp(
-        "pull",
-        () => api.pull(),
-        `${currentBranch} を pull しました`
-      );
+      void remoteOp("pull", () => api.pull(), m.git.ops.pulled(currentBranch));
     },
   };
 
@@ -187,7 +184,7 @@ export function useGitOps(
     if (!api || !nameDialog || submitting) return;
     const name = nameInput.trim();
     if (!name) {
-      setNameError("ブランチ名を入力してください");
+      setNameError(m.git.ops.nameRequired);
       return;
     }
     if (nameDialog.mode === "rename" && name === nameDialog.from) {
@@ -206,8 +203,8 @@ export function useGitOps(
     }
     toast.success(
       nameDialog.mode === "create"
-        ? `ブランチ ${name} を作成しました`
-        : `${nameDialog.from} を ${name} に変更しました`
+        ? m.git.ops.branchCreated(name)
+        : m.git.ops.branchRenamed(nameDialog.from, name)
     );
     setNameDialog(null);
     onChanged();
@@ -224,7 +221,7 @@ export function useGitOps(
       void remoteOp(
         "remote-delete",
         () => api.deleteRemoteBranch(remote, trackingName),
-        `${trackingName} をリモートから削除しました`
+        m.git.ops.remoteBranchDeleted(trackingName)
       );
     }
     setConfirm(null);
@@ -243,21 +240,21 @@ export function useGitOps(
             <DialogHeader>
               <DialogTitle>
                 {nameDialog?.mode === "rename"
-                  ? "ブランチの名前を変更"
-                  : "新しいブランチ"}
+                  ? m.git.ops.renameTitle
+                  : m.git.ops.createTitle}
               </DialogTitle>
               <DialogDescription>
                 {nameDialog?.mode === "rename"
-                  ? `${nameDialog.from} の新しい名前`
+                  ? m.git.ops.renameDescription(nameDialog.from)
                   : nameDialog
-                    ? `${nameDialog.sha.slice(0, 7)} から作成します (チェックアウトはしません)`
+                    ? m.git.ops.createDescription(nameDialog.sha.slice(0, 7))
                     : ""}
               </DialogDescription>
             </DialogHeader>
             <div className="flex flex-col gap-1.5">
               <Input
                 autoFocus
-                aria-label="ブランチ名"
+                aria-label={m.git.ops.branchName}
                 value={nameInput}
                 onChange={e => {
                   setNameInput(e.target.value);
@@ -279,10 +276,12 @@ export function useGitOps(
                 variant="outline"
                 onClick={() => setNameDialog(null)}
               >
-                キャンセル
+                {m.common.cancel}
               </Button>
               <Button type="submit" disabled={submitting}>
-                {nameDialog?.mode === "rename" ? "変更" : "作成"}
+                {nameDialog?.mode === "rename"
+                  ? m.git.ops.renameSubmit
+                  : m.git.ops.createSubmit}
               </Button>
             </DialogFooter>
           </form>
@@ -305,12 +304,12 @@ export function useGitOps(
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>キャンセル</AlertDialogCancel>
+            <AlertDialogCancel>{m.common.cancel}</AlertDialogCancel>
             <AlertDialogAction
               onClick={runConfirm}
               className="bg-destructive text-white hover:bg-destructive/90"
             >
-              削除
+              {m.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -324,30 +323,25 @@ export function useGitOps(
 function confirmTitle(c: Confirm): string {
   switch (c.kind) {
     case "remote-delete":
-      return `${c.trackingName} をリモートから削除しますか?`;
+      return m.git.ops.confirmRemoteDeleteTitle(c.trackingName);
     case "worktree-delete":
-      return `${c.name} を作業ツリーごと削除しますか?`;
+      return m.git.ops.confirmWorktreeDeleteTitle(c.name);
     case "force-delete":
-      return `${c.name} を強制削除しますか?`;
+      return m.git.ops.confirmForceDeleteTitle(c.name);
   }
 }
 
 function confirmDescription(c: Confirm, currentBranch: string | null): string {
   switch (c.kind) {
     case "remote-delete":
-      return `リモート ${c.remote} からブランチを消します。ほかの人もこのリモートを使っていれば、その人からも見えなくなります。`;
+      return m.git.ops.confirmRemoteDeleteDescription(c.remote);
     case "worktree-delete":
-      return [
-        `作業ツリー ${c.worktreePath} を消し、`,
-        c.name === currentBranch
-          ? "このセッションを止めます。"
-          : "そこで動いているセッションを止めます。",
-        "コミットしていない変更も消えます。",
+      return m.git.ops.confirmWorktreeDeleteDescription(
+        c.worktreePath,
+        c.name === currentBranch,
         c.notMerged
-          ? "どこにも取り込まれていないコミットがあります (直後なら「元に戻す」でブランチは戻せます)。"
-          : "",
-      ].join("");
+      );
     case "force-delete":
-      return `${c.reason}。削除するとこれらのコミットはブランチから辿れなくなります (直後なら「元に戻す」で戻せます)。`;
+      return m.git.ops.confirmForceDeleteDescription(c.reason);
   }
 }

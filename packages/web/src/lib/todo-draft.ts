@@ -1,4 +1,5 @@
 import type { Todo } from "@ark/shared";
+import { m } from "@/lib/i18n";
 
 /**
  * 分岐TODOから会話を始めるときの、チャット入力欄の下書き。
@@ -7,7 +8,7 @@ import type { Todo } from "@ark/shared";
 export function buildTodoDraft(todo: Todo, originBranch?: string): string {
   const parts = [todo.text];
   if (todo.note) parts.push(todo.note);
-  if (originBranch) parts.push(`(分岐TODO。元のブランチ: ${originBranch})`);
+  if (originBranch) parts.push(m.todo.draftOrigin(originBranch));
   return parts.join("\n\n");
 }
 

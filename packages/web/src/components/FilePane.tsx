@@ -11,6 +11,7 @@ import {
 import type { Socket } from "socket.io-client";
 import { createFileApi } from "@/lib/file-api";
 import type { FileTabsState } from "@/lib/file-tabs";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { FileEditor } from "./FileEditor";
 import { FileIcon } from "./FileIcon";
@@ -93,10 +94,7 @@ export function FilePane({
   const handleSaved = useCallback(() => setRefreshSeq(seq => seq + 1), []);
 
   const handleClose = (tabId: string) => {
-    if (
-      dirtyIds.has(tabId) &&
-      !window.confirm("保存していない変更があります。閉じますか？")
-    ) {
+    if (dirtyIds.has(tabId) && !window.confirm(m.files.confirmDiscard)) {
       return;
     }
     handleDirtyChange(tabId, false);
@@ -179,13 +177,13 @@ export function FilePane({
             type="button"
             aria-label={
               treeCollapsed
-                ? "ファイルツリーを開く"
-                : "ファイルツリーを折りたたむ"
+                ? m.files.pane.expandTree
+                : m.files.pane.collapseTree
             }
             title={
               treeCollapsed
-                ? "ファイルツリーを開く"
-                : "ファイルツリーを折りたたむ"
+                ? m.files.pane.expandTree
+                : m.files.pane.collapseTree
             }
             aria-expanded={!treeCollapsed}
             onClick={toggleTree}
@@ -199,7 +197,7 @@ export function FilePane({
           </button>
           <div
             role="tablist"
-            aria-label="開いているファイル"
+            aria-label={m.files.pane.openFiles}
             className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
           >
             {state.tabs.map((tab, index) => {
@@ -241,13 +239,13 @@ export function FilePane({
                         >
                           ●
                         </span>
-                        <span className="sr-only">未保存</span>
+                        <span className="sr-only">{m.files.pane.unsaved}</span>
                       </>
                     )}
                   </button>
                   <button
                     type="button"
-                    aria-label={`${name} を閉じる`}
+                    aria-label={m.files.pane.closeTab(name)}
                     onClick={() => handleClose(tab.id)}
                     className="mr-1.5 inline-flex size-4 items-center justify-center rounded hover:bg-muted hover:text-destructive"
                   >
@@ -261,11 +259,11 @@ export function FilePane({
         <div className="min-h-0 flex-1">
           {state.tabs.length === 0 ? (
             <div className="flex h-full items-center justify-center p-6 text-center text-muted-foreground text-sm">
-              ツリーからファイルを選ぶか、会話やボードのリンクを押すと開きます
+              {m.files.pane.empty}
             </div>
           ) : !api ? (
             <div className="flex h-full items-center justify-center text-muted-foreground text-xs">
-              接続中…
+              {m.files.connecting}
             </div>
           ) : (
             // 全タブをマウントしたまま切り替える (未保存の編集を保つ)

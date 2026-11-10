@@ -1,4 +1,5 @@
 import type { GitCommit, GitStatus } from "@ark/shared";
+import { m } from "@/lib/i18n";
 
 /**
  * git-format - Git タブの表示用の純関数 (時刻・ハッシュ・作者の丸・絞り込み)
@@ -24,14 +25,14 @@ const DAY = 24 * HOUR;
 export function formatRelativeTime(unixSeconds: number, nowMs: number): string {
   const then = unixSeconds * 1000;
   const diff = nowMs - then;
-  if (diff < MINUTE) return "たった今";
-  if (diff < HOUR) return `${Math.floor(diff / MINUTE)}分前`;
-  if (diff < DAY) return `${Math.floor(diff / HOUR)}時間前`;
+  if (diff < MINUTE) return m.git.time.justNow;
+  if (diff < HOUR) return m.git.time.minutesAgo(Math.floor(diff / MINUTE));
+  if (diff < DAY) return m.git.time.hoursAgo(Math.floor(diff / HOUR));
   const days = Math.round(
     (startOfDay(new Date(nowMs)) - startOfDay(new Date(then))) / DAY
   );
-  if (days <= 1) return "昨日";
-  if (days < 7) return `${days}日前`;
+  if (days <= 1) return m.git.time.yesterday;
+  if (days < 7) return m.git.time.daysAgo(days);
   return formatDate(new Date(then));
 }
 

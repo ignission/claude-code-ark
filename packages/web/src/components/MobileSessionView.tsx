@@ -106,6 +106,7 @@ import { useOpenTerminalOnAuq } from "@/hooks/useOpenTerminalOnAuq";
 import type { ActiveAuq } from "@/lib/ask-user-question-state";
 import { readClipboardImages } from "@/lib/clipboard-images";
 import { FLOATING_BAR_BOTTOM } from "@/lib/floating-composer";
+import { m } from "@/lib/i18n";
 import {
   deleteSessionDescription,
   notificationMenuLabel,
@@ -503,7 +504,9 @@ export function MobileSessionView({
       const v = validateFile(file);
       if (!v.ok) {
         console.warn(v.reason);
-        errors.push(`${file.name}: ${v.reason ?? "未対応のファイルです"}`);
+        errors.push(
+          `${file.name}: ${v.reason ?? m.mobile.session.unsupportedFile}`
+        );
         continue;
       }
       try {
@@ -512,8 +515,8 @@ export function MobileSessionView({
         const preview = isImage ? `data:${mimeType};base64,${base64}` : null;
         next.push({ base64, mimeType, filename, preview, size: file.size });
       } catch (err) {
-        console.error("ファイル読み込みに失敗:", err);
-        errors.push(`${file.name}: 読み込みに失敗しました`);
+        console.error("Failed to read file:", err);
+        errors.push(`${file.name}: ${m.mobile.session.readFailed}`);
       }
     }
     if (next.length > 0) {
@@ -567,11 +570,11 @@ export function MobileSessionView({
       if (files.length > 0) {
         await addPendingFiles(files);
       } else {
-        toast.info("クリップボードに画像がありません");
+        toast.info(m.mobile.session.clipboardNoImage);
       }
     } catch (err) {
       console.error("Failed to read clipboard:", err);
-      toast.error("クリップボードを読み取れませんでした");
+      toast.error(m.mobile.session.clipboardReadFailed);
     }
   }, [onUploadFile, addPendingFiles]);
 
@@ -605,9 +608,9 @@ export function MobileSessionView({
       setPendingFiles([]);
       setUploadMessage("");
     } catch (err) {
-      console.error("ファイルアップロード失敗:", err);
+      console.error("Failed to upload file:", err);
       setUploadError(
-        err instanceof Error ? err.message : "アップロードに失敗しました"
+        err instanceof Error ? err.message : m.mobile.session.uploadFailed
       );
     } finally {
       setIsSending(false);
@@ -687,8 +690,8 @@ export function MobileSessionView({
       {onCopyBuffer && (
         <button
           type="button"
-          aria-label="端末のバッファをコピー"
-          title="端末のバッファをコピー"
+          aria-label={m.mobile.session.copyTerminalBuffer}
+          title={m.mobile.session.copyTerminalBuffer}
           onClick={handleCopyBuffer}
           className={WINDOW_ACTION_BUTTON}
         >
@@ -697,8 +700,8 @@ export function MobileSessionView({
       )}
       <button
         type="button"
-        aria-label="端末を再読み込み"
-        title="端末を再読み込み"
+        aria-label={m.mobile.session.reloadTerminal}
+        title={m.mobile.session.reloadTerminal}
         onClick={handleReloadIframe}
         className={WINDOW_ACTION_BUTTON}
       >
@@ -745,7 +748,7 @@ export function MobileSessionView({
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <div className="text-center">
                 <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4" />
-                <p>ターミナルを起動中...</p>
+                <p>{m.mobile.session.terminalStarting}</p>
               </div>
             </div>
           )}
@@ -783,7 +786,7 @@ export function MobileSessionView({
           <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-card border border-border rounded-lg p-4 max-w-md w-full">
               <h3 className="text-sm font-semibold mb-3">
-                ファイルを送信（{pendingFiles.length}件）
+                {m.mobile.session.sendFilesTitle(pendingFiles.length)}
               </h3>
               <div className="space-y-2 max-h-60 overflow-y-auto mb-3">
                 {pendingFiles.map((pf, idx) => (
@@ -820,7 +823,7 @@ export function MobileSessionView({
                         )
                       }
                       disabled={isSending}
-                      title="このファイルを取り除く"
+                      title={m.mobile.session.removeFile}
                     >
                       <X className="w-4 h-4" />
                     </Button>
@@ -830,7 +833,7 @@ export function MobileSessionView({
               <Textarea
                 value={uploadMessage}
                 onChange={e => setUploadMessage(e.target.value)}
-                placeholder="メッセージを追加（任意）"
+                placeholder={m.mobile.session.addMessagePlaceholder}
                 className="min-h-[60px] resize-none text-sm mb-3"
                 rows={2}
                 disabled={isSending}
@@ -845,14 +848,14 @@ export function MobileSessionView({
                   onClick={handleCancelPending}
                   disabled={isSending}
                 >
-                  キャンセル
+                  {m.common.cancel}
                 </Button>
                 <Button
                   size="sm"
                   onClick={handleSendWithFiles}
                   disabled={isSending}
                 >
-                  {isSending ? "送信中..." : "送信"}
+                  {isSending ? m.mobile.session.sending : m.mobile.session.send}
                 </Button>
               </div>
             </div>
@@ -868,7 +871,7 @@ export function MobileSessionView({
               className="text-xs underline shrink-0"
               onClick={() => setUploadError(null)}
             >
-              閉じる
+              {m.common.close}
             </button>
           </div>
         )}
@@ -958,13 +961,13 @@ export function MobileSessionView({
               onChange={e => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               enterKeyHint="send"
-              placeholder="メッセージを入力... (Enter送信)"
+              placeholder={m.mobile.session.messagePlaceholder}
               className="h-11 flex-1 rounded-full bg-background px-4 text-sm"
             />
             <Button
               type="submit"
               size="icon"
-              aria-label="送信"
+              aria-label={m.mobile.session.send}
               className="size-11 shrink-0 rounded-full"
             >
               <Send className="size-5" />
@@ -1049,7 +1052,7 @@ export function MobileSessionView({
               size="icon"
               className="size-10 shrink-0 rounded-sm"
               onClick={onBack}
-              aria-label="一覧へ戻る"
+              aria-label={m.mobile.session.backToList}
             >
               <ChevronLeft className="size-[22px]" />
             </Button>
@@ -1068,7 +1071,7 @@ export function MobileSessionView({
                   variant="ghost"
                   size="icon"
                   className="size-10 shrink-0 rounded-sm"
-                  aria-label="その他の操作"
+                  aria-label={m.mobile.session.moreActions}
                 >
                   <Ellipsis className="size-[22px]" />
                 </Button>
@@ -1094,7 +1097,7 @@ export function MobileSessionView({
                 {onRestartSession && (
                   <DropdownMenuItem onSelect={() => setShowRestartDialog(true)}>
                     <RotateCw />
-                    セッションを再起動
+                    {m.mobile.session.restartSession}
                   </DropdownMenuItem>
                 )}
                 {(canChangeNotifications || onRestartSession) && (
@@ -1105,7 +1108,7 @@ export function MobileSessionView({
                   onSelect={() => setShowDeleteDialog(true)}
                 >
                   <Trash2 />
-                  セッションを削除
+                  {m.mobile.session.deleteSession}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1133,7 +1136,7 @@ export function MobileSessionView({
                   onClick={() => handleViewModeChange("chat")}
                   className="flex h-8 shrink-0 items-center gap-0.5 text-[13px] font-semibold text-foreground"
                 >
-                  会話で答える
+                  {m.mobile.session.answerInChat}
                   <ChevronRight
                     className={cn(
                       "size-3.5",
@@ -1269,14 +1272,16 @@ export function MobileSessionView({
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>セッションを削除</AlertDialogTitle>
+            <AlertDialogTitle>
+              {m.mobile.session.deleteSession}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {deleteSessionDescription(worktree)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
             <AlertDialogCancel className="h-12 md:h-10">
-              キャンセル
+              {m.common.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
@@ -1285,7 +1290,7 @@ export function MobileSessionView({
                 setShowDeleteDialog(false);
               }}
             >
-              削除
+              {m.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1295,14 +1300,16 @@ export function MobileSessionView({
       <AlertDialog open={showRestartDialog} onOpenChange={setShowRestartDialog}>
         <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>セッションを再起動しますか？</AlertDialogTitle>
+            <AlertDialogTitle>
+              {m.mobile.session.restartConfirmTitle}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              このセッションを再起動するとClaude会話履歴・実行中コマンド・ターミナル内容がすべて失われます。続行しますか？
+              {m.mobile.session.restartConfirmBody}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
             <AlertDialogCancel className="h-12 md:h-10">
-              キャンセル
+              {m.common.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
               className="h-12 md:h-10"
@@ -1311,7 +1318,7 @@ export function MobileSessionView({
                 setShowRestartDialog(false);
               }}
             >
-              再起動
+              {m.mobile.session.restart}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

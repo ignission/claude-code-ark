@@ -1,11 +1,20 @@
+import { m } from "@/lib/i18n";
 import type { MobileSessionViewMode } from "../lib/mobile-session-view-mode";
 import { VIEW_MODE_ICONS } from "../lib/view-mode-icons";
 import { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 
 export const MOBILE_SESSION_VIEW_MODES: readonly SegmentOption<MobileSessionViewMode>[] =
   [
-    { value: "chat", label: "会話", icon: VIEW_MODE_ICONS.chat },
-    { value: "board", label: "図", icon: VIEW_MODE_ICONS.board },
+    {
+      value: "chat",
+      label: m.mobile.viewMode.chat,
+      icon: VIEW_MODE_ICONS.chat,
+    },
+    {
+      value: "board",
+      label: m.mobile.viewMode.board,
+      icon: VIEW_MODE_ICONS.board,
+    },
     { value: "todo", label: "TODO", icon: VIEW_MODE_ICONS.todo },
   ];
 
@@ -26,7 +35,7 @@ export function MobileSessionViewModeToggle({
       options={MOBILE_SESSION_VIEW_MODES}
       value={value}
       onChange={onChange}
-      label="表示モード"
+      label={m.mobile.viewMode.label}
       className={className}
     />
   );

@@ -116,4 +116,40 @@ describe("MobileSessionList", () => {
     >;
     expect(listProps).not.toHaveProperty("onOpenScreenManager");
   });
+
+  it("見出しの「Ark」のメニューに言語の切替を出し、いまの言語に印を付ける", () => {
+    const container = mount(
+      <MobileSessionList
+        sessions={new Map()}
+        worktrees={[]}
+        repoList={["/repo"]}
+        sessionStatuses={new Map()}
+        sessionPreviews={new Map()}
+        sessionPrStatuses={new Map()}
+        worktreeDisplayNames={new Map()}
+        onOpenSession={vi.fn()}
+        onStartSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onDeleteWorktree={vi.fn()}
+        onNewSession={vi.fn()}
+        onNewTask={vi.fn()}
+      />
+    );
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Arkのメニュー"]'
+    );
+    expect(trigger).not.toBeNull();
+    // Radix の DropdownMenuTrigger は pointerdown で開く。中身は Portal で body 直下に出る
+    act(() => {
+      trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const items = [
+      ...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ];
+    expect(items.map(item => item.textContent)).toEqual(["日本語", "English"]);
+    expect(items.map(item => item.lang)).toEqual(["ja", "en"]);
+    expect(items[0].querySelector("svg")).not.toBeNull();
+    expect(items[1].querySelector("svg")).toBeNull();
+  });
 });

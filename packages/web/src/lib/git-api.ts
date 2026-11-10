@@ -14,6 +14,7 @@ import type {
   ServerToClientEvents,
 } from "@ark/shared";
 import type { Socket } from "socket.io-client";
+import { m } from "@/lib/i18n";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -28,7 +29,6 @@ const REMOTE_ACK_TIMEOUT_MS = 130_000;
 const LOCAL_OP_ACK_TIMEOUT_MS = 15_000;
 /** 作業ツリーごとの削除の待ち。ファイルの削除に時間がかかる (サーバー側に timeout は無い) */
 const WORKTREE_REMOVE_ACK_TIMEOUT_MS = 130_000;
-const NO_RESPONSE = "サーバーから応答がありません";
 
 type GitEvent =
   | "git:log"
@@ -90,7 +90,7 @@ export function createGitApi(socket: TypedSocket, sessionId: string): GitApi {
         (err: Error | null, res: R) =>
           resolve(
             err || !res
-              ? ({ ok: false, error: NO_RESPONSE } as unknown as R)
+              ? ({ ok: false, error: m.git.noResponse } as unknown as R)
               : res
           )
       );

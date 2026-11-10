@@ -25,6 +25,7 @@ import {
 } from "@/lib/git-format";
 import type { GraphRow } from "@/lib/git-graph";
 import { layoutGraphWithWorking } from "@/lib/git-graph-rows";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { GitAvatar } from "./GitAvatar";
 import { GitGraphCell, GRAPH_ROW_HEIGHT, laneColor } from "./GitGraphCell";
@@ -261,20 +262,20 @@ export function GitCommitList({
               if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
               setScrollTop(0);
             }}
-            placeholder="件名・作者・ハッシュで絞り込み"
-            aria-label="コミットを絞り込む"
+            placeholder={m.git.list.filterPlaceholder}
+            aria-label={m.git.list.filterLabel}
             className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/70 [&::-webkit-search-cancel-button]:hidden"
           />
         </label>
         {filtering && (
           <>
             <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
-              {items.length}件
+              {m.git.list.matchCount(items.length)}
             </span>
             <button
               type="button"
-              aria-label="絞り込みを解除"
-              title="絞り込みを解除"
+              aria-label={m.git.list.clearFilter}
+              title={m.git.list.clearFilter}
               onClick={() => setQuery("")}
               className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
             >
@@ -285,8 +286,8 @@ export function GitCommitList({
         {actions}
         <button
           type="button"
-          aria-label="読み直す"
-          title="読み直す"
+          aria-label={m.git.list.reload}
+          title={m.git.list.reload}
           onClick={onReload}
           className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
         >
@@ -300,7 +301,7 @@ export function GitCommitList({
       <div
         ref={scrollerRef}
         role="listbox"
-        aria-label="コミット"
+        aria-label={m.git.list.commitsLabel}
         aria-activedescendant={
           selectedRendered ? optionId(selectedIndex) : undefined
         }
@@ -311,9 +312,7 @@ export function GitCommitList({
       >
         {items.length === 0 ? (
           <div className="p-6 text-center text-muted-foreground text-xs">
-            {filtering
-              ? "一致するコミットがありません"
-              : "コミットがありません"}
+            {filtering ? m.git.list.noMatches : m.git.list.noCommits}
           </div>
         ) : (
           // 全行ぶんの高さを確保し、見えている行だけを絶対位置で置く
@@ -364,7 +363,7 @@ export function GitCommitList({
                   )}
                   {item.kind === "working" ? (
                     <span className="min-w-0 flex-1 truncate font-semibold">
-                      未コミットの変更 ({workingCount})
+                      {m.git.list.uncommittedChangesCount(workingCount)}
                     </span>
                   ) : (
                     <CommitCells
@@ -387,7 +386,7 @@ export function GitCommitList({
                         className="size-4 text-muted-foreground"
                         aria-hidden="true"
                       />
-                      ここからブランチを作成
+                      {m.git.list.createBranchHere}
                     </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>
@@ -398,20 +397,20 @@ export function GitCommitList({
         {hasMore && items.length > 0 && (
           <div className="flex h-8 items-center justify-center text-[12px] text-muted-foreground">
             {loadingMore ? (
-              "読み込み中…"
+              m.git.loading
             ) : loadMoreError ? (
               <span
                 role="alert"
                 title={loadMoreError}
                 className="flex items-center gap-2"
               >
-                続きを読み込めませんでした
+                {m.git.list.loadMoreFailed}
                 <button
                   type="button"
                   onClick={onLoadMore}
                   className="rounded-sm border border-border px-2 py-0.5 text-foreground hover:bg-muted"
                 >
-                  再試行
+                  {m.git.retry}
                 </button>
               </span>
             ) : (
@@ -420,7 +419,7 @@ export function GitCommitList({
                 onClick={onLoadMore}
                 className="rounded-sm px-2 py-0.5 hover:bg-muted hover:text-foreground"
               >
-                さらに読み込む
+                {m.git.list.loadMore}
               </button>
             )}
           </div>

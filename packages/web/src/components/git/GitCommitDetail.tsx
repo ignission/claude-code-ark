@@ -24,6 +24,7 @@ import {
   formatRelativeTime,
   shortSha,
 } from "@/lib/git-format";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { FileIcon } from "../FileIcon";
 import { GitAvatar } from "./GitAvatar";
@@ -73,14 +74,14 @@ interface FileGroup {
 const STACK_BELOW = 520;
 
 const STATUS_LABEL: Record<GitFileChange["status"], string> = {
-  A: "追加",
-  M: "変更",
-  D: "削除",
-  R: "名前の変更",
-  C: "コピー",
-  T: "種類の変更",
-  U: "競合",
-  "?": "未追跡",
+  A: m.git.fileStatus.added,
+  M: m.git.fileStatus.modified,
+  D: m.git.fileStatus.deleted,
+  R: m.git.fileStatus.renamed,
+  C: m.git.fileStatus.copied,
+  T: m.git.fileStatus.typeChanged,
+  U: m.git.fileStatus.conflicted,
+  "?": m.git.fileStatus.untracked,
 };
 
 const STATUS_COLOR: Record<GitFileChange["status"], string> = {
@@ -122,7 +123,7 @@ function Counts({ file }: { file: GitFileChange }) {
   if (file.added === null || file.removed === null) {
     return (
       <span className="shrink-0 text-[11px] text-muted-foreground">
-        バイナリ
+        {m.git.detail.binary}
       </span>
     );
   }
@@ -228,9 +229,9 @@ export function GitCommitDetail({
         })),
       });
       return [
-        make("ステージ済み", "staged", status?.staged ?? []),
-        make("変更", "unstaged", status?.unstaged ?? []),
-        make("未追跡", "untracked", status?.untracked ?? []),
+        make(m.git.detail.groupStaged, "staged", status?.staged ?? []),
+        make(m.git.detail.groupUnstaged, "unstaged", status?.unstaged ?? []),
+        make(m.git.detail.groupUntracked, "untracked", status?.untracked ?? []),
       ].filter(g => g.entries.length > 0);
     }
     if (current?.state !== "ready") return [];
@@ -304,18 +305,26 @@ export function GitCommitDetail({
   }, []);
 
   if (!selection) {
-    return <Message>コミットを選ぶと、ここに詳細が出ます</Message>;
+    return <Message>{m.git.detail.empty}</Message>;
   }
 
   // 未コミットの変更にはコミットの情報が無いので、「変更」だけを出す
   const activeTab: DetailTab = isWorking ? "changes" : tab;
   const tabs: { value: DetailTab; label: string }[] = isWorking
-    ? [{ value: "changes", label: `変更 ${entries.length}` }]
-    : [
-        { value: "commit", label: "コミット" },
+    ? [
         {
           value: "changes",
-          label: current?.state === "ready" ? `変更 ${entries.length}` : "変更",
+          label: m.git.detail.tabChangesCount(entries.length),
+        },
+      ]
+    : [
+        { value: "commit", label: m.git.detail.tabCommit },
+        {
+          value: "changes",
+          label:
+            current?.state === "ready"
+              ? m.git.detail.tabChangesCount(entries.length)
+              : m.git.detail.tabChanges,
         },
       ];
   const nowMs = now ?? Date.now();
@@ -326,7 +335,7 @@ export function GitCommitDetail({
       <CommitPending state={current} onRetry={() => setRetrySeq(s => s + 1)} />
     ) : entries.length === 0 ? (
       <Message>
-        {isWorking ? "未コミットの変更はありません" : "変更はありません"}
+        {isWorking ? m.git.detail.noUncommittedChanges : m.git.detail.noChanges}
       </Message>
     ) : (
       <div
@@ -334,7 +343,7 @@ export function GitCommitDetail({
       >
         <div
           role="listbox"
-          aria-label="変更されたファイル"
+          aria-label={m.git.detail.changedFiles}
           className={cn(
             "shrink-0 overflow-y-auto overflow-x-hidden py-0.5",
             stacked ? "max-h-[30%]" : "w-[220px]"
@@ -370,17 +379,17 @@ export function GitCommitDetail({
               <DiffHeader file={selected.file} />
               <div className="min-h-0 flex-1">
                 {!diff || diff.state === "loading" ? (
-                  <Message>読み込み中…</Message>
+                  <Message>{m.git.loading}</Message>
                 ) : diff.state === "error" ? (
                   <Message>
                     <span role="alert">{diff.error}</span>
                   </Message>
                 ) : diff.diff.binary ? (
-                  <Message>バイナリファイルです</Message>
+                  <Message>{m.git.detail.binaryFile}</Message>
                 ) : diff.diff.tooLarge ? (
-                  <Message>大きすぎるため表示できません</Message>
+                  <Message>{m.git.detail.tooLarge}</Message>
                 ) : (
-                  <Suspense fallback={<Message>読み込み中…</Message>}>
+                  <Suspense fallback={<Message>{m.git.loading}</Message>}>
                     <GitDiffView
                       path={selected.file.path}
                       oldContent={diff.diff.oldContent}
@@ -399,7 +408,7 @@ export function GitCommitDetail({
     <div className="flex h-full min-h-0 flex-col">
       <div
         role="tablist"
-        aria-label="詳細の表示"
+        aria-label={m.git.detail.tabsLabel}
         className="flex h-9 shrink-0 items-center gap-0.5 px-1.5 text-[13px]"
       >
         {tabs.map(t => {
@@ -426,7 +435,7 @@ export function GitCommitDetail({
         })}
         {isWorking ? (
           <span className="ml-auto self-center truncate text-[12px] text-muted-foreground">
-            未コミットの変更
+            {m.git.uncommittedChanges}
           </span>
         ) : (
           sha && (
@@ -485,13 +494,13 @@ function CommitPending({
             onClick={onRetry}
             className="rounded-sm border border-border px-2.5 py-1 text-foreground hover:bg-muted"
           >
-            再試行
+            {m.git.retry}
           </button>
         </span>
       </Message>
     );
   }
-  return <Message>読み込み中…</Message>;
+  return <Message>{m.git.loading}</Message>;
 }
 
 function FileRow({
@@ -566,13 +575,15 @@ function DiffHeader({ file }: { file: GitFileChange }) {
         type="button"
         disabled={deleted}
         title={
-          deleted ? "削除されたファイルは開けません" : "ファイルのタブで開く"
+          deleted
+            ? m.git.detail.deletedFileCannotOpen
+            : m.git.detail.openInFilesTab
         }
         onClick={openInFiles}
         className="inline-flex h-[22px] shrink-0 items-center gap-1 rounded-sm px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
       >
         <ExternalLink className="size-3.5" aria-hidden="true" />
-        ファイルで開く
+        {m.git.detail.openInFiles}
       </button>
     </div>
   );
@@ -601,8 +612,8 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       type="button"
-      aria-label="ハッシュをコピー"
-      title={copied ? "コピーしました" : "ハッシュをコピー"}
+      aria-label={m.git.detail.copyHash}
+      title={copied ? m.git.detail.copied : m.git.detail.copyHash}
       onClick={() => void copy()}
       className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
     >
@@ -670,7 +681,7 @@ function CommitInfo({
       </div>
       <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1.5">
         {commit.committerName !== commit.authorName && (
-          <Field label="コミッター">
+          <Field label={m.git.detail.committer}>
             <span data-testid="git-committer">
               {commit.committerName}
               <span className="ml-1.5 text-[12px] text-muted-foreground">
@@ -679,15 +690,17 @@ function CommitInfo({
             </span>
           </Field>
         )}
-        <Field label="ハッシュ">
+        <Field label={m.git.detail.hash}>
           <code data-testid="git-full-sha" className="break-all text-[12px]">
             {commit.sha}
           </code>
           <CopyButton text={commit.sha} />
         </Field>
-        <Field label="親">
+        <Field label={m.git.detail.parents}>
           {commit.parents.length === 0 ? (
-            <span className="text-muted-foreground">なし (最初のコミット)</span>
+            <span className="text-muted-foreground">
+              {m.git.detail.noParents}
+            </span>
           ) : (
             commit.parents.map(parent => (
               <button
