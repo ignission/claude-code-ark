@@ -99,4 +99,12 @@ export const dialogs: Messages["dialogs"] = {
     folderBrowserTitle: "Choose a folder to scan",
     folderBrowserDescription: "Scans for Git repositories under this folder.",
   },
+  createWorktree: {
+    title: "Create New Worktree",
+    description: "Create a new git worktree with a new branch.",
+    branchName: "Branch Name",
+    baseBranch: "Base Branch (optional)",
+    worktreePath: "Worktree Path (auto-generated)",
+    submit: "Create Worktree",
+  },
 };

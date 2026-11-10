@@ -97,4 +97,12 @@ export const dialogs = {
     folderBrowserDescription:
       "このフォルダ配下のGitリポジトリをスキャンします。",
   },
+  createWorktree: {
+    title: "新しいWorktreeを作成",
+    description: "新しいブランチでgit worktreeを作成します。",
+    branchName: "ブランチ名",
+    baseBranch: "ベースブランチ (任意)",
+    worktreePath: "Worktreeのパス (自動生成)",
+    submit: "Worktreeを作成",
+  },
 };

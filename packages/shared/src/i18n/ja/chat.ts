@@ -132,4 +132,5 @@ export const chat = {
   mermaid: {
     renderFailed: (error: string) => `図の描画に失敗しました: ${error}`,
   },
+  terminalInputPlaceholder: "メッセージを入力... (Enterで送信)",
 };

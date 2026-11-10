@@ -633,7 +633,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
     socket.on("connect_error", err => {
       console.error("Socket connection error:", err);
-      setError("Failed to connect to server");
+      setError(m.session.dashboard.connectFailed);
       setIsConnected(false);
     });
 
@@ -713,7 +713,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         setIsScanning(false);
       } else if (status === "error") {
         setIsScanning(false);
-        setError(scanError || "Failed to scan repositories");
+        setError(scanError || m.session.dashboard.scanFailed);
       }
     });
 

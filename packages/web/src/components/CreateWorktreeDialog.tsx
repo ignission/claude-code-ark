@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { m } from "@/lib/i18n";
 
 interface CreateWorktreeDialogProps {
   open: boolean;
@@ -84,14 +85,16 @@ export function CreateWorktreeDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
         <DialogHeader>
-          <DialogTitle>Create New Worktree</DialogTitle>
+          <DialogTitle>{m.dialogs.createWorktree.title}</DialogTitle>
           <DialogDescription>
-            Create a new git worktree with a new branch.
+            {m.dialogs.createWorktree.description}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="branch">Branch Name</Label>
+            <Label htmlFor="branch">
+              {m.dialogs.createWorktree.branchName}
+            </Label>
             <Input
               id="branch"
               placeholder="feature/new-feature"
@@ -102,7 +105,9 @@ export function CreateWorktreeDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="baseBranch">Base Branch (optional)</Label>
+            <Label htmlFor="baseBranch">
+              {m.dialogs.createWorktree.baseBranch}
+            </Label>
             <Input
               id="baseBranch"
               placeholder="main"
@@ -114,7 +119,7 @@ export function CreateWorktreeDialog({
           </div>
           <div className="space-y-2">
             <Label className="text-muted-foreground">
-              Worktree Path (auto-generated)
+              {m.dialogs.createWorktree.worktreePath}
             </Label>
             <div className="p-3 md:p-2 rounded-md bg-muted font-mono text-sm text-muted-foreground">
               {selectedRepoPath}-
@@ -128,10 +133,10 @@ export function CreateWorktreeDialog({
             onClick={() => handleOpenChange(false)}
             className="h-12 md:h-10"
           >
-            Cancel
+            {m.common.cancel}
           </Button>
           <Button onClick={handleCreate} className="h-12 md:h-10">
-            Create Worktree
+            {m.dialogs.createWorktree.submit}
           </Button>
         </DialogFooter>
       </DialogContent>
