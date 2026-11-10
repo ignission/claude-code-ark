@@ -5,17 +5,20 @@
  * 切り替えは保存してリロードする。ラベルをモジュールの定数で持つファイルがあり、
  * その場で差し替えると古い言語の文が残るため。
  *
- * 選択はブラウザごとに持つ (`localStorage`)。サーバーの設定に置くと、
- * PCとモバイルで言語を変えられず、最初の描画にも間に合わない。
+ * 選択はブラウザごとに cookie で持つ (名前と理由は shared の `LOCALE_COOKIE`)。
+ * サーバーの設定に置くと、PCとモバイルで言語を変えられず、最初の描画にも間に合わない。
  */
 import {
   getMessages,
+  LOCALE_COOKIE,
   type Locale,
   type Messages,
+  readLocaleCookie,
   resolveLocale,
 } from "@ark/shared/i18n";
 
-export const LOCALE_STORAGE_KEY = "ark.locale";
+/** 選択を覚えておく期間 (1年) */
+const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 /** 言語の名前は、その言語自身で書く (読めない言語に切り替えても戻れるように) */
 export const LOCALE_NAMES: Record<Locale, string> = {
@@ -25,9 +28,9 @@ export const LOCALE_NAMES: Record<Locale, string> = {
 
 function readSavedLocale(): string | null {
   try {
-    return globalThis.localStorage?.getItem(LOCALE_STORAGE_KEY) ?? null;
+    return readLocaleCookie(globalThis.document?.cookie);
   } catch {
-    // プライベートブラウズなどで localStorage が使えないときは、ブラウザの言語で決める
+    // cookie を読めない環境 (sandbox の iframe など) では、ブラウザの言語で決める
     return null;
   }
 }
@@ -57,10 +60,12 @@ applyDocumentLang();
 export function changeLocale(next: Locale): void {
   if (next === locale) return;
   try {
-    globalThis.localStorage.setItem(LOCALE_STORAGE_KEY, next);
+    // biome-ignore lint/suspicious/noDocumentCookie: Cookie Store API は Safari で使えない版がある
+    document.cookie = `${LOCALE_COOKIE}=${next}; Path=/; Max-Age=${COOKIE_MAX_AGE_SECONDS}; SameSite=Lax`;
   } catch {
     return;
   }
+  if (readSavedLocale() !== next) return;
   globalThis.location.reload();
 }
 
