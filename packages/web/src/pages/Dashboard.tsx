@@ -584,7 +584,7 @@ export default function Dashboard() {
   const copyToClipboard = (text: string | null) => {
     if (text) {
       navigator.clipboard.writeText(text);
-      toast.success("Copied to clipboard");
+      toast.success(m.session.dashboard.copiedToClipboard);
     }
   };
 
@@ -743,7 +743,7 @@ export default function Dashboard() {
     setIsCreateWorktreeOpen(false);
     // 作成確定時は元repoへの復元をキャンセルし、作成先repoに留まる
     setPreviousRepoPath(null);
-    toast.success(`Creating worktree: ${branchName}`);
+    toast.success(m.session.dashboard.creatingWorktree(branchName));
   };
 
   const handleDeleteWorktree = (worktree: Worktree) => {
@@ -762,7 +762,7 @@ export default function Dashboard() {
       return;
     }
     startSession(worktree.id, worktree.path);
-    toast.success("Session started");
+    toast.success(m.session.dashboard.sessionStarted);
   };
 
   /**

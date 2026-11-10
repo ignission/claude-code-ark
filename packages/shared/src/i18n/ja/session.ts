@@ -201,5 +201,10 @@ export const session = {
     tunnelStop: "トンネルを停止",
     tunnelAuthToken: "認証トークン",
     cannotDeleteMainWorktree: "メインのworktreeは削除できません",
+    copiedToClipboard: "クリップボードにコピーしました",
+    creatingWorktree: (branch: string) => `Worktreeを作成中: ${branch}`,
+    sessionStarted: "セッションを開始しました",
+    connectFailed: "サーバーに接続できません",
+    scanFailed: "リポジトリのスキャンに失敗しました",
   },
 };

@@ -191,5 +191,10 @@ export const session: Messages["session"] = {
     tunnelStop: "Stop tunnel",
     tunnelAuthToken: "Auth token",
     cannotDeleteMainWorktree: "Can't delete the main worktree",
+    copiedToClipboard: "Copied to clipboard",
+    creatingWorktree: branch => `Creating worktree: ${branch}`,
+    sessionStarted: "Session started",
+    connectFailed: "Failed to connect to the server",
+    scanFailed: "Failed to scan repositories",
   },
 };
