@@ -560,8 +560,8 @@ export async function startServer(
 
   // Initialize Socket.IO
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
-    // 10MBファイル（base64化で約13.3MB）のアップロードに対応するためデフォルト1MBを拡張
-    maxHttpBufferSize: 15 * 1024 * 1024,
+    // 20MBファイル（base64化で約26.7MB）のアップロードに対応するためデフォルト1MBを拡張
+    maxHttpBufferSize: 28 * 1024 * 1024,
     cors: {
       origin: (origin, callback) => {
         // originがundefined = 同一オリジンリクエスト（許可）

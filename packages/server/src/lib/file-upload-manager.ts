@@ -96,7 +96,7 @@ const SAFE_EXTENSION_WHITELIST = new Set([
   "xlsm",
 ]);
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const FILE_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 export class FileUploadManager {

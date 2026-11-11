@@ -82,7 +82,7 @@ export const chat: Messages["chat"] = {
   },
   upload: {
     tooLarge: (name: string, sizeMb: string) =>
-      `${name}: larger than 10 MB (${sizeMb} MB)`,
+      `${name}: larger than 20 MB (${sizeMb} MB)`,
     unsupportedType: (name: string, mime: string) =>
       `${name}: unsupported file type (${mime})`,
     unsupportedFile: "Unsupported file",

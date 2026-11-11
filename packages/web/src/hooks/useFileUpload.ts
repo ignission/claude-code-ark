@@ -54,7 +54,7 @@ const CLIENT_EXTENSION_WHITELIST = new Set([
   "xlsm",
 ]);
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 export interface UploadValidation {
   ok: boolean;

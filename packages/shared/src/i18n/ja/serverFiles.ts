@@ -58,7 +58,7 @@ export const serverFiles = {
     invalidMimeType: (mimeType: string) =>
       `許可されていないファイル形式です: ${mimeType}`,
     tooLarge: (sizeMb: string) =>
-      `ファイルサイズが上限（10MB）を超えています: ${sizeMb}MB`,
+      `ファイルサイズが上限（20MB）を超えています: ${sizeMb}MB`,
     saveFailed: (reason: string) => `ファイルの保存に失敗しました: ${reason}`,
   },
   fsBrowser: {

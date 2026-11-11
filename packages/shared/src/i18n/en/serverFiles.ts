@@ -56,7 +56,7 @@ export const serverFiles: Messages["serverFiles"] = {
     invalidSessionId: "Invalid session ID",
     invalidMimeType: (mimeType: string) => `File type not allowed: ${mimeType}`,
     tooLarge: (sizeMb: string) =>
-      `The file exceeds the size limit (10MB): ${sizeMb}MB`,
+      `The file exceeds the size limit (20MB): ${sizeMb}MB`,
     saveFailed: (reason: string) => `Failed to save the file: ${reason}`,
   },
   fsBrowser: {

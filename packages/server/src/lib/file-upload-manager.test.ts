@@ -139,8 +139,8 @@ describe("FileUploadManager", () => {
       });
     });
 
-    it("10MB超で FILE_TOO_LARGE", async () => {
-      const big = makeBase64(10 * 1024 * 1024 + 1);
+    it("20MB超で FILE_TOO_LARGE", async () => {
+      const big = makeBase64(20 * 1024 * 1024 + 1);
       await expect(
         manager.saveFile("session-1", big, "image/png")
       ).rejects.toMatchObject({
