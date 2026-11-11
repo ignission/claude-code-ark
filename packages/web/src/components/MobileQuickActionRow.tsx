@@ -27,6 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { m } from "@/lib/i18n";
 import type { MobileQuickAction } from "@/lib/mobile-quick-actions";
 import { MessageShortcutQuickButton } from "./MessageShortcutQuickButton";
 
@@ -70,8 +71,8 @@ export function MobileQuickActionRow({
       {actions.includes("voice-mode") && onStartVoice && (
         <button
           type="button"
-          aria-label="音声モード"
-          title="音声モード"
+          aria-label={m.voice.title}
+          title={m.voice.title}
           onClick={onStartVoice}
           className={TOUCH_ICON_BUTTON}
         >
@@ -81,8 +82,8 @@ export function MobileQuickActionRow({
       {actions.includes("attach-file") && onAttachFile && (
         <button
           type="button"
-          aria-label="ファイルを添付"
-          title="ファイルを添付"
+          aria-label={m.mobile.quickActions.attachFile}
+          title={m.mobile.quickActions.attachFile}
           onClick={onAttachFile}
           className={TOUCH_ICON_BUTTON}
         >
@@ -92,8 +93,8 @@ export function MobileQuickActionRow({
       {actions.includes("paste-image") && onPasteImage && (
         <button
           type="button"
-          aria-label="画像を貼り付け"
-          title="画像を貼り付け"
+          aria-label={m.mobile.quickActions.pasteImage}
+          title={m.mobile.quickActions.pasteImage}
           onClick={onPasteImage}
           className={TOUCH_ICON_BUTTON}
         >
@@ -115,8 +116,8 @@ export function MobileQuickActionRow({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label="スラッシュコマンド"
-              title="スラッシュコマンド"
+              aria-label={m.mobile.quickActions.slashCommands}
+              title={m.mobile.quickActions.slashCommands}
               className={TOUCH_ICON_BUTTON}
             >
               <SquareSlash className="size-5" aria-hidden="true" />

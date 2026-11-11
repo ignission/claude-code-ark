@@ -2,6 +2,7 @@ import type { FileTreeEntry } from "@ark/shared";
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileApi } from "@/lib/file-api";
+import { m } from "@/lib/i18n";
 import { FileIcon } from "./FileIcon";
 
 interface Props {
@@ -207,7 +208,7 @@ export function FileTree({
           kind: "note",
           key: `${dir}#truncated`,
           depth,
-          text: "…件数が多いため一部だけ表示しています",
+          text: m.files.tree.truncated,
           alert: false,
         });
       }
@@ -263,11 +264,13 @@ export function FileTree({
   return (
     <div className="flex h-full min-h-0 flex-col text-[13px]">
       <div className="flex shrink-0 items-center justify-between px-2 py-1">
-        <span className="text-muted-foreground text-xs">ファイル</span>
+        <span className="text-muted-foreground text-xs">
+          {m.files.tree.title}
+        </span>
         <button
           type="button"
-          aria-label="再読み込み"
-          title="再読み込み"
+          aria-label={m.files.tree.reload}
+          title={m.files.tree.reload}
           onClick={refreshAll}
           className="inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted"
         >
@@ -277,7 +280,7 @@ export function FileTree({
       <div
         ref={containerRef}
         role="tree"
-        aria-label="ファイルツリー"
+        aria-label={m.files.tree.label}
         className="min-h-0 flex-1 overflow-auto py-1"
       >
         {items.map(item => {

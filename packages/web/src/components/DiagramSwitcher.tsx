@@ -36,6 +36,7 @@ import {
   saveDiagramSort,
   toggleDiagramSort,
 } from "@/lib/diagram-browser";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import {
   AlertDialog,
@@ -69,8 +70,16 @@ const COLUMNS: ReadonlyArray<{
   label: string;
   className: string;
 }> = [
-  { key: "name", label: "名前", className: "min-w-0 flex-1" },
-  { key: "mtime", label: "更新", className: "w-24 shrink-0" },
+  {
+    key: "name",
+    label: m.board.switcher.columnName,
+    className: "min-w-0 flex-1",
+  },
+  {
+    key: "mtime",
+    label: m.board.switcher.columnUpdated,
+    className: "w-24 shrink-0",
+  },
 ];
 
 const NAV_BUTTON =
@@ -81,8 +90,8 @@ const PAGE_ROWS = 10;
 
 export function getDiagramDeleteWarning(item: DiagramListItem): string {
   return item.tracked
-    ? "図と隣接するコメント sidecar も削除します。図は worktree に削除差分が残ります。必要なら Git で復元できます。ただし Git 未追跡のファイルは復元できません。この操作は取り消せません。"
-    : "図と隣接するコメント sidecar も削除します。Git 未追跡のファイルは復元できません。この操作は取り消せません。";
+    ? m.board.switcher.deleteWarningTracked
+    : m.board.switcher.deleteWarningUntracked;
 }
 
 /** まとめて消すときの確認に、名前を並べる数 */
@@ -94,9 +103,9 @@ export function describeDeleteTracking(
 ): string {
   const tracked = items.filter(item => item.tracked).length;
   const untracked = items.length - tracked;
-  if (tracked === 0) return `未追跡 ${untracked}件`;
-  if (untracked === 0) return `Git管理 ${tracked}件`;
-  return `Git管理 ${tracked}件 / 未追跡 ${untracked}件`;
+  if (tracked === 0) return m.board.switcher.untrackedCount(untracked);
+  if (untracked === 0) return m.board.switcher.trackedCount(tracked);
+  return m.board.switcher.trackedAndUntracked(tracked, untracked);
 }
 
 /** まとめて消すときの警告。Git 管理の図が 1 つでもあれば、差分が残ることも伝える */
@@ -270,9 +279,7 @@ export function DiagramSwitcher({
     }
     setDeleteTargetPaths(null);
     if (failed > 0) {
-      setBulkNotice(
-        `${targets.length}件のうち${failed}件を削除できませんでした`
-      );
+      setBulkNotice(m.board.switcher.bulkDeleteFailed(targets.length, failed));
     }
   };
 
@@ -350,8 +357,8 @@ export function DiagramSwitcher({
     (currentRelPath
       ? (currentRelPath.split("/").at(-1) ?? currentRelPath)
       : diagrams.length === 0
-        ? "図がありません"
-        : "図を選択");
+        ? m.board.empty
+        : m.board.switcher.select);
 
   return (
     <>
@@ -362,8 +369,8 @@ export function DiagramSwitcher({
         {/* Finder の戻る / 進む。一覧と図を、画面を切り替えるように行き来する */}
         <button
           type="button"
-          aria-label="図の一覧"
-          title="図の一覧へ戻る"
+          aria-label={m.board.switcher.backToList}
+          title={m.board.switcher.backToListTitle}
           disabled={open}
           className={NAV_BUTTON}
           onClick={() => setOpen(true)}
@@ -372,8 +379,8 @@ export function DiagramSwitcher({
         </button>
         <button
           type="button"
-          aria-label="図へ進む"
-          title="開いていた図へ進む"
+          aria-label={m.board.switcher.forward}
+          title={m.board.switcher.forwardTitle}
           disabled={!open || currentRelPath === undefined}
           className={NAV_BUTTON}
           onClick={() => setOpen(false)}
@@ -382,9 +389,11 @@ export function DiagramSwitcher({
         </button>
         {open ? (
           <>
-            <span className="ml-1 text-[13px] font-semibold">図</span>
+            <span className="ml-1 text-[13px] font-semibold">
+              {m.board.switcher.title}
+            </span>
             <span className="min-w-0 flex-1 text-xs tabular-nums text-muted-foreground">
-              {diagrams.length}件
+              {m.board.switcher.count(diagrams.length)}
             </span>
           </>
         ) : (
@@ -403,7 +412,7 @@ export function DiagramSwitcher({
         )}
         {listLoading && (
           <span className="shrink-0 text-[10px] text-muted-foreground">
-            更新中…
+            {m.board.switcher.refreshing}
           </span>
         )}
         {listError && (
@@ -420,7 +429,7 @@ export function DiagramSwitcher({
             className="shrink-0 text-[10px] underline"
             onClick={onRetry}
           >
-            再試行
+            {m.board.switcher.retry}
           </button>
         )}
       </div>
@@ -443,8 +452,8 @@ export function DiagramSwitcher({
               ref={searchRef}
               type="search"
               value={query}
-              aria-label="図を探す"
-              placeholder="図を探す"
+              aria-label={m.board.switcher.search}
+              placeholder={m.board.switcher.search}
               spellCheck={false}
               autoComplete="off"
               className="block h-8 w-full rounded-md bg-well px-2.5 text-[13px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -463,14 +472,14 @@ export function DiagramSwitcher({
               className="mx-2 mb-1.5 flex shrink-0 items-center gap-2 rounded-md bg-well px-3 py-1.5 text-xs"
             >
               <span className="flex-1 font-medium">
-                {checkedItems.length}件を選択中
+                {m.board.switcher.selectedCount(checkedItems.length)}
               </span>
               <button
                 type="button"
                 className="rounded px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
                 onClick={() => setChecked(new Set())}
               >
-                選択を解除
+                {m.board.switcher.clearSelection}
               </button>
               <button
                 type="button"
@@ -479,14 +488,14 @@ export function DiagramSwitcher({
                 onClick={() => requestDelete(checkedItems)}
               >
                 <Trash2 className="size-3.5" aria-hidden="true" />
-                選んだ図を削除
+                {m.board.switcher.deleteSelected}
               </button>
             </div>
           )}
           <div className="flex shrink-0 items-center gap-2 px-4 pb-1 text-[11px] text-muted-foreground">
             <input
               type="checkbox"
-              aria-label="見えている図をすべて選択"
+              aria-label={m.board.switcher.selectAllVisible}
               className="size-3.5 shrink-0 accent-primary"
               disabled={rows.length === 0}
               checked={allRowsChecked}
@@ -503,7 +512,7 @@ export function DiagramSwitcher({
               <button
                 key={column.key}
                 type="button"
-                aria-label={`${column.label}で並べ替え`}
+                aria-label={m.board.switcher.sortBy(column.label)}
                 aria-pressed={sort.key === column.key}
                 className={cn(
                   "flex items-center gap-1 text-left hover:text-foreground",
@@ -528,7 +537,7 @@ export function DiagramSwitcher({
             ref={listRef}
             role="listbox"
             tabIndex={0}
-            aria-label="図"
+            aria-label={m.board.switcher.title}
             aria-activedescendant={
               activeRow ? `diagram-row-${activeIndex}` : undefined
             }
@@ -565,8 +574,8 @@ export function DiagramSwitcher({
             {rows.length === 0 && (
               <p className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {diagrams.length === 0
-                  ? "図がありません"
-                  : "一致する図がありません"}
+                  ? m.board.empty
+                  : m.board.switcher.noMatch}
               </p>
             )}
             {rows.map((item, index) => {
@@ -581,7 +590,7 @@ export function DiagramSwitcher({
                   tabIndex={-1}
                   aria-selected={selected}
                   aria-current={current ? "true" : undefined}
-                  title={`${item.relPath}（${item.tracked ? "Git管理" : "未追跡"}）`}
+                  title={m.board.switcher.rowTitle(item.relPath, item.tracked)}
                   className={cn(
                     "group flex h-9 cursor-default items-center gap-2 rounded-lg px-2 text-[13px]",
                     selected && "bg-well"
@@ -591,7 +600,7 @@ export function DiagramSwitcher({
                 >
                   <input
                     type="checkbox"
-                    aria-label={`「${item.displayName}」を選択`}
+                    aria-label={m.board.switcher.selectItem(item.displayName)}
                     className="size-3.5 shrink-0 accent-primary"
                     checked={checked.has(item.relPath)}
                     onClick={event => {
@@ -623,7 +632,7 @@ export function DiagramSwitcher({
                   </span>
                   <button
                     type="button"
-                    aria-label={`「${item.displayName}」を削除`}
+                    aria-label={m.board.switcher.deleteItem(item.displayName)}
                     disabled={!canDelete}
                     className={cn(
                       "inline-flex size-6 shrink-0 items-center justify-center rounded text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40",
@@ -660,14 +669,20 @@ export function DiagramSwitcher({
             <AlertDialogHeader>
               <AlertDialogTitle>
                 {deleteTargets.length === 1
-                  ? `「${deleteTargets[0].displayName}」を削除しますか？`
-                  : `${deleteTargets.length}件の図を削除しますか？`}
+                  ? m.board.switcher.confirmDeleteOne(
+                      deleteTargets[0].displayName
+                    )
+                  : m.board.switcher.confirmDeleteMany(deleteTargets.length)}
               </AlertDialogTitle>
               <AlertDialogDescription asChild>
                 {deleteTargets.length === 1 ? (
                   <div className="space-y-2">
                     <p className="break-all">{deleteTargets[0].relPath}</p>
-                    <p>{deleteTargets[0].tracked ? "Git管理" : "未追跡"}</p>
+                    <p>
+                      {deleteTargets[0].tracked
+                        ? m.board.switcher.tracked
+                        : m.board.switcher.untracked}
+                    </p>
                     <p>{getDiagramDeleteWarning(deleteTargets[0])}</p>
                   </div>
                 ) : (
@@ -680,7 +695,9 @@ export function DiagramSwitcher({
                       ))}
                       {deleteTargets.length > DELETE_LIST_LIMIT && (
                         <li>
-                          ほか{deleteTargets.length - DELETE_LIST_LIMIT}件
+                          {m.board.switcher.andMore(
+                            deleteTargets.length - DELETE_LIST_LIMIT
+                          )}
                         </li>
                       )}
                     </ul>
@@ -692,7 +709,7 @@ export function DiagramSwitcher({
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={deletePending}>
-                キャンセル
+                {m.common.cancel}
               </AlertDialogCancel>
               <AlertDialogAction
                 disabled={deletePending}
@@ -703,12 +720,15 @@ export function DiagramSwitcher({
                 }}
               >
                 {progress
-                  ? `削除中… ${progress.done + 1}/${progress.total}`
+                  ? m.board.switcher.deletingProgress(
+                      progress.done + 1,
+                      progress.total
+                    )
                   : deletePending
-                    ? "削除中…"
+                    ? m.board.switcher.deleting
                     : deleteTargets.length === 1
-                      ? "削除する"
-                      : `${deleteTargets.length}件を削除する`}
+                      ? m.board.switcher.deleteOne
+                      : m.board.switcher.deleteMany(deleteTargets.length)}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

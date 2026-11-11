@@ -7,6 +7,13 @@ import { MobileSessionList } from "./MobileSessionList";
 
 const testDoubles = vi.hoisted(() => ({
   sectionList: vi.fn(),
+  changeLocale: vi.fn(),
+}));
+
+// changeLocale は cookie を書いて読み込み直すので、呼ばれたことだけを見る
+vi.mock("@/lib/i18n", async importOriginal => ({
+  ...(await importOriginal<typeof import("@/lib/i18n")>()),
+  changeLocale: testDoubles.changeLocale,
 }));
 
 vi.mock("./SessionSectionList", () => ({
@@ -30,6 +37,7 @@ function mount(element: ReactElement): HTMLDivElement {
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   testDoubles.sectionList.mockClear();
+  testDoubles.changeLocale.mockClear();
 });
 
 afterEach(() => {
@@ -115,5 +123,48 @@ describe("MobileSessionList", () => {
       unknown
     >;
     expect(listProps).not.toHaveProperty("onOpenScreenManager");
+  });
+
+  it("見出しの「Ark」のメニューに言語の切替を出し、いまの言語に印を付ける", () => {
+    const container = mount(
+      <MobileSessionList
+        sessions={new Map()}
+        worktrees={[]}
+        repoList={["/repo"]}
+        sessionStatuses={new Map()}
+        sessionPreviews={new Map()}
+        sessionPrStatuses={new Map()}
+        worktreeDisplayNames={new Map()}
+        onOpenSession={vi.fn()}
+        onStartSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onDeleteWorktree={vi.fn()}
+        onNewSession={vi.fn()}
+        onNewTask={vi.fn()}
+      />
+    );
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Arkのメニュー"]'
+    );
+    expect(trigger).not.toBeNull();
+    // Radix の DropdownMenuTrigger は pointerdown で開く。中身は Portal で body 直下に出る
+    act(() => {
+      trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const items = [
+      ...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ];
+    expect(items.map(item => item.textContent)).toEqual(["日本語", "English"]);
+    expect(items.map(item => item.lang)).toEqual(["ja", "en"]);
+    expect(items[0].querySelector("svg")).not.toBeNull();
+    expect(items[1].querySelector("svg")).toBeNull();
+
+    // いまの言語でない方を選ぶと、その言語へ切り替える
+    act(() => {
+      items[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(testDoubles.changeLocale).toHaveBeenCalledTimes(1);
+    expect(testDoubles.changeLocale).toHaveBeenCalledWith("en");
   });
 });

@@ -15,7 +15,36 @@
  * - 音声セッションを録音用 (play-and-record) にしたまま AudioContext が動いていると、マイクの
  *   トラックを止めても iOS はマイクを使用中と表示し続ける (実機で確認)。聞き取りを終えたら
  *   音声セッションを自動 (auto) に戻し、AudioContext を休ませ、音声モードを抜けたら閉じる
+ *
+ * 認識と読み上げの言語は、画面の言語から決める (SPEECH_LANGS)。返答の言語を見て切り替えることはしない
+ * (認識は話す前に言語を決める必要があり、利用者が話す言語は画面の言語と同じとみなす)
  */
+
+import type { Locale } from "@ark/shared/i18n";
+import { locale } from "@/lib/i18n";
+
+/** 画面の言語に対応する、音声APIの言語タグ */
+export const SPEECH_LANGS: Record<Locale, string> = {
+  ja: "ja-JP",
+  en: "en-US",
+};
+
+/**
+ * 読み上げの声を選ぶ。言語タグが一致する声を優先し、無ければ同じ言語の別の地域の声を使う
+ * (en-US が無ければ en-GB など)。どちらも無ければ undefined (ブラウザの既定の声に任せる)
+ */
+export function pickVoice<V extends { lang: string }>(
+  voices: readonly V[],
+  lang: string
+): V | undefined {
+  const normalize = (tag: string) => tag.replace("_", "-").toLowerCase();
+  const target = normalize(lang);
+  const language = target.split("-")[0];
+  return (
+    voices.find(voice => normalize(voice.lang) === target) ??
+    voices.find(voice => normalize(voice.lang).startsWith(language))
+  );
+}
 
 export interface RecognitionHandlers {
   onInterim: (text: string) => void;
@@ -121,7 +150,10 @@ const LEVEL_GAIN = 4;
 /** requestAnimationFrame が無い環境 (テスト) での計測間隔 */
 const METER_FALLBACK_MS = 16;
 
-/** 発話の見張り。日本語の読み上げは1文字およそ150ミリ秒なので、倍の余裕を見る */
+/**
+ * 発話の見張り。日本語の読み上げは1文字およそ150ミリ秒なので、倍の余裕を見る
+ * (英語は1文字あたりがもっと短いので、同じ値で余裕が増えるだけ)
+ */
 const WATCHDOG_MS_PER_CHAR = 300;
 const WATCHDOG_MS_BASE = 3000;
 
@@ -145,7 +177,10 @@ export function browserSpeechEnvironment(): SpeechEnvironment | undefined {
   return window as unknown as SpeechEnvironment;
 }
 
-export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
+export function createSpeechPort(
+  env: SpeechEnvironment,
+  lang: string = SPEECH_LANGS[locale]
+): SpeechPort {
   let recognition: RecognitionLike | null = null;
   let queue: string[] = [];
   /** 発話の世代。止めたときに進め、古い発話からの onend を無視する */
@@ -228,13 +263,6 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
     }
   };
 
-  const japaneseVoice = (synth: SpeechSynthesis) =>
-    synth
-      .getVoices()
-      .find(voice =>
-        voice.lang.replace("_", "-").toLowerCase().startsWith("ja")
-      );
-
   const speakNext = () => {
     const synth = env.speechSynthesis;
     const Utterance = env.SpeechSynthesisUtterance;
@@ -253,9 +281,9 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
     const mine = generation;
     let settled = false;
     const utterance = new Utterance(text);
-    utterance.lang = "ja-JP";
+    utterance.lang = lang;
     utterance.rate = rate;
-    const voice = japaneseVoice(synth);
+    const voice = pickVoice(synth.getVoices(), lang);
     if (voice) utterance.voice = voice;
     const finish = () => {
       if (settled || mine !== generation) return;
@@ -291,7 +319,7 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
       }
       setAudioSession("play-and-record");
       const rec = new Recognition();
-      rec.lang = "ja-JP";
+      rec.lang = lang;
       rec.continuous = false;
       rec.interimResults = true;
       rec.maxAlternatives = 1;

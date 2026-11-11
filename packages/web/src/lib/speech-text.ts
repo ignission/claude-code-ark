@@ -7,16 +7,23 @@
  *
  * 文ごとに分けて返すのは、呼び出し側が1文ずつ別の発話にするため
  * (長い1発話は途中で切れることがある)。
+ *
+ * 読み上げる文言は辞書 (`m.voice.speech`) にある。文の区切りと文末を見る正規表現は照合の規則なので、
+ * 辞書に入れずここに持つ。日本語の句読点はどの言語でも見る (返答が日本語のことがある)。
+ * 英語のときだけ、空白が続くピリオドも文の区切りに足す。
  */
+
+import type { Locale } from "@ark/shared/i18n";
+import { locale, m } from "@/lib/i18n";
 
 /** 1回の返答で読む上限 (文字数)。超えた分は読まず CONTINUED_SUFFIX で締める */
 export const SPEECH_MAX_CHARS = 300;
-export const CODE_PLACEHOLDER = "コードは画面で";
-export const TABLE_PLACEHOLDER = "表は画面で";
-export const CONTINUED_SUFFIX = "続きは画面で";
-export const ANSWER_ON_SCREEN = "画面で答えてください";
-export const CONFIRM_ON_SCREEN = "画面で確認が必要です";
-export const REPLY_ON_SCREEN = "返答は画面で";
+export const CODE_PLACEHOLDER = m.voice.speech.codePlaceholder;
+export const TABLE_PLACEHOLDER = m.voice.speech.tablePlaceholder;
+export const CONTINUED_SUFFIX = m.voice.speech.continued;
+export const ANSWER_ON_SCREEN = m.voice.speech.answerOnScreen;
+export const CONFIRM_ON_SCREEN = m.voice.speech.confirmOnScreen;
+export const REPLY_ON_SCREEN = m.voice.speech.replyOnScreen;
 
 /** インラインコードはこの長さまでなら中身を読む (識別子やコマンド名は聞いて分かる) */
 const INLINE_CODE_MAX = 24;
@@ -59,7 +66,7 @@ function cleanLine(line: string): string {
       return shortened.length <= INLINE_CODE_MAX ? shortened : "";
     })
     .replace(PATH_RE, shortenPath)
-    .replace(/`/g, "")
+    .replace(/\u0060/g, "")
     .replace(EMPHASIS_RE, "")
     .replace(EMOJI_RE, "")
     .replace(/\s+/g, " ")
@@ -67,9 +74,27 @@ function cleanLine(line: string): string {
     .trim();
 }
 
-function splitSentences(text: string): string[] {
+/** 文の区切り。英語は `v1.2` や `file.ts` を割らないよう、空白が続くピリオドだけを区切りにする */
+const SENTENCE_BREAK_RE: Record<Locale, RegExp> = {
+  ja: /(?<=[。！？!?])/,
+  en: /(?<=[。！？!?])|(?<=\.)\s+/,
+};
+/** 文末で終わっているか */
+const SENTENCE_END_RE: Record<Locale, RegExp> = {
+  ja: /[。！？!?]$/,
+  en: /[。！？!?.]$/,
+};
+
+export function endsWithSentenceEnd(
+  text: string,
+  lang: Locale = locale
+): boolean {
+  return SENTENCE_END_RE[lang].test(text);
+}
+
+export function splitSentences(text: string, lang: Locale = locale): string[] {
   return text
-    .split(/(?<=[。！？!?])/)
+    .split(SENTENCE_BREAK_RE[lang])
     .map(sentence => sentence.trim())
     .filter(sentence => sentence.length > 0);
 }
@@ -124,13 +149,13 @@ export function questionsToSpeechSentences(
     options: readonly { label: string }[];
   }[]
 ): string[] {
-  const out = ["Claudeから質問です。"];
+  const out = [m.voice.speech.questionIntro];
   for (const q of questions) {
     out.push(...splitSentences(cleanLine(q.question)));
     const labels = q.options
       .map(option => cleanLine(option.label))
       .filter(Boolean);
-    if (labels.length > 0) out.push(`選択肢は、${labels.join("、")}。`);
+    if (labels.length > 0) out.push(m.voice.speech.options(labels));
   }
   out.push(ANSWER_ON_SCREEN);
   return out;

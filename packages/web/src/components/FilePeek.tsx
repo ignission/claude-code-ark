@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { createFileApi } from "@/lib/file-api";
 import { type FileTab, fileTabKind } from "@/lib/file-tabs";
+import { m } from "@/lib/i18n";
 import { FileEditor } from "./FileEditor";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -30,7 +31,7 @@ interface FilePeekProps {
   onPromote: (peek: FilePeekTarget) => void;
 }
 
-const CONFIRM_DISCARD = "保存していない変更があります。閉じますか？";
+const CONFIRM_DISCARD = m.files.confirmDiscard;
 
 const HEADER_BUTTON =
   "inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground";
@@ -127,8 +128,8 @@ export function FilePeek({
       <>
         <button
           type="button"
-          aria-label="ファイルで開く"
-          title="ファイルで開く"
+          aria-label={m.files.peek.openInFiles}
+          title={m.files.peek.openInFiles}
           onClick={() => {
             if (confirmDiscard()) onPromote(displayed);
           }}
@@ -138,8 +139,8 @@ export function FilePeek({
         </button>
         <button
           type="button"
-          aria-label="ピークを閉じる"
-          title="ピークを閉じる"
+          aria-label={m.files.peek.close}
+          title={m.files.peek.close}
           onClick={() => {
             if (confirmDiscard()) onClose();
           }}
@@ -160,7 +161,7 @@ export function FilePeek({
           {chrome.end}
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground text-xs">
-          接続中…
+          {m.files.connecting}
         </div>
       </div>
     );

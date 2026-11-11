@@ -9,6 +9,7 @@
 import type { BridgeSessionStatus } from "@ark/shared";
 import { Mic, X } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { VoicePhase, VoiceState } from "@/lib/voice-mode-machine";
 
@@ -76,21 +77,21 @@ export function voicePhaseLabel(
 ): string {
   switch (state.phase) {
     case "ready":
-      return "タップして話す";
+      return m.voice.phase.ready;
     case "listening":
-      return "聞いています";
+      return m.voice.phase.listening;
     case "confirming":
-      return "2秒後に送ります";
+      return m.voice.phase.confirming;
     case "working":
-      if (bridgeStatus === "THINK") return "考えています";
-      if (bridgeStatus === "TOOL") return "作業しています";
-      return "Claudeの返答を待っています";
+      if (bridgeStatus === "THINK") return m.voice.phase.thinking;
+      if (bridgeStatus === "TOOL") return m.voice.phase.tool;
+      return m.voice.phase.waiting;
     case "speaking":
-      return "読み上げています";
+      return m.voice.phase.speaking;
     case "screen":
-      return "画面で操作してください";
+      return m.voice.phase.screen;
     case "paused":
-      return "一時停止しています";
+      return m.voice.phase.paused;
     case "off":
       return "";
   }
@@ -130,17 +131,18 @@ export function VoiceModeOverlay({
       >
         <Mic className="size-4 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">
-          音声モード: {label}
-          {state.unsent !== null && "・未送信あり"}
+          {m.voice.overlay.minimized(label, state.unsent !== null)}
         </span>
-        <span className="shrink-0 text-[13px] opacity-90">戻る</span>
+        <span className="shrink-0 text-[13px] opacity-90">
+          {m.voice.overlay.back}
+        </span>
       </button>
     );
   }
 
   const text =
     state.phase === "speaking"
-      ? state.speaking.join("")
+      ? state.speaking.join(m.voice.speech.sentenceJoiner)
       : state.phase === "listening" || state.phase === "confirming"
         ? state.transcript
         : "";
@@ -149,27 +151,27 @@ export function VoiceModeOverlay({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="音声モード"
+      aria-label={m.voice.title}
       data-testid="voice-mode-overlay"
       className="fixed inset-0 z-50 flex flex-col bg-background text-foreground safe-area-top safe-area-x"
     >
       <div className="flex h-14 shrink-0 items-center justify-between px-4">
-        <span className="text-[17px] font-semibold">音声モード</span>
+        <span className="text-[17px] font-semibold">{m.voice.title}</span>
         <div className="flex items-center gap-1">
           <button
             type="button"
             data-testid="voice-mode-rate"
             onClick={onCycleRate}
-            aria-label="読み上げの速さ"
+            aria-label={m.voice.overlay.rateLabel}
             className="inline-flex h-9 min-w-14 items-center justify-center rounded-full border border-border px-3 text-[14px] font-semibold tabular-nums text-foreground hover:bg-muted"
           >
-            {`${rate}倍`}
+            {m.voice.overlay.rate(rate)}
           </button>
           <button
             type="button"
             data-testid="voice-mode-exit"
             onClick={onExit}
-            aria-label="音声モードを終える"
+            aria-label={m.voice.overlay.exit}
             className="inline-flex size-10 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
           >
             <X className="size-5" aria-hidden="true" />
@@ -201,7 +203,7 @@ export function VoiceModeOverlay({
             className="w-full max-w-sm rounded-lg border border-border bg-card p-3 text-left"
           >
             <p className="text-[12px] font-semibold text-muted-foreground">
-              送っていない指示
+              {m.voice.overlay.unsentTitle}
             </p>
             <p className="mt-1 whitespace-pre-wrap break-words text-[15px]">
               {state.unsent}
@@ -212,19 +214,19 @@ export function VoiceModeOverlay({
                   type="button"
                   data-testid="voice-mode-unsent-dismiss"
                   onClick={onDismissUnsent}
-                  aria-label="送っていない指示を消す"
+                  aria-label={m.voice.overlay.dismissUnsentLabel}
                   className="h-9 rounded-full px-4 text-[14px] font-semibold text-muted-foreground hover:bg-muted"
                 >
-                  消す
+                  {m.voice.overlay.dismissUnsent}
                 </button>
                 <button
                   type="button"
                   data-testid="voice-mode-unsent-send"
                   onClick={onRetryUnsent}
-                  aria-label="送っていない指示を送る"
+                  aria-label={m.voice.overlay.sendUnsentLabel}
                   className="h-9 rounded-full bg-primary px-4 text-[14px] font-semibold text-primary-foreground"
                 >
-                  送る
+                  {m.voice.overlay.sendUnsent}
                 </button>
               </div>
             )}
@@ -240,7 +242,7 @@ export function VoiceModeOverlay({
             className={PRIMARY_BUTTON}
           >
             <Mic className="size-5" aria-hidden="true" />
-            再開
+            {m.voice.overlay.resume}
           </button>
         )}
         {state.phase === "ready" && (
@@ -251,7 +253,7 @@ export function VoiceModeOverlay({
             className={PRIMARY_BUTTON}
           >
             <Mic className="size-5" aria-hidden="true" />
-            話す
+            {m.voice.overlay.talk}
           </button>
         )}
         {state.phase === "listening" && (
@@ -261,7 +263,7 @@ export function VoiceModeOverlay({
             onClick={onCancel}
             className={SECONDARY_BUTTON}
           >
-            やめる
+            {m.voice.overlay.stopListening}
           </button>
         )}
         {state.phase === "confirming" && (
@@ -272,7 +274,7 @@ export function VoiceModeOverlay({
               onClick={onCancel}
               className={SECONDARY_BUTTON}
             >
-              取り消す
+              {m.voice.overlay.cancelSend}
             </button>
             <button
               type="button"
@@ -280,7 +282,7 @@ export function VoiceModeOverlay({
               onClick={onSendNow}
               className={PRIMARY_BUTTON}
             >
-              すぐ送る
+              {m.voice.overlay.sendNow}
             </button>
           </>
         )}
@@ -292,7 +294,7 @@ export function VoiceModeOverlay({
             className={SECONDARY_BUTTON}
           >
             <Mic className="size-5" aria-hidden="true" />
-            追加で話す
+            {m.voice.overlay.talkMore}
           </button>
         )}
         {state.phase === "speaking" && (
@@ -302,7 +304,7 @@ export function VoiceModeOverlay({
             onClick={onStopSpeaking}
             className={PRIMARY_BUTTON}
           >
-            タップで止める
+            {m.voice.overlay.stopSpeaking}
           </button>
         )}
       </div>

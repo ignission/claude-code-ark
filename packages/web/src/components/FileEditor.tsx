@@ -11,6 +11,7 @@ import {
 import type { FileApi } from "@/lib/file-api";
 import { decideOnDiskChange, detectLineEnding } from "@/lib/file-editor-state";
 import type { FileTab } from "@/lib/file-tabs";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { ImageRenderer, MarkdownRenderer } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
@@ -406,7 +407,7 @@ function TextFileEditor({
     return (
       <WithChrome chrome={chrome}>
         <div className="flex h-full items-center justify-center bg-background text-muted-foreground text-xs">
-          読み込み中…
+          {m.files.editor.loading}
         </div>
       </WithChrome>
     );
@@ -418,18 +419,18 @@ function TextFileEditor({
         <div className="flex h-full items-center justify-center bg-background p-4">
           <div className="text-center">
             <p className="font-medium text-destructive text-sm">
-              ファイルを開けません
+              {m.files.cannotOpen}
             </p>
             <p className="mt-1 break-all text-muted-foreground text-xs">
               {loaded.error}
             </p>
             <button
               type="button"
-              aria-label="再試行"
+              aria-label={m.files.editor.retry}
               onClick={() => void reload()}
               className="mt-3 rounded border border-border px-2.5 py-1 text-xs hover:bg-muted"
             >
-              再試行
+              {m.files.editor.retry}
             </button>
           </div>
         </div>
@@ -464,17 +465,21 @@ function TextFileEditor({
         <span className="ml-auto shrink-0">{formatSize(loaded.size)}</span>
         {!loaded.editable && (
           <span className="shrink-0 rounded bg-muted px-1.5 py-0.5">
-            読み取り専用
+            {m.files.editor.readOnly}
           </span>
         )}
         {isMarkdown && (
           <fieldset className="m-0 inline-flex shrink-0 items-center gap-0.5 rounded border-0 bg-muted p-0.5">
-            <legend className="sr-only">Markdown の表示</legend>
+            <legend className="sr-only">{m.files.editor.markdownView}</legend>
             {(["preview", "edit"] as const).map(mode => (
               <button
                 key={mode}
                 type="button"
-                aria-label={mode === "preview" ? "プレビュー" : "編集"}
+                aria-label={
+                  mode === "preview"
+                    ? m.files.editor.preview
+                    : m.files.editor.edit
+                }
                 aria-pressed={markdownMode === mode}
                 onClick={() => {
                   if (mode === "edit") setEditorMounted(true);
@@ -487,7 +492,9 @@ function TextFileEditor({
                     : "hover:text-foreground"
                 )}
               >
-                {mode === "preview" ? "プレビュー" : "編集"}
+                {mode === "preview"
+                  ? m.files.editor.preview
+                  : m.files.editor.edit}
               </button>
             ))}
           </fieldset>
@@ -495,8 +502,8 @@ function TextFileEditor({
         {loaded.editable && (
           <button
             type="button"
-            aria-label="保存"
-            title="保存 (Ctrl+S)"
+            aria-label={m.common.save}
+            title={m.files.editor.saveShortcut}
             disabled={!dirty || saving}
             onClick={handleSave}
             className="inline-flex size-6 shrink-0 items-center justify-center rounded text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
@@ -512,7 +519,7 @@ function TextFileEditor({
           className="flex shrink-0 flex-wrap items-center gap-2 bg-status-awaiting/15 px-3 py-1.5 text-xs"
         >
           <span className="mr-auto font-medium">
-            ディスク上で変更されました
+            {m.files.editor.changedOnDisk}
           </span>
           <button
             type="button"
@@ -520,7 +527,7 @@ function TextFileEditor({
             onClick={() => void reload()}
             className="rounded border border-border bg-background px-2 py-0.5 hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
           >
-            再読込 (編集を捨てる)
+            {m.files.editor.reloadDiscard}
           </button>
           {banner === "conflict" && (
             <button
@@ -529,7 +536,7 @@ function TextFileEditor({
               onClick={() => void save(true)}
               className="rounded border border-border bg-background px-2 py-0.5 hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
             >
-              上書き保存
+              {m.files.editor.overwrite}
             </button>
           )}
           <button
@@ -537,7 +544,7 @@ function TextFileEditor({
             onClick={() => setBanner(null)}
             className="rounded border border-border bg-background px-2 py-0.5 hover:bg-muted"
           >
-            このまま編集
+            {m.files.editor.keepEditing}
           </button>
         </div>
       )}
@@ -546,7 +553,7 @@ function TextFileEditor({
           role="alert"
           className="shrink-0 bg-destructive/10 px-3 py-1.5 text-destructive text-xs"
         >
-          保存できません: {saveError}
+          {m.files.editor.saveFailed(saveError)}
         </div>
       )}
       <div className="min-h-0 flex-1">
@@ -561,7 +568,7 @@ function TextFileEditor({
           <div className="flex h-full items-center justify-center p-4 text-center">
             <div>
               <p className="font-medium text-sm">
-                このファイルは表示できません
+                {m.files.editor.cannotDisplay}
               </p>
               <p className="mt-1 text-muted-foreground text-xs">
                 {loaded.mimeType} ・ {formatSize(loaded.size)}
@@ -584,7 +591,7 @@ function TextFileEditor({
             <Suspense
               fallback={
                 <div className="flex h-full items-center justify-center text-muted-foreground text-xs">
-                  読み込み中…
+                  {m.files.editor.loading}
                 </div>
               }
             >

@@ -1,3 +1,61 @@
 import type { Messages } from "../ja";
 
-export const voice: Messages["voice"] = {};
+export const voice: Messages["voice"] = {
+  title: "Voice mode",
+  speech: {
+    codePlaceholder: "Code is on screen",
+    tablePlaceholder: "Table is on screen",
+    continued: "The rest is on screen",
+    answerOnScreen: "Please answer on screen",
+    confirmOnScreen: "Confirmation needed on screen",
+    replyOnScreen: "The reply is on screen",
+    questionIntro: "Claude has a question.",
+    options: (labels: string[]) => `The options are: ${labels.join(", ")}.`,
+    sentenceJoiner: " ",
+  },
+  unsentJoiner: {
+    afterSentenceEnd: " ",
+    midSentence: ". ",
+  },
+  notice: {
+    notAllowed:
+      "Microphone or dictation isn't allowed. In iPhone Settings, check Microphone for Safari and Siri & Dictation",
+    network: "Can't reach speech recognition (network)",
+    audioCapture: "Microphone unavailable (audio-capture)",
+    stopped: (error: string) => `Speech recognition stopped (${error})`,
+    heldForConfirm: "Not sent: a confirmation was waiting",
+    heldForDisconnect: "Not sent: the connection was down",
+    heldForQuestion: "Not sent: a question came in",
+  },
+  phase: {
+    ready: "Tap to talk",
+    listening: "Listening",
+    confirming: "Sending in 2 seconds",
+    thinking: "Thinking",
+    tool: "Working",
+    waiting: "Waiting for Claude",
+    speaking: "Speaking",
+    screen: "Continue on screen",
+    paused: "Paused",
+  },
+  overlay: {
+    minimized: (label: string, hasUnsent: boolean) =>
+      `Voice mode: ${label}${hasUnsent ? " · unsent message" : ""}`,
+    back: "Back",
+    rateLabel: "Speech rate",
+    rate: (rate: number) => `${rate}x`,
+    exit: "Exit voice mode",
+    unsentTitle: "Unsent message",
+    dismissUnsentLabel: "Discard unsent message",
+    dismissUnsent: "Discard",
+    sendUnsentLabel: "Send unsent message",
+    sendUnsent: "Send",
+    resume: "Resume",
+    talk: "Talk",
+    stopListening: "Stop",
+    cancelSend: "Cancel",
+    sendNow: "Send now",
+    talkMore: "Add more",
+    stopSpeaking: "Tap to stop",
+  },
+};

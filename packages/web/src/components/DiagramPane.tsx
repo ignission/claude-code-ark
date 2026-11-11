@@ -21,6 +21,7 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import {
   applyDiagramDeleteResponse,
@@ -404,7 +405,7 @@ export function DiagramPane({
           error?: string;
         } | null;
         if (controller.signal.aborted) return;
-        setError(body?.error ?? `読み込みに失敗しました (${res.status})`);
+        setError(body?.error ?? m.board.loadFailed(res.status));
         setHtml(null);
         return;
       }
@@ -465,9 +466,7 @@ export function DiagramPane({
       .catch(reason => {
         if (activeListRequestRef.current !== request) return;
         setListError(
-          reason instanceof Error
-            ? reason.message
-            : "図一覧の取得に失敗しました"
+          reason instanceof Error ? reason.message : m.board.listFailed
         );
       })
       .finally(() => {
@@ -540,9 +539,7 @@ export function DiagramPane({
         if (next.refreshList) setListRefreshKey(key => key + 1);
         return response.ok;
       } catch (reason) {
-        report(
-          reason instanceof Error ? reason.message : "図の削除に失敗しました"
-        );
+        report(reason instanceof Error ? reason.message : m.board.deleteFailed);
         return false;
       } finally {
         deleteInFlightRef.current = false;
@@ -581,9 +578,7 @@ export function DiagramPane({
         // 同一文書での2回目の load = 自己ナビゲーション。port を渡さず遮断する
         portRef.current?.close();
         portRef.current = null;
-        setError(
-          "図が別のページへ遷移しようとしたため接続を遮断しました。図ファイルに外部遷移するスクリプトが含まれていないか確認してください"
-        );
+        setError(m.board.navigationBlocked);
         return;
       }
       portGrantedForRef.current = html;
@@ -664,7 +659,7 @@ export function DiagramPane({
           </div>
         ) : html === null ? (
           <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
-            読み込み中…
+            {m.board.loading}
           </div>
         ) : (
           <div className="flex h-full flex-col">

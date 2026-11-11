@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setLocaleForTest } from "@/lib/i18n";
 import {
   createSpeechPort,
   isVoiceModeSupported,
+  pickVoice,
   type RecognitionHandlers,
   type SpeechEnvironment,
   watchdogMs,
@@ -519,5 +521,33 @@ describe("createSpeechPort の音声セッション", () => {
     const port = createSpeechPort(env);
     port.startRecognition(handlers());
     expect(port.describeAudio()).toBe("session=play-and-record context=none");
+  });
+});
+
+describe("音声の言語", () => {
+  afterEach(() => setLocaleForTest("ja"));
+
+  it("画面が英語なら、認識と読み上げを en-US にし、英語の声を選ぶ", () => {
+    setLocaleForTest("en");
+    const port = createSpeechPort(env);
+    port.startRecognition(handlers());
+    expect(FakeRecognition.instances.at(-1)?.lang).toBe("en-US");
+    port.speak(["Done."], vi.fn());
+    expect(synth.spoken[0].lang).toBe("en-US");
+    expect(synth.spoken[0].voice).toEqual({ lang: "en-US", name: "Samantha" });
+  });
+
+  it("言語タグが一致する声を優先し、無ければ同じ言語の別の地域の声を使う", () => {
+    const voices = [
+      { lang: "en_GB", name: "Daniel" },
+      { lang: "ja-JP", name: "Kyoko" },
+      { lang: "en-US", name: "Samantha" },
+    ];
+    expect(pickVoice(voices, "en-US")?.name).toBe("Samantha");
+    expect(pickVoice(voices.slice(0, 2), "en-US")?.name).toBe("Daniel");
+    expect(pickVoice(voices, "ja-JP")?.name).toBe("Kyoko");
+    expect(pickVoice([{ lang: "fr-FR", name: "Amelie" }], "en-US")).toBe(
+      undefined
+    );
   });
 });
