@@ -689,6 +689,20 @@ export default function Dashboard() {
     [sessionTabs, selectedSessionId]
   );
 
+  // セッションの主ラベルに使うリポジトリ名。サイドバー (useGroupedWorktreeItems) と
+  // 同じ順 (session.repoPath → worktreeのパス → 兄弟ディレクトリの推定) で決める
+  const repoNameOfSession = useCallback(
+    (session: ManagedSession): string | undefined => {
+      const wt = worktrees.find(w => w.id === session.worktreeId);
+      const repoPath =
+        session.repoPath ??
+        (wt ? repoList.find(repo => isPathWithin(wt.path, repo)) : undefined) ??
+        findRepoForSession(session, repoList);
+      return repoPath ? getBaseName(repoPath) : undefined;
+    },
+    [worktrees, repoList]
+  );
+
   // タブに出す中身。ラベルはサイドバーと通知と同じ出所 (sessionNotificationLabels)
   const sessionTabItems = useMemo(() => {
     const items: SessionTabItem[] = [];
@@ -700,12 +714,19 @@ export default function Dashboard() {
         label:
           sessionNotificationLabels.get(sessionId) ??
           getBaseName(session.worktreePath),
+        repoName: repoNameOfSession(session),
         title: session.worktreePath,
         statusKey: resolveStatusKey(true, sessionStatuses.get(sessionId)),
       });
     }
     return items;
-  }, [sessionTabs, sessions, sessionNotificationLabels, sessionStatuses]);
+  }, [
+    sessionTabs,
+    sessions,
+    sessionNotificationLabels,
+    sessionStatuses,
+    repoNameOfSession,
+  ]);
 
   // サイドバーとモバイルの一覧の行に出す、未完了の TODO の件数 (キーは sessionId)
   const sessionTodoCounts = useMemo(() => {
@@ -1203,17 +1224,7 @@ export default function Dashboard() {
                 {Array.from(sessions.values()).map(session => {
                   const isActive = selectedSessionId === session.id;
                   const wt = worktrees.find(w => w.id === session.worktreeId);
-                  // 主ラベルに使うリポジトリ名。サイドバー (useGroupedWorktreeItems) と
-                  // 同じ順 (session.repoPath → worktreeのパス → 兄弟ディレクトリの推定) で決める
-                  const repoPathOfSession =
-                    session.repoPath ??
-                    (wt
-                      ? repoList.find(repo => isPathWithin(wt.path, repo))
-                      : undefined) ??
-                    findRepoForSession(session, repoList);
-                  const rn = repoPathOfSession
-                    ? getBaseName(repoPathOfSession)
-                    : undefined;
+                  const rn = repoNameOfSession(session);
                   // サイドバー (SessionSectionList) と通知の文言と同じ出所
                   const displayName =
                     worktreeDisplayNames.get(

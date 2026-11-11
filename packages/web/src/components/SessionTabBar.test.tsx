@@ -116,6 +116,42 @@ describe("SessionTabBar", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("同じラベルが並んだときだけ、リポジトリ名を添える", () => {
+    const container = mount(
+      <SessionTabBar
+        tabs={[
+          {
+            sessionId: "s1",
+            label: "main",
+            repoName: "api",
+            statusKey: "IDLE",
+          },
+          {
+            sessionId: "s2",
+            label: "main",
+            repoName: "web",
+            statusKey: "IDLE",
+          },
+          {
+            sessionId: "s3",
+            label: "docs",
+            repoName: "web",
+            statusKey: "IDLE",
+          },
+        ]}
+        activeSessionId="s1"
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    const texts = [...container.querySelectorAll('[role="tab"]')].map(
+      tab => tab.textContent ?? ""
+    );
+    expect(texts[0]).toContain("api");
+    expect(texts[1]).toContain("web");
+    expect(texts[2]).not.toContain("web");
+  });
+
   it("タブが無ければ何も出さない", () => {
     const container = mount(
       <SessionTabBar

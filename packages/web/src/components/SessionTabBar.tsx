@@ -14,6 +14,8 @@ import { StatusChip } from "./StatusChip";
 export interface SessionTabItem {
   sessionId: string;
   label: string;
+  /** リポジトリ名。同じラベルのタブが並んだときだけ、見分けるために添える */
+  repoName?: string;
   /** ラベルだけでは見分けにくいときの補足 (worktreeのパス)。ツールチップに出す */
   title?: string;
   statusKey: StatusKey;
@@ -47,6 +49,12 @@ export function SessionTabBar({
   if (tabs.length === 0) return null;
   // 最後の1つは閉じさせない。閉じると選ぶものが無くなり、自動選択が同じセッションを開き直す
   const closable = tabs.length > 1;
+  // 別のリポジトリの同じブランチ名 (mainなど) が並ぶと見分けられないので、重なったラベルにだけ
+  // リポジトリ名を添える
+  const labelCounts = new Map<string, number>();
+  for (const tab of tabs) {
+    labelCounts.set(tab.label, (labelCounts.get(tab.label) ?? 0) + 1);
+  }
 
   return (
     <div
@@ -93,6 +101,11 @@ export function SessionTabBar({
                 labelClassName="sr-only"
               />
               <span className="truncate">{tab.label}</span>
+              {tab.repoName && (labelCounts.get(tab.label) ?? 0) > 1 && (
+                <span className="shrink-0 text-[11px] text-muted-foreground">
+                  {tab.repoName}
+                </span>
+              )}
             </button>
             {closable && (
               <button
