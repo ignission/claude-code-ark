@@ -95,7 +95,7 @@ const SAFE_EXTENSION_WHITELIST = new Set([
   "xlsm",
 ]);
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const FILE_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 export class FileUploadManager {
@@ -140,7 +140,7 @@ export class FileUploadManager {
     const buffer = Buffer.from(base64Data, "base64");
     if (buffer.length > MAX_FILE_SIZE) {
       throw new FileUploadManagerError(
-        `ファイルサイズが上限（10MB）を超えています: ${(buffer.length / 1024 / 1024).toFixed(2)}MB`,
+        `ファイルサイズが上限（20MB）を超えています: ${(buffer.length / 1024 / 1024).toFixed(2)}MB`,
         "FILE_TOO_LARGE"
       );
     }

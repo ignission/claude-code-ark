@@ -76,7 +76,7 @@ export const chat = {
   },
   upload: {
     tooLarge: (name: string, sizeMb: string) =>
-      `${name}: 10MBを超えています（${sizeMb}MB）`,
+      `${name}: 20MBを超えています（${sizeMb}MB）`,
     unsupportedType: (name: string, mime: string) =>
       `${name}: 未対応の形式です（${mime}）`,
     unsupportedFile: "未対応のファイルです",
