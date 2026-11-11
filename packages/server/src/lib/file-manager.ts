@@ -11,6 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { m } from "./i18n.js";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 /** 編集 (書き込み) できる上限サイズ */
@@ -123,12 +124,15 @@ function isTextMimeType(mimeType: string): boolean {
   );
 }
 
+/** パスの実体が無い。呼び出し側は文ではなくこの型で見分ける (文は利用者の言語で変わる) */
+export class FileNotFoundError extends Error {}
+
 async function resolveSafePath(
   worktreePath: string,
   filePath: string
 ): Promise<string> {
   if (filePath.includes("..")) {
-    throw new Error("ファイルへのアクセスが拒否されました");
+    throw new Error(m().serverFiles.file.accessDenied);
   }
 
   // /tmp配下のファイルは直接アクセスを許可
@@ -138,14 +142,14 @@ async function resolveSafePath(
     try {
       realResolved = await realpath(resolved);
     } catch {
-      throw new Error(`ファイルが見つかりません: ${filePath}`);
+      throw new FileNotFoundError(m().serverFiles.file.notFound(filePath));
     }
     // macOSでは realpath("/tmp/...") が "/private/tmp/..." になるため両方チェック
     if (
       !realResolved.startsWith("/tmp/") &&
       !realResolved.startsWith("/private/tmp/")
     ) {
-      throw new Error("ファイルへのアクセスが拒否されました");
+      throw new Error(m().serverFiles.file.accessDenied);
     }
     return realResolved;
   }
@@ -158,14 +162,14 @@ async function resolveSafePath(
   try {
     realResolved = await realpath(resolved);
   } catch {
-    throw new Error(`ファイルが見つかりません: ${filePath}`);
+    throw new FileNotFoundError(m().serverFiles.file.notFound(filePath));
   }
 
   if (
     !realResolved.startsWith(resolvedWorktree + path.sep) &&
     realResolved !== resolvedWorktree
   ) {
-    throw new Error("ファイルへのアクセスが拒否されました");
+    throw new Error(m().serverFiles.file.accessDenied);
   }
 
   return realResolved;
@@ -234,12 +238,12 @@ export async function readFileFromWorktree(
   const fileStat = await stat(safePath);
 
   if (!fileStat.isFile()) {
-    throw new Error(`ファイルではありません: ${filePath}`);
+    throw new Error(m().serverFiles.file.notAFile(filePath));
   }
 
   if (fileStat.size > MAX_FILE_SIZE) {
     throw new Error(
-      `ファイルサイズが上限（${MAX_FILE_SIZE / 1024 / 1024}MB）を超えています: ${fileStat.size} bytes`
+      m().serverFiles.file.tooLarge(MAX_FILE_SIZE / 1024 / 1024, fileStat.size)
     );
   }
 
@@ -355,12 +359,16 @@ async function writeFileUnserialized(
       return {
         ok: false,
         code: "error",
-        error: "書き込めるのは worktree 内のファイルだけです",
+        error: m().serverFiles.file.writeOutsideWorktree,
       };
     }
     const safePath = await resolveSafePath(worktreePath, filePath);
     if (await isInsideGitDir(worktreePath, safePath)) {
-      return { ok: false, code: "error", error: ".git 配下には書き込めません" };
+      return {
+        ok: false,
+        code: "error",
+        error: m().serverFiles.file.writeInsideGitDir,
+      };
     }
 
     const st = await stat(safePath);
@@ -368,14 +376,14 @@ async function writeFileUnserialized(
       return {
         ok: false,
         code: "error",
-        error: `ファイルではありません: ${filePath}`,
+        error: m().serverFiles.file.notAFile(filePath),
       };
     }
     if (!force && Math.abs(st.mtimeMs - expectedMtimeMs) > 1) {
       return {
         ok: false,
         code: "conflict",
-        error: "ファイルが読み込み後に変更されています",
+        error: m().serverFiles.file.modifiedSinceRead,
         mtimeMs: st.mtimeMs,
       };
     }
@@ -384,7 +392,7 @@ async function writeFileUnserialized(
       return {
         ok: false,
         code: "error",
-        error: "テキストファイル以外には書き込めません",
+        error: m().serverFiles.file.notTextFile,
       };
     }
     // UTF-8 以外のファイルは、読めた時点で化けた内容を書き戻すことになるので拒否する
@@ -392,14 +400,16 @@ async function writeFileUnserialized(
       return {
         ok: false,
         code: "error",
-        error: "UTF-8 (BOM なし) 以外のファイルには書き込めません",
+        error: m().serverFiles.file.notUtf8,
       };
     }
     if (Buffer.byteLength(content) > MAX_EDITABLE_SIZE) {
       return {
         ok: false,
         code: "error",
-        error: `サイズが上限（${MAX_EDITABLE_SIZE / 1024 / 1024}MB）を超えています`,
+        error: m().serverFiles.file.editTooLarge(
+          MAX_EDITABLE_SIZE / 1024 / 1024
+        ),
       };
     }
 
@@ -425,7 +435,7 @@ async function writeFileUnserialized(
         return {
           ok: false,
           code: "conflict",
-          error: "ファイルが読み込み後に変更されています",
+          error: m().serverFiles.file.modifiedSinceRead,
           mtimeMs: latest.mtimeMs,
         };
       }
@@ -576,12 +586,12 @@ export async function listDirectory(
   dirPath: string
 ): Promise<{ entries: DirEntry[]; truncated: boolean }> {
   if (path.isAbsolute(dirPath)) {
-    throw new Error("ファイルへのアクセスが拒否されました");
+    throw new Error(m().serverFiles.file.accessDenied);
   }
   const safeDir = await resolveSafePath(worktreePath, dirPath);
   const realWorktree = await realpath(worktreePath);
   if (!(await stat(safeDir)).isDirectory()) {
-    throw new Error(`ディレクトリではありません: ${dirPath}`);
+    throw new Error(m().serverFiles.file.notADirectory(dirPath));
   }
   const relDir = path.relative(realWorktree, safeDir).split(path.sep).join("/");
 

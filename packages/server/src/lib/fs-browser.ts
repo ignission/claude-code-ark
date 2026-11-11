@@ -14,6 +14,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { FsEntry, FsListResult } from "@ark/shared";
+import { m } from "./i18n.js";
 
 /**
  * 指定パス配下のサブディレクトリを列挙する。
@@ -24,7 +25,7 @@ export async function listDirectory(
 ): Promise<FsListResult> {
   const target = targetPath ?? os.homedir();
   if (!path.isAbsolute(target)) {
-    throw new Error("pathは絶対パスのみ指定可能");
+    throw new Error(m().serverFiles.fsBrowser.pathNotAbsolute);
   }
   const normalized = path.resolve(target);
 
@@ -34,15 +35,15 @@ export async function listDirectory(
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
-      throw new Error("ディレクトリが存在しません");
+      throw new Error(m().serverFiles.fsBrowser.notFound);
     }
     if (code === "EACCES") {
-      throw new Error("権限がありません");
+      throw new Error(m().serverFiles.fsBrowser.permissionDenied);
     }
     throw err;
   }
   if (!stat.isDirectory()) {
-    throw new Error("ディレクトリではありません");
+    throw new Error(m().serverFiles.fsBrowser.notADirectory);
   }
 
   const parent = path.dirname(normalized);

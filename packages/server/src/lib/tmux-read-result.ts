@@ -11,6 +11,8 @@
  * ログ・メッセージに tmux の exit status / stderr / errno まで載せられるようにする。
  */
 
+import { m } from "./i18n.js";
+
 export type TmuxReadFailure =
   /** TmuxManager がそのセッション ID を管理していない (未登録 / kill 済み) */
   | { kind: "no-session" }
@@ -51,26 +53,28 @@ export type TmuxReadResult<T> =
 export function describeTmuxReadFailure(failure: TmuxReadFailure): string {
   switch (failure.kind) {
     case "no-session":
-      return "TmuxManager が管理していないセッション ID です";
+      return m().serverLib.tmuxRead.noSession;
     case "tmux-failed": {
       const parts = [`status=${failure.status ?? "null"}`];
       if (failure.signal) parts.push(`signal=${failure.signal}`);
       if (failure.code) parts.push(`code=${failure.code}`);
       const detail = failure.stderr || failure.message || "";
-      return `tmux ${failure.command} が失敗しました (${parts.join(", ")})${
-        detail ? `: ${detail}` : ""
-      }`;
+      return m().serverLib.tmuxRead.tmuxFailed(
+        failure.command,
+        parts.join(", "),
+        detail
+      );
     }
     case "not-set":
-      return "変数が未設定です";
+      return m().serverLib.tmuxRead.notSet;
     case "no-buffer":
-      return "tmux ペーストバッファがありません";
+      return m().serverLib.tmuxRead.noBuffer;
     case "invalid-pane-pid":
-      return `pane_pid を解釈できません: ${JSON.stringify(failure.raw)}`;
+      return m().serverLib.tmuxRead.invalidPanePid(JSON.stringify(failure.raw));
     case "proc-error":
-      return `/proc の読み取りに失敗しました (${failure.code}): ${failure.message}`;
+      return m().serverLib.tmuxRead.procError(failure.code, failure.message);
     case "unsupported-platform":
-      return `pane environ の読み取りは Linux 限定です (platform=${failure.platform})`;
+      return m().serverLib.tmuxRead.unsupportedPlatform(failure.platform);
   }
 }
 
@@ -94,7 +98,7 @@ export class TmuxReadFailureReporter {
   report(key: string, result: TmuxReadResult<unknown>): void {
     if (result.ok) {
       if (this.last.delete(key)) {
-        this.log(`${this.prefix} ${key}: tmux の読み取りが回復しました`);
+        this.log(`${this.prefix} ${key}: tmux read recovered`);
       }
       return;
     }

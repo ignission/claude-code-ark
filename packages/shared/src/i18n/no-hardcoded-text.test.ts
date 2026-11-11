@@ -12,7 +12,11 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../..");
 
 /** 見る場所。多言語化が済んだパッケージを足していく */
-const SCANNED_DIRS = ["packages/web/src"];
+const SCANNED_DIRS = [
+  "packages/web/src",
+  "packages/server/src",
+  "packages/desktop/src",
+];
 
 /** 辞書そのもの */
 const DICTIONARY_DIR = "packages/shared/src/i18n/";
@@ -32,14 +36,33 @@ const JAPANESE = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
 const JAPANESE_OR_PUNCT =
   /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}、。「」！？]/u;
 
+/** この文字の直後の `/` は、割り算ではなく正規表現の始まりと読む */
+const BEFORE_REGEX = new Set("(,=:[!&|?{};+-*%<>~^");
+
+/** `start` の `/` から始まる正規表現リテラルの終わり (閉じる `/` の次) を返す。同じ行で閉じなければ -1 */
+function regexEnd(source: string, start: number): number {
+  let inClass = false;
+  for (let i = start + 1; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "\n") return -1;
+    if (ch === "\\") i += 1;
+    else if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    else if (ch === "/" && !inClass) return i + 1;
+  }
+  return -1;
+}
+
 /**
  * コメントを空白に置き換える。行数は保つ。
- * 文字列とテンプレートの中の `//` はコメントと見なさない。
+ * 文字列、テンプレート、正規表現の中の `//` や引用符は、コメントや文字列の始まりと見なさない。
  */
 export function stripComments(source: string): string {
   let out = "";
   let i = 0;
   let quote: string | null = null;
+  /** 直前の、空白でない文字 (正規表現の始まりかを見分ける) */
+  let previous = "";
   while (i < source.length) {
     const ch = source[i];
     const next = source[i + 1];
@@ -52,7 +75,10 @@ export function stripComments(source: string): string {
       }
       // 引用符は行をまたがない。JSXの地の文のアポストロフィを文字列の始まりと
       // 読み違えても、その行で打ち切る
-      if (ch === quote || (ch === "\n" && quote !== "`")) quote = null;
+      if (ch === quote || (ch === "\n" && quote !== "`")) {
+        previous = quote;
+        quote = null;
+      }
       i += 1;
       continue;
     }
@@ -67,7 +93,17 @@ export function stripComments(source: string): string {
       i = stop;
       continue;
     }
+    if (ch === "/" && (previous === "" || BEFORE_REGEX.has(previous))) {
+      const end = regexEnd(source, i);
+      if (end !== -1) {
+        out += source.slice(i, end);
+        previous = "/";
+        i = end;
+        continue;
+      }
+    }
     if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    if (!/\s/.test(ch)) previous = ch;
     out += ch;
     i += 1;
   }
@@ -122,6 +158,14 @@ describe("stripComments", () => {
   it("文字列とテンプレートの中の // は残す", () => {
     expect(stripComments('const u = "http://あ";')).toContain("あ");
     expect(stripComments("const u = `a // あ`;")).toContain("あ");
+  });
+
+  it("正規表現の中の引用符を、文字列の始まりと読まない", () => {
+    const stripped = stripComments(
+      "if (/[`\"']/.test(x)) {\n  // あ\n}\nconst b = a / 2; // い"
+    );
+    expect(JAPANESE.test(stripped)).toBe(false);
+    expect(stripped).toContain("a / 2");
   });
 
   it("JSXのコメントを落とす", () => {

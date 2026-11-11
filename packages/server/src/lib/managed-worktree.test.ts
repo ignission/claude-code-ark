@@ -131,7 +131,7 @@ describe("describeWorktreeFailure", () => {
 
     expect(missing).not.toBe(notWorktree);
     // 「消えている」ことが読み取れる文言であること (原因究明の手掛かりになる)
-    expect(missing).toContain("削除");
+    expect(missing).toContain("removed");
   });
 
   it("fs-error は errno を文言に含める (事後に原因を追えるようにする)", () => {

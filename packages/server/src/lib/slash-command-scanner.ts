@@ -12,38 +12,33 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { SlashCommandInfo } from "@ark/shared";
+import { m } from "./i18n.js";
 
-const BUILT_IN: SlashCommandInfo[] = [
-  { name: "/clear", description: "会話履歴をクリア", source: "built-in" },
-  { name: "/compact", description: "履歴を要約して短縮", source: "built-in" },
-  { name: "/help", description: "ヘルプを表示", source: "built-in" },
-  { name: "/init", description: "CLAUDE.md を作成", source: "built-in" },
-  { name: "/review", description: "PR をレビュー", source: "built-in" },
-  {
-    name: "/install-github-app",
-    description: "GitHub App をセットアップ",
-    source: "built-in",
-  },
-  {
-    name: "/login",
-    description: "Anthropic アカウントにログイン",
-    source: "built-in",
-  },
-  { name: "/logout", description: "ログアウト", source: "built-in" },
-  { name: "/config", description: "設定を表示/編集", source: "built-in" },
-  {
-    name: "/cost",
-    description: "セッション中のコストを表示",
-    source: "built-in",
-  },
-  { name: "/model", description: "使用モデルを切替", source: "built-in" },
-  { name: "/permissions", description: "権限を確認/変更", source: "built-in" },
-  {
-    name: "/resume",
-    description: "前回のセッションを再開",
-    source: "built-in",
-  },
-];
+/**
+ * 組み込みコマンド。説明は利用者の言語で出すので、定数に持たず、呼ばれるたびに辞書を読む
+ */
+function builtInCommands(): SlashCommandInfo[] {
+  const d = m().serverLib.slashCommands;
+  return [
+    { name: "/clear", description: d.clear, source: "built-in" },
+    { name: "/compact", description: d.compact, source: "built-in" },
+    { name: "/help", description: d.help, source: "built-in" },
+    { name: "/init", description: d.init, source: "built-in" },
+    { name: "/review", description: d.review, source: "built-in" },
+    {
+      name: "/install-github-app",
+      description: d.installGithubApp,
+      source: "built-in",
+    },
+    { name: "/login", description: d.login, source: "built-in" },
+    { name: "/logout", description: d.logout, source: "built-in" },
+    { name: "/config", description: d.config, source: "built-in" },
+    { name: "/cost", description: d.cost, source: "built-in" },
+    { name: "/model", description: d.model, source: "built-in" },
+    { name: "/permissions", description: d.permissions, source: "built-in" },
+    { name: "/resume", description: d.resume, source: "built-in" },
+  ];
+}
 
 const FRONTMATTER_DESC_RE = /^---[\r\n]+([\s\S]*?)^---[\r\n]+/m;
 const DESCRIPTION_LINE_RE = /^description:\s*(.+?)\s*$/m;
@@ -147,7 +142,7 @@ export async function listSlashCommands(
 
   // 優先順位順に集約。先勝ち
   const merged = new Map<string, SlashCommandInfo>();
-  for (const c of [...project, ...global, ...plugin, ...BUILT_IN]) {
+  for (const c of [...project, ...global, ...plugin, ...builtInCommands()]) {
     if (!merged.has(c.name)) merged.set(c.name, c);
   }
   // 並び順: project → global → plugin → built-in

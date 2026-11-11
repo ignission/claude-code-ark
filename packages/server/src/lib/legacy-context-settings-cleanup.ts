@@ -79,7 +79,7 @@ export function cleanupLegacyContextSettings(
   } catch {
     // 壊れた settings を推測で直さない。理由を残して素通りする。
     console.warn(
-      `[LegacyContext] ${settingsPath} が JSON として読めないため掃除を見送ります`
+      `[LegacyContext] Skipping cleanup: ${settingsPath} is not valid JSON`
     );
     return NOOP;
   }
@@ -151,14 +151,14 @@ export function cleanupLegacyContextSettings(
   } catch (error) {
     // 掃除はセッション起動の前提ではない。read-only 等で書けなくても起動は続ける。
     console.warn(
-      `[LegacyContext] ${settingsPath} を書き換えられないため掃除を見送ります: ${
+      `[LegacyContext] Skipping cleanup: cannot rewrite ${settingsPath}: ${
         error instanceof Error ? error.message : String(error)
       }`
     );
     return NOOP;
   }
   console.log(
-    `[LegacyContext] ${settingsPath}: hook ${removedHooks} 件 / deny ${removedDeny.length} 件を撤去しました`
+    `[LegacyContext] ${settingsPath}: removed ${removedHooks} hook(s) / ${removedDeny.length} deny rule(s)`
   );
   return { changed: true, removedHooks, removedDeny };
 }

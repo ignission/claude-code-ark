@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import type { DiagramDeleteResponse } from "@ark/shared";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { errnoCode, errnoMessage } from "./errors.js";
+import { m } from "./i18n.js";
 
 const MAX_SESSION_ID_LENGTH = 1024;
 const GIT_TIMEOUT_MS = 10_000;
@@ -77,7 +78,7 @@ function resolveDeleteDiagramPath(
   ) {
     return {
       ok: false,
-      error: `図ファイルは ${DIAGRAM_DIR} 配下で指定してください`,
+      error: m().serverFiles.board.deletePathOutsideDir(DIAGRAM_DIR),
     };
   }
   return resolveDiagramPath(worktreeReal, relPath);
@@ -121,9 +122,7 @@ export async function deleteDiagramFile(
     return forbidden(resolved.error);
   }
   if ((options.platform ?? process.platform) === "win32") {
-    return forbidden(
-      "この環境では symlink を安全に検証できないため図ファイルを削除できません"
-    );
+    return forbidden(m().serverFiles.board.symlinkUnverifiable);
   }
 
   const deleteFs = options.fs ?? defaultDeleteFs;
@@ -136,21 +135,19 @@ export async function deleteDiagramFile(
     );
     const fdStat = await fd.stat();
     if (!fdStat.isFile()) {
-      return forbidden("削除対象は通常ファイルではありません");
+      return forbidden(m().serverFiles.board.notRegularFile);
     }
 
     const realPath = await deleteFs.realpath(resolved.absPath);
     const realStat = await deleteFs.stat(realPath);
     if (fdStat.ino !== realStat.ino || fdStat.dev !== realStat.dev) {
-      return forbidden("図ファイルの実体を検証できません");
+      return forbidden(m().serverFiles.board.identityUnverifiable);
     }
     if (
       realPath !== diagramsDir &&
       !realPath.startsWith(diagramsDir + path.sep)
     ) {
-      return forbidden(
-        `図ファイルの実体が worktree の ${DIAGRAM_DIR} から出ています`
-      );
+      return forbidden(m().serverFiles.board.realPathOutsideDir(DIAGRAM_DIR));
     }
 
     options.beforeFinalIdentityCheck?.(resolved.absPath);
@@ -160,7 +157,7 @@ export async function deleteDiagramFile(
       finalStat.ino !== fdStat.ino ||
       finalStat.dev !== fdStat.dev
     ) {
-      return forbidden("削除直前に図ファイルの実体が変化しました");
+      return forbidden(m().serverFiles.board.changedBeforeDelete);
     }
 
     deleteFs.unlinkSync(resolved.absPath);
@@ -171,7 +168,7 @@ export async function deleteDiagramFile(
       return {
         ok: false,
         code: "NOT_FOUND",
-        error: "図ファイルが見つかりません",
+        error: m().serverFiles.board.notFound,
       };
     }
     if (
@@ -180,12 +177,15 @@ export async function deleteDiagramFile(
       code === "ELOOP" ||
       code === "EMLINK"
     ) {
-      return forbidden(`図ファイルへのアクセスが拒否されました (${code})`);
+      return forbidden(m().serverFiles.board.accessDenied(code));
     }
     return {
       ok: false,
       code: "IO_ERROR",
-      error: `図ファイルの削除に失敗しました (${code}): ${errnoMessage(error)}`,
+      error: m().serverFiles.board.deleteFailedWithCode(
+        code,
+        errnoMessage(error)
+      ),
     };
   } finally {
     try {
@@ -220,7 +220,7 @@ export async function handleDiagramDeleteRequest(
     return {
       ok: false,
       code: "BAD_REQUEST",
-      error: "不正なリクエストです",
+      error: m().serverFiles.invalidRequest,
     };
   }
 
@@ -229,7 +229,7 @@ export async function handleDiagramDeleteRequest(
     return {
       ok: false,
       code: "SESSION_NOT_FOUND",
-      error: "セッションが見つかりません",
+      error: m().serverFiles.sessionNotFound,
     };
   }
   const worktreeReal = deps.resolveManagedWorktreePath(session.worktreePath);
@@ -237,7 +237,7 @@ export async function handleDiagramDeleteRequest(
     return {
       ok: false,
       code: "FORBIDDEN",
-      error: "管理対象の worktree ではありません",
+      error: m().serverFiles.unmanagedWorktree,
     };
   }
 
@@ -258,14 +258,17 @@ export async function handleDiagramDeleteRequest(
     return {
       ok: false,
       code: "IO_ERROR",
-      error: `Git 管理状態の確認に失敗しました (${errnoCode(error)}): ${errnoMessage(error)}`,
+      error: m().serverFiles.board.gitStatusCheckFailed(
+        errnoCode(error),
+        errnoMessage(error)
+      ),
     };
   }
   if (tracked !== data.expectedTracked) {
     return {
       ok: false,
       code: "CONFLICT",
-      error: "Git 管理状態が変化しました。一覧を更新して再確認してください",
+      error: m().serverFiles.board.gitStatusChanged,
     };
   }
 
@@ -280,7 +283,9 @@ export async function handleDiagramDeleteRequest(
     );
     if (cleared) deps.onSessionCleared(data.sessionId);
   } catch (error) {
-    const databaseWarning = `ファイルは削除済みですが復元情報の消去に失敗しました: ${errnoMessage(error)}`;
+    const databaseWarning = m().serverFiles.board.deletedButClearFailed(
+      errnoMessage(error)
+    );
     warning = databaseWarning;
   }
   deps.onDeleted({ sessionId: data.sessionId, relPath });
@@ -315,7 +320,7 @@ export function createDiagramDeleteSocketHandler(
       safeReply({
         ok: false,
         code: "IO_ERROR",
-        error: `図ファイルの削除に失敗しました: ${errnoMessage(error)}`,
+        error: m().serverFiles.board.deleteFailed(errnoMessage(error)),
       });
     });
   };

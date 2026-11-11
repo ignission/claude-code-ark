@@ -7,6 +7,7 @@
 
 import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
+import { m } from "./i18n.js";
 
 export { DIAGRAM_DIR };
 
@@ -25,18 +26,18 @@ export type DiagramRelPathResult =
  */
 export function normalizeDiagramRelPath(relPath: string): DiagramRelPathResult {
   if (typeof relPath !== "string" || relPath.length === 0) {
-    return { ok: false, error: "図のパスが空です" };
+    return { ok: false, error: m().serverFiles.board.pathEmpty };
   }
   if (relPath.length > 1024) {
-    return { ok: false, error: "図のパスが長すぎます" };
+    return { ok: false, error: m().serverFiles.board.pathTooLong };
   }
   if (path.isAbsolute(relPath)) {
-    return { ok: false, error: "図のパスは worktree 相対で指定してください" };
+    return { ok: false, error: m().serverFiles.board.pathNotRelative };
   }
   if (!relPath.endsWith(DIAGRAM_SUFFIX)) {
     return {
       ok: false,
-      error: `図のパスは ${DIAGRAM_SUFFIX} で終わる必要があります`,
+      error: m().serverFiles.board.pathBadSuffix(DIAGRAM_SUFFIX),
     };
   }
 
@@ -45,7 +46,7 @@ export function normalizeDiagramRelPath(relPath: string): DiagramRelPathResult {
   if (relPath.includes("..")) {
     return {
       ok: false,
-      error: `図のパスが worktree の ${DIAGRAM_DIR} から出ています`,
+      error: m().serverFiles.board.pathOutsideDir(DIAGRAM_DIR),
     };
   }
 
@@ -79,7 +80,7 @@ export function resolveDiagramPath(
   if (absPath !== base && !absPath.startsWith(base + path.sep)) {
     return {
       ok: false,
-      error: `図のパスが worktree の ${DIAGRAM_DIR} から出ています`,
+      error: m().serverFiles.board.pathOutsideDir(DIAGRAM_DIR),
     };
   }
   return { ok: true, absPath, relPath: normalized.relPath };

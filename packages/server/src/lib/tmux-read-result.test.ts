@@ -113,7 +113,7 @@ describe("TmuxReadFailureReporter", () => {
     reporter.report("s1", ok);
     reporter.report("s1", fail(tmuxFailed()));
     expect(log).toHaveBeenCalledTimes(3);
-    expect(log.mock.calls[1]?.[0]).toMatch(/回復/);
+    expect(log.mock.calls[1]?.[0]).toMatch(/recovered/);
   });
 
   it("一度も失敗していない key の成功は何も出力しない", () => {

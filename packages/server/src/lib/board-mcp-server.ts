@@ -166,13 +166,13 @@ export function createBoardMcpServer(
     "board_open",
     {
       description:
-        `書いた HTML (${DIAGRAM_DIR}/*.diagram.html) をこのセッションのボードペインで開かせる。` +
-        "書いた直後に呼ぶこと。path は worktree 相対で指定する。",
+        `Open the HTML you wrote (${DIAGRAM_DIR}/*.diagram.html) in this session's board pane. ` +
+        "Call it right after writing the file. Specify path relative to the worktree.",
       inputSchema: {
         path: z
           .string()
           .describe(
-            `worktree 相対の図ファイルパス（例: ${DIAGRAM_DIR}/purchase-flow.diagram.html）`
+            `Board file path relative to the worktree (e.g. ${DIAGRAM_DIR}/purchase-flow.diagram.html)`
           ),
       },
     },
@@ -184,10 +184,10 @@ export function createBoardMcpServer(
         return textResult(
           res.ok
             ? JSON.stringify({ opened: args.path })
-            : `board_open 失敗: ${res.error ?? "不明なエラー"}`
+            : `board_open failed: ${res.error ?? "unknown error"}`
         );
       } catch (e) {
-        return textResult(`board_open 失敗: ${getErrorMessage(e)}`);
+        return textResult(`board_open failed: ${getErrorMessage(e)}`);
       }
     }
   );
@@ -196,22 +196,24 @@ export function createBoardMcpServer(
     "todo_add",
     {
       description:
-        "ユーザーに頼まれたときに、保留・後回し・別件にした話題をこのセッションの TODO に足す。TODO は人間が後で読んで思い出すためのもので、完了と削除は人間が行う。足す前に todo_list で同じものが無いか確かめること。",
+        "When the user asks, add a topic that was put on hold, postponed, or set aside as a separate matter to this session's TODOs. TODOs are for the human to read later as a reminder; the human completes and deletes them. Before adding, call todo_list to check that the same item does not already exist.",
       inputSchema: {
         text: z
           .string()
           .describe(
-            "1 行の本文 (200 文字まで)。あとで読んで何をするか分かる言葉で"
+            "One-line text (up to 200 characters). Word it so that it is clear what to do when read later"
           ),
         note: z
           .string()
           .optional()
-          .describe("補足 (保留にした理由や、関係するファイルなど)"),
+          .describe(
+            "Supplementary note (why it was put on hold, related files, etc.)"
+          ),
         branch: z
           .string()
           .optional()
           .describe(
-            "この TODO で新しい worktree を作るときのブランチ名の候補。話題を要約した英語の kebab-case (例: fix-log-format)、3〜5語程度"
+            "Suggested branch name for when a new worktree is created from this TODO. English kebab-case summarizing the topic (e.g. fix-log-format), about 3 to 5 words"
           ),
       },
     },
@@ -223,7 +225,7 @@ export function createBoardMcpServer(
       });
       return textResult(
         "error" in result
-          ? `todo_add 失敗: ${result.error}`
+          ? `todo_add failed: ${result.error}`
           : JSON.stringify(result)
       );
     }
@@ -233,7 +235,7 @@ export function createBoardMcpServer(
     "todo_list",
     {
       description:
-        "このセッションの未完了の TODO を読む。todo_add で足す前に、同じものが無いかを確かめるために呼ぶ。",
+        "Read this session's open TODOs. Call it before adding with todo_add to check that the same item does not already exist.",
       inputSchema: {},
     },
     async () => {
@@ -242,7 +244,7 @@ export function createBoardMcpServer(
           JSON.stringify(await handleTodoList(deps, worktreePath))
         );
       } catch (error) {
-        return textResult(`todo_list 失敗: ${getErrorMessage(error)}`);
+        return textResult(`todo_list failed: ${getErrorMessage(error)}`);
       }
     }
   );
@@ -251,26 +253,26 @@ export function createBoardMcpServer(
     "task_start",
     {
       description:
-        "子タスクを別の git worktree に起こす。呼び出し元の worktree を親にして新しいブランチの worktree を作り、" +
-        "Ark のセッションを起動し、起動を待って prompt を最初の文として送る。子は Ark の一覧で親の下に並ぶ。" +
-        "子の結果は返らないし、待たない (進み具合はユーザーが Ark で見る)。" +
-        "戻り値は新しい worktree のパスとブランチ名、prompt を送れたか (promptSent)。",
+        "Start a child task in a separate git worktree. Creates a worktree on a new branch with the caller's worktree as its parent, " +
+        "starts an Ark session, waits for it to start, and sends prompt as the first message. The child appears under its parent in Ark's list. " +
+        "The child's result is not returned, and this tool does not wait for it (the user watches the progress in Ark). " +
+        "Returns the new worktree's path and branch name, and whether prompt was sent (promptSent).",
       inputSchema: {
         name: z
           .string()
           .describe(
-            "タスク名。ブランチ名と worktree のディレクトリ名になる。話題を要約した英語の kebab-case (例: fix-log-format)、3〜5語程度"
+            "Task name. It becomes the branch name and the worktree directory name. English kebab-case summarizing the topic (e.g. fix-log-format), about 3 to 5 words"
           ),
         prompt: z
           .string()
           .describe(
-            "子セッションに最初に送る文。子はこの会話を知らないので、目的・背景・終わりの条件を書く"
+            "The first message sent to the child session. The child does not know this conversation, so state the goal, the background, and the completion criteria"
           ),
         baseBranch: z
           .string()
           .optional()
           .describe(
-            "ベースのブランチ。省略時は呼び出し元の worktree の今のブランチ"
+            "Base branch. Defaults to the current branch of the caller's worktree"
           ),
       },
     },
@@ -284,7 +286,7 @@ export function createBoardMcpServer(
       });
       return textResult(
         "error" in result
-          ? `task_start 失敗: ${result.error}`
+          ? `task_start failed: ${result.error}`
           : JSON.stringify(result)
       );
     }
@@ -363,7 +365,7 @@ export class BoardMcpServer {
           await transport.handleRequest(req, res, req.body);
         } catch (err) {
           console.error(
-            "[BoardMcpServer] handleRequest エラー:",
+            "[BoardMcpServer] handleRequest error:",
             getErrorMessage(err)
           );
           if (!res.headersSent) {
@@ -386,14 +388,16 @@ export class BoardMcpServer {
         if (!addr || typeof addr === "string") {
           httpServer.close();
           this.starting = null;
-          reject(new Error("BoardMcpServer: ポート取得に失敗しました"));
+          reject(new Error("BoardMcpServer: failed to get the port"));
           return;
         }
         this.httpServer = httpServer;
         this.port = addr.port;
         this.starting = null;
         const endpoint = { url: `http://127.0.0.1:${addr.port}/mcp` };
-        console.log(`[BoardMcpServer] HTTP MCP server を起動: ${endpoint.url}`);
+        console.log(
+          `[BoardMcpServer] HTTP MCP server started: ${endpoint.url}`
+        );
         resolve(endpoint);
       };
       httpServer.on("error", err => {
@@ -404,7 +408,7 @@ export class BoardMcpServer {
         ) {
           triedFallback = true;
           console.warn(
-            `[BoardMcpServer] 希望ポート ${preferredPort} が使用中。ephemeral にフォールバックします`
+            `[BoardMcpServer] Preferred port ${preferredPort} is in use. Falling back to an ephemeral port`
           );
           httpServer.listen(0, "127.0.0.1", onListening);
           return;

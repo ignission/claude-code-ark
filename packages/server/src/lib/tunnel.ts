@@ -106,9 +106,7 @@ export class TunnelManager extends EventEmitter {
 
       // Named Tunnelモードの場合、オプションが必須
       if (this.mode === "named" && !this.namedTunnelOptions) {
-        throw new Error(
-          "Named Tunnelモードの場合、namedTunnelOptionsが必須です"
-        );
+        throw new Error("namedTunnelOptions is required in Named Tunnel mode");
       }
     }
   }
@@ -299,7 +297,7 @@ export class TunnelManager extends EventEmitter {
   /** cloudflared の `/ready` を確認する。接続が 1 本以上あれば 200 が返る */
   private async probeReady(): Promise<TunnelProbeResult> {
     if (!this.process || this.metricsPort === null) {
-      return { healthy: false, detail: "cloudflared が起動していません" };
+      return { healthy: false, detail: "cloudflared is not running" };
     }
     const response = await fetch(`http://127.0.0.1:${this.metricsPort}/ready`, {
       signal: AbortSignal.timeout(5000),
@@ -320,7 +318,7 @@ export class TunnelManager extends EventEmitter {
     if (this.stopped) return;
 
     const url = await this.startNamedTunnel();
-    console.log(`[Tunnel] Named Tunnel を張り直しました: ${url}`);
+    console.log(`[Tunnel] Restarted the Named Tunnel: ${url}`);
     this.emit("restart", url);
   }
 
@@ -449,7 +447,7 @@ export async function findAvailableMetricsPort(
   }
   const ephemeral = await tryListen(0);
   if (ephemeral === null) {
-    throw new Error("cloudflared metrics 用の空きポートが見つかりません");
+    throw new Error("No free port found for cloudflared metrics");
   }
   return ephemeral;
 }
