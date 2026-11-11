@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { m } from "@/lib/i18n";
 
 interface LicensePackage {
   name: string;
@@ -76,34 +77,36 @@ export function AboutDialog({ open, onOpenChange, metrics }: AboutDialogProps) {
       <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>About Ark</DialogTitle>
-          <DialogDescription>
-            ローカルで稼働する複数 Claude Code セッションを管理する Web UI。
-          </DialogDescription>
+          <DialogDescription>{m.dialogs.about.description}</DialogDescription>
         </DialogHeader>
 
         <section className="space-y-2">
-          <h3 className="font-semibold text-sm">このマシン</h3>
+          <h3 className="font-semibold text-sm">
+            {m.dialogs.about.thisMachine}
+          </h3>
           <SystemStatusBar metrics={metrics} />
         </section>
 
         <section className="space-y-2">
-          <h3 className="font-semibold text-sm">同梱コンポーネント</h3>
+          <h3 className="font-semibold text-sm">
+            {m.dialogs.about.bundledComponents}
+          </h3>
           {loading && (
-            <p className="text-muted-foreground text-sm">Loading...</p>
+            <p className="text-muted-foreground text-sm">{m.common.loading}</p>
           )}
           {error && (
             <p className="text-destructive text-sm">
-              Failed to load licenses: {error}
+              {m.dialogs.about.licensesLoadFailed(error)}
             </p>
           )}
           {!loading && !error && data && !data.available && (
             <p className="text-muted-foreground text-sm">
-              Bundled binaries are not packaged in this build.
+              {m.dialogs.about.notPackaged}
             </p>
           )}
           {!loading && data?.available && data.packages.length === 0 && (
             <p className="text-muted-foreground text-sm">
-              No bundled components registered.
+              {m.dialogs.about.noComponents}
             </p>
           )}
           <ul className="space-y-1">
@@ -132,7 +135,7 @@ export function AboutDialog({ open, onOpenChange, metrics }: AboutDialogProps) {
                 </Button>
                 {expanded === pkg.name && (
                   <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-xs">
-                    {pkg.text || "(LICENSE file not available)"}
+                    {pkg.text || m.dialogs.about.licenseUnavailable}
                   </pre>
                 )}
               </li>

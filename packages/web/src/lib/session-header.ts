@@ -5,6 +5,7 @@
  * どの項目をどの順に出すかと文言をここに寄せ、テストで固定する。
  */
 
+import { m } from "@/lib/i18n";
 import { getBaseName } from "@/utils/pathUtils";
 
 export interface SessionHeaderLabels {
@@ -50,20 +51,22 @@ export function terminalWindowActions(input: {
 
 /** 入力バーのボタンの文言。今の状態ではなく、押すと起きることを書く */
 export function inputBarToggleLabel(visible: boolean): string {
-  return visible ? "入力バーを隠す" : "入力バーを表示";
+  return visible
+    ? m.session.header.hideInputBar
+    : m.session.header.showInputBar;
 }
 
 export function notificationMenuLabel(enabled: boolean): string {
   return enabled
-    ? "このセッションの通知をオフにする"
-    : "このセッションの通知をオンにする";
+    ? m.session.header.muteSession
+    : m.session.header.unmuteSession;
 }
 
 export function deleteSessionDescription(
   worktree: { isMain: boolean } | undefined
 ): string {
-  if (worktree === undefined) return "このセッションを削除しますか？";
+  if (worktree === undefined) return m.session.header.deleteConfirm;
   return worktree.isMain
-    ? "このセッションを削除しますか？メインWorktreeは削除されません。"
-    : "このセッションとWorktreeを削除しますか？関連するブランチも削除されます。";
+    ? m.session.header.deleteConfirmKeepMain
+    : m.session.header.deleteConfirmWithWorktree;
 }

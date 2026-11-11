@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useIsMobile } from "@/hooks/useMobile";
+import { m } from "@/lib/i18n";
 import { FolderBrowserDialog } from "./FolderBrowserDialog";
 
 interface RepoSelectDialogProps {
@@ -119,7 +120,7 @@ function RepoSelectContent({
       {/* スキャンパス選択（allowlistモード時は任意パス列挙が拒否されるため非表示） */}
       {!isAllowlistMode && (
         <div className="space-y-2 px-1">
-          <Label>スキャンするパス</Label>
+          <Label>{m.dialogs.repoSelect.scanPath}</Label>
           <Button
             type="button"
             variant="outline"
@@ -133,7 +134,7 @@ function RepoSelectContent({
               <FolderOpen className="w-4 h-4 shrink-0" />
             )}
             <span className="truncate flex-1 text-left">
-              {scanBasePath || "フォルダを選択..."}
+              {scanBasePath || m.dialogs.repoSelect.chooseFolder}
             </span>
           </Button>
         </div>
@@ -143,18 +144,24 @@ function RepoSelectContent({
       <div className="space-y-2 flex-1 overflow-hidden flex flex-col px-1">
         <Label>
           {isAllowlistMode
-            ? `許可されたリポジトリ (${filteredRepos.length}/${displayRepos.length})`
+            ? m.dialogs.repoSelect.allowedRepos(
+                filteredRepos.length,
+                displayRepos.length
+              )
             : isScanning
-              ? "スキャン中..."
+              ? m.dialogs.repoSelect.scanning
               : displayRepos.length > 0
-                ? `検出されたリポジトリ (${filteredRepos.length}/${displayRepos.length})`
-                : "検出されたリポジトリ"}
+                ? m.dialogs.repoSelect.foundReposCount(
+                    filteredRepos.length,
+                    displayRepos.length
+                  )
+                : m.dialogs.repoSelect.foundRepos}
         </Label>
         {/* 検索ボックス */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="リポジトリを検索..."
+            placeholder={m.dialogs.repoSelect.searchPlaceholder}
             value={filterQuery}
             onChange={e => setFilterQuery(e.target.value)}
             className="pl-9 h-10"
@@ -204,7 +211,7 @@ function RepoSelectContent({
 
       {/* 直接パス入力 */}
       <div className="space-y-2 px-1">
-        <Label htmlFor="repoPath">または直接パスを入力</Label>
+        <Label htmlFor="repoPath">{m.dialogs.repoSelect.pathInputLabel}</Label>
         <Input
           id="repoPath"
           placeholder="/path/to/your/repository"
@@ -226,7 +233,7 @@ function RepoSelectContent({
             disabled={!repoInput.trim()}
             className="h-12"
           >
-            選択
+            {m.dialogs.repoSelect.select}
           </Button>
           <Button
             type="button"
@@ -234,7 +241,7 @@ function RepoSelectContent({
             onClick={() => onOpenChange(false)}
             className="h-12"
           >
-            キャンセル
+            {m.common.cancel}
           </Button>
         </div>
       ) : (
@@ -245,7 +252,7 @@ function RepoSelectContent({
             onClick={() => onOpenChange(false)}
             className="h-12 md:h-10"
           >
-            キャンセル
+            {m.common.cancel}
           </Button>
           <Button
             type="button"
@@ -253,7 +260,7 @@ function RepoSelectContent({
             disabled={!repoInput.trim()}
             className="h-12 md:h-10"
           >
-            選択
+            {m.dialogs.repoSelect.select}
           </Button>
         </div>
       )}
@@ -263,8 +270,8 @@ function RepoSelectContent({
         isOpen={isFolderBrowserOpen}
         onOpenChange={setIsFolderBrowserOpen}
         initialPath={scanBasePath || undefined}
-        title="スキャンするフォルダを選択"
-        description="このフォルダ配下のGitリポジトリをスキャンします。"
+        title={m.dialogs.repoSelect.folderBrowserTitle}
+        description={m.dialogs.repoSelect.folderBrowserDescription}
         listDirectory={listDirectory}
         onConfirm={handleFolderConfirm}
       />
@@ -289,11 +296,11 @@ function RepoSelectDialogDesktop({
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-lg mx-auto max-h-[80vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>リポジトリを選択</DialogTitle>
+          <DialogTitle>{m.dialogs.repoSelect.title}</DialogTitle>
           <DialogDescription>
             {isAllowlistMode
-              ? "許可されたリポジトリ一覧から選択するか、直接リポジトリパスを入力してください。"
-              : "スキャンするフォルダを選択するか、直接リポジトリパスを入力してください。"}
+              ? m.dialogs.repoSelect.descriptionAllowlist
+              : m.dialogs.repoSelect.descriptionScan}
           </DialogDescription>
         </DialogHeader>
         <RepoSelectContent
@@ -329,11 +336,11 @@ function RepoSelectDrawerMobile({
     <Drawer open={isOpen} onOpenChange={onOpenChange}>
       <DrawerContent className="max-h-[85dvh] flex flex-col">
         <DrawerHeader>
-          <DrawerTitle>リポジトリを選択</DrawerTitle>
+          <DrawerTitle>{m.dialogs.repoSelect.title}</DrawerTitle>
           <DrawerDescription>
             {isAllowlistMode
-              ? "許可されたリポジトリ一覧から選択するか、直接リポジトリパスを入力してください。"
-              : "スキャンするフォルダを選択するか、直接リポジトリパスを入力してください。"}
+              ? m.dialogs.repoSelect.descriptionAllowlist
+              : m.dialogs.repoSelect.descriptionScan}
           </DrawerDescription>
         </DrawerHeader>
         <div className="flex-1 overflow-hidden flex flex-col px-4">

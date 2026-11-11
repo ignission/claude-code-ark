@@ -8,23 +8,19 @@
 
 import type { PlanLimits } from "@ark/shared";
 import { useState } from "react";
+import { m } from "@/lib/i18n";
 import { planLimitRows } from "@/lib/plan-limits";
 
 export function PlanLimitsBadge({ limits }: { limits: PlanLimits }) {
   const [showReset, setShowReset] = useState(false);
   const rows = planLimitRows(limits, new Date());
   if (rows.length === 0) return null;
-  const label = rows
-    .map(
-      r =>
-        `${r.name} ${r.percent}%${r.resetAt ? ` (${r.resetAt}にリセット)` : ""}`
-    )
-    .join("、");
+  const label = m.session.planLimits.summary(rows);
   return (
     <button
       type="button"
       onClick={() => setShowReset(v => !v)}
-      aria-label={`プランの使用量: ${label}`}
+      aria-label={m.session.planLimits.ariaLabel(label)}
       title={label}
       data-testid="plan-limits-badge"
       className="flex shrink-0 flex-col items-start self-center text-[10px] text-muted-foreground leading-tight tabular-nums"

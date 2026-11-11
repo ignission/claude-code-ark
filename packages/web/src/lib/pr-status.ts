@@ -4,6 +4,7 @@
  */
 
 import type { SessionPrStatus } from "@ark/shared";
+import { m } from "./i18n";
 
 function sameStatus(a: SessionPrStatus, b: SessionPrStatus): boolean {
   return (
@@ -58,42 +59,41 @@ export function prBadge(status: SessionPrStatus): PrBadge {
   const pr = `#${status.number}`;
   if (status.state === "MERGED") {
     return {
-      text: `${pr} マージ済み`,
-      label: `PR ${pr} はマージ済み`,
+      text: m.session.pr.mergedText(pr),
+      label: m.session.pr.mergedLabel(pr),
       tone: "muted",
     };
   }
   if (status.state === "CLOSED") {
     return {
-      text: `${pr} クローズ`,
-      label: `PR ${pr} はクローズ済み`,
+      text: m.session.pr.closedText(pr),
+      label: m.session.pr.closedLabel(pr),
       tone: "muted",
     };
   }
-  const draft = status.isDraft ? " (下書き)" : "";
   switch (status.checks) {
     case "failed":
       return {
         text: `${pr} ✕`,
-        label: `PR ${pr}${draft}: チェックが失敗`,
+        label: m.session.pr.checksFailedLabel(pr, status.isDraft),
         tone: "ng",
       };
     case "pending":
       return {
-        text: `${pr} 待ち`,
-        label: `PR ${pr}${draft}: チェックの実行中`,
+        text: m.session.pr.pendingText(pr),
+        label: m.session.pr.checksPendingLabel(pr, status.isDraft),
         tone: "wait",
       };
     case "passed":
       return {
         text: `${pr} ✓`,
-        label: `PR ${pr}${draft}: チェックが通過`,
+        label: m.session.pr.checksPassedLabel(pr, status.isDraft),
         tone: "ok",
       };
     case "none":
       return {
         text: pr,
-        label: `PR ${pr}${draft}: チェックなし`,
+        label: m.session.pr.noChecksLabel(pr, status.isDraft),
         tone: "muted",
       };
   }

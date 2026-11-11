@@ -44,6 +44,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
+import { m } from "@/lib/i18n";
 import type { SessionListEntry } from "@/lib/session-sections";
 import { cn } from "@/lib/utils";
 
@@ -151,24 +152,24 @@ export function SessionRowMenu({
       <Menu.Group>
         <Menu.Item onSelect={onOpen}>
           {entry.session ? <MessageSquare /> : <Play />}
-          {entry.session ? "開く" : "セッションを起動"}
+          {entry.session ? m.session.menu.open : m.session.menu.startSession}
         </Menu.Item>
         {onSplitTask && (
           <Menu.Item onSelect={onSplitTask}>
             <GitBranchPlus />
-            子タスクを分離...
+            {m.session.menu.splitTask}
           </Menu.Item>
         )}
         {onOpenParent && (
           <Menu.Item onSelect={onOpenParent}>
             <CornerLeftUp />
-            親を開く
+            {m.session.menu.openParent}
           </Menu.Item>
         )}
         {onStartRename && (
           <Menu.Item onSelect={onStartRename}>
             <Pencil />
-            表示名を変更
+            {m.session.menu.rename}
           </Menu.Item>
         )}
         {notifications && (
@@ -176,26 +177,30 @@ export function SessionRowMenu({
             onSelect={() => notifications.onChange(!notifications.enabled)}
           >
             {notifications.enabled ? <BellOff /> : <Bell />}
-            {notifications.enabled ? "通知をオフにする" : "通知をオンにする"}
+            {notifications.enabled
+              ? m.session.menu.muteNotifications
+              : m.session.menu.unmuteNotifications}
           </Menu.Item>
         )}
         {onRestart && (
           <Menu.Item onSelect={onRestart}>
             <RotateCw />
-            再起動
+            {m.session.actions.restart}
           </Menu.Item>
         )}
         {worktreeProfile && (
           <Menu.Sub>
             <Menu.SubTrigger>
               <UserRound />
-              このworktreeのプロファイル
+              {m.session.menu.worktreeProfile}
             </Menu.SubTrigger>
             <Menu.SubContent className={cn("w-60", Menu.subContentClassName)}>
               <ProfileChoiceItems
                 Menu={Menu}
                 choice={worktreeProfile}
-                unsetLabel={`リポジトリの設定を継承 (${worktreeProfile.inheritedProfileName ?? "既定"})`}
+                unsetLabel={m.session.menu.inheritRepoProfile(
+                  worktreeProfile.inheritedProfileName
+                )}
                 onOpenProfileManager={onOpenProfileManager}
               />
             </Menu.SubContent>
@@ -207,25 +212,25 @@ export function SessionRowMenu({
           <Menu.Separator />
           <Menu.Group>
             <Menu.Label className="text-xs font-semibold text-muted-foreground">
-              リポジトリ
+              {m.session.menu.repository}
             </Menu.Label>
             {onCreateWorktree && (
               <Menu.Item onSelect={onCreateWorktree}>
                 <Plus />
-                新規worktreeを作成
+                {m.session.menu.newWorktree}
               </Menu.Item>
             )}
             {onOpenRepoGrid && (
               <Menu.Item onSelect={onOpenRepoGrid}>
                 <LayoutGrid />
-                このリポジトリの全セッションを並べて見る
+                {m.session.menu.openRepoGrid}
               </Menu.Item>
             )}
             {repoProfile && (
               <Menu.Sub>
                 <Menu.SubTrigger>
                   <UserRound />
-                  リポジトリの既定プロファイル
+                  {m.session.menu.repoDefaultProfile}
                 </Menu.SubTrigger>
                 <Menu.SubContent
                   className={cn("w-60", Menu.subContentClassName)}
@@ -233,7 +238,7 @@ export function SessionRowMenu({
                   <ProfileChoiceItems
                     Menu={Menu}
                     choice={repoProfile}
-                    unsetLabel="既定 (~/.claude)"
+                    unsetLabel={m.session.menu.defaultProfile}
                     onOpenProfileManager={onOpenProfileManager}
                   />
                 </Menu.SubContent>
@@ -242,7 +247,7 @@ export function SessionRowMenu({
             {onRemoveRepo && (
               <Menu.Item onSelect={onRemoveRepo}>
                 <EyeOff />
-                サイドバーから除外
+                {m.session.menu.removeFromSidebar}
               </Menu.Item>
             )}
           </Menu.Group>
@@ -253,7 +258,9 @@ export function SessionRowMenu({
           <Menu.Separator />
           <Menu.Item variant="destructive" onSelect={onDelete}>
             <Trash2 />
-            {entry.session ? "セッションを削除" : "Worktreeを削除"}
+            {entry.session
+              ? m.session.actions.deleteSession
+              : m.session.actions.deleteWorktree}
           </Menu.Item>
         </>
       )}
@@ -300,7 +307,7 @@ function ProfileChoiceItems({
           <Menu.Separator />
           <Menu.Item onSelect={onOpenProfileManager}>
             <Settings />
-            プロファイル管理を開く...
+            {m.session.menu.openProfileManager}
           </Menu.Item>
         </>
       )}

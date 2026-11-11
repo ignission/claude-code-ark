@@ -36,6 +36,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { m } from "@/lib/i18n";
 import { type PrBadgeTone, prBadge } from "@/lib/pr-status";
 import type { SessionListEntry } from "@/lib/session-sections";
 import { cn } from "@/lib/utils";
@@ -309,7 +310,7 @@ export function SessionListRow({
                 onKeyDown={handleEditKeyDown}
                 onBlur={finishEditing}
                 maxLength={200}
-                aria-label="表示名を編集"
+                aria-label={m.session.row.editDisplayName}
                 className="h-7 w-0 min-w-0 flex-1 rounded-sm border border-input bg-background px-1.5 text-[15px] font-semibold text-foreground outline-none focus:border-ring"
               />
             ) : (
@@ -353,8 +354,8 @@ export function SessionListRow({
                 <button
                   type="button"
                   data-testid="session-row-parent"
-                  title={`親: ${parentLabel}`}
-                  aria-label={`親 ${parentLabel} を開く`}
+                  title={m.session.row.parentTitle(parentLabel)}
+                  aria-label={m.session.row.openParentLabel(parentLabel)}
                   disabled={!onOpenParent}
                   // 行を押したときの動き (行を開く・フォーカスを外す) を起こさない
                   onClick={event => {
@@ -378,7 +379,11 @@ export function SessionListRow({
                   className="inline-flex h-5 max-w-[9rem] shrink-0 items-center gap-1 rounded-sm bg-muted px-2 text-xs font-medium text-muted-foreground"
                 >
                   <span className="truncate">{profile.name}</span>
-                  {profile.individual && <span className="shrink-0">個別</span>}
+                  {profile.individual && (
+                    <span className="shrink-0">
+                      {m.session.row.individualProfile}
+                    </span>
+                  )}
                 </span>
               )}
               {badge && prStatus && (
@@ -405,8 +410,8 @@ export function SessionListRow({
                 <span
                   role="img"
                   data-testid="session-row-children"
-                  aria-label={`子のタスク ${childCount} 件`}
-                  title={`子のタスク ${childCount} 件`}
+                  aria-label={m.session.row.childTasks(childCount)}
+                  title={m.session.row.childTasks(childCount)}
                   className="inline-flex shrink-0 items-center gap-0.5 rounded-sm bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
                 >
                   <CornerDownRight className="size-3" aria-hidden="true" />
@@ -417,8 +422,8 @@ export function SessionListRow({
                 <span
                   role="img"
                   data-testid="session-row-todo"
-                  aria-label={`未完了の TODO ${todoCount} 件`}
-                  title={`未完了の TODO ${todoCount} 件`}
+                  aria-label={m.session.row.openTodos(todoCount)}
+                  title={m.session.row.openTodos(todoCount)}
                   className="shrink-0 rounded-sm bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
                 >
                   {todoCount}
@@ -446,11 +451,7 @@ export function SessionListRow({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label={
-                branch
-                  ? `${primaryLabel} (${branch}) のメニュー`
-                  : `${primaryLabel}のメニュー`
-              }
+              aria-label={m.session.row.menuLabel(primaryLabel, branch)}
               className={cn(
                 "inline-flex shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground",
                 variant === "sidebar"
@@ -478,10 +479,10 @@ export function SessionListRow({
         <div className="mt-2 flex items-center gap-1.5">
           <span
             className="inline-flex h-6 items-center gap-1 rounded-sm bg-status-awaiting/15 px-2 text-xs font-semibold text-status-awaiting"
-            title="プロファイルの割り当てが変わりました。このセッションは元の設定で動いています"
+            title={m.session.row.staleProfileHint}
           >
             <TriangleAlert className="size-3.5" aria-hidden="true" />
-            古い設定
+            {m.session.row.staleProfile}
           </span>
           {menu.onRestart && (
             <button
@@ -490,7 +491,7 @@ export function SessionListRow({
               className="inline-flex h-6 items-center gap-1 rounded-sm bg-status-awaiting/15 px-2 text-xs font-semibold text-status-awaiting transition-colors hover:bg-status-awaiting/25"
             >
               <RotateCw className="size-3.5" aria-hidden="true" />
-              再起動
+              {m.session.actions.restart}
             </button>
           )}
         </div>

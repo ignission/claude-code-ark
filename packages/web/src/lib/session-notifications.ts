@@ -1,4 +1,5 @@
 import type { BridgeSessionStatus, SessionPrStatus } from "@ark/shared";
+import { m } from "./i18n";
 
 export type SessionNotificationKind =
   | "awaiting"
@@ -214,26 +215,29 @@ export function buildSessionNotificationPayload(
   switch (event.kind) {
     case "awaiting":
       return {
-        title: "Ark: 判断を待っています",
-        body: `${sessionLabel} で権限確認が必要です`,
+        title: m.session.notifications.awaitingTitle,
+        body: m.session.notifications.awaitingBody(sessionLabel),
         tag: `ark-session-${event.sessionId}-awaiting`,
       };
     case "question":
       return {
-        title: "Ark: 質問があります",
-        body: `${sessionLabel} が回答を待っています`,
+        title: m.session.notifications.questionTitle,
+        body: m.session.notifications.questionBody(sessionLabel),
         tag: `ark-session-${event.sessionId}-question`,
       };
     case "completed":
       return {
-        title: "Ark: 作業が完了しました",
-        body: `${sessionLabel} の実行が停止しました`,
+        title: m.session.notifications.completedTitle,
+        body: m.session.notifications.completedBody(sessionLabel),
         tag: `ark-session-${event.sessionId}-completed`,
       };
     case "ci-failed":
       return {
-        title: "Ark: CIが落ちました",
-        body: `${sessionLabel} のPR #${event.prNumber ?? "?"} のチェックが失敗しました`,
+        title: m.session.notifications.ciFailedTitle,
+        body: m.session.notifications.ciFailedBody(
+          sessionLabel,
+          event.prNumber ?? "?"
+        ),
         tag: `ark-session-${event.sessionId}-ci-failed`,
       };
   }

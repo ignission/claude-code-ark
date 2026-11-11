@@ -1,6 +1,7 @@
 import { Check, Copy } from "lucide-react";
 import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { copyTextToClipboard } from "@/lib/copy-text";
+import { m } from "@/lib/i18n";
 
 /** 結果表示を出しておく時間 (ms)。失敗は読む時間が要るので長めにする */
 const COPIED_RESET_MS = 2000;
@@ -50,7 +51,7 @@ export function CodeBlock({
       <pre {...preProps}>{children}</pre>
       <button
         type="button"
-        aria-label="コードをコピー"
+        aria-label={m.chat.codeBlock.copy}
         onClick={handleCopy}
         className="ark-code-copy absolute top-1.5 right-1.5 inline-flex size-7 items-center justify-center rounded-sm border border-border bg-background/90 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
@@ -67,7 +68,9 @@ export function CodeBlock({
             status === "copied" ? "sr-only" : "mt-1 text-destructive text-xs"
           }
         >
-          {status === "copied" ? "コピーしました" : "コピーできませんでした"}
+          {status === "copied"
+            ? m.chat.codeBlock.copied
+            : m.chat.codeBlock.copyFailed}
         </p>
       )}
     </div>

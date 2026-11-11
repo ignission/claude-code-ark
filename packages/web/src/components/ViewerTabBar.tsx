@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { m } from "@/lib/i18n";
 import type { ViewerTab } from "./TerminalPane";
 
 interface ViewerTabBarProps {
@@ -10,7 +11,8 @@ interface ViewerTabBarProps {
 
 function getTabLabel(tab: ViewerTab): string {
   if (tab.type === "terminal") return "Terminal";
-  if (tab.type === "diagram") return tab.relPath?.split("/").pop() || "図";
+  if (tab.type === "diagram")
+    return tab.relPath?.split("/").pop() || m.chat.viewer.diagram;
   if (tab.type === "html") return tab.filePath?.split("/").pop() || "HTML";
   return tab.filePath?.split("/").pop() || "File";
 }

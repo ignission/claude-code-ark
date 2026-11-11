@@ -1,5 +1,6 @@
 import type { HostMetrics } from "@ark/shared";
 import { ExternalLink } from "lucide-react";
+import { m } from "@/lib/i18n";
 import { clamp } from "./utils";
 
 interface SystemStatusBarProps {
@@ -49,7 +50,7 @@ export function SystemStatusBar({
         href={bridgeHref}
         target="_blank"
         rel="noopener noreferrer"
-        title="Bridgeを別タブで開く"
+        title={m.session.sidebar.openBridge}
         className="flex flex-col gap-1 rounded-md px-2 py-1.5 font-mono text-[11px] text-foreground select-none transition-colors hover:bg-sidebar-accent cursor-pointer"
       >
         <span className="flex items-center gap-1.5">
@@ -72,7 +73,7 @@ export function SystemStatusBar({
       href={bridgeHref}
       target="_blank"
       rel="noopener noreferrer"
-      title="Bridgeを別タブで開く"
+      title={m.session.sidebar.openBridge}
       className="flex items-center gap-5 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground select-none transition-colors hover:bg-accent cursor-pointer"
     >
       {cpuItem}

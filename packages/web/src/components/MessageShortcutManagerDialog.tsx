@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { m } from "@/lib/i18n";
 
 interface Props {
   open: boolean;
@@ -72,8 +73,8 @@ export function MessageShortcutManagerDialog({
   };
 
   const isValidDraft = (d: { message: string }) => {
-    const m = d.message.trim();
-    return m.length > 0 && m.length <= MESSAGE_SHORTCUT_MAX_LENGTH;
+    const body = d.message.trim();
+    return body.length > 0 && body.length <= MESSAGE_SHORTCUT_MAX_LENGTH;
   };
 
   const clearDraft = (id: string) =>
@@ -126,10 +127,10 @@ export function MessageShortcutManagerDialog({
   }, [shortcuts]);
 
   const handleCreate = () => {
-    const m = newMessage.trim();
-    if (m.length === 0 || m.length > MESSAGE_SHORTCUT_MAX_LENGTH) return;
-    pendingCreateRef.current = { message: m, submittedAt: Date.now() };
-    onCreate(m);
+    const body = newMessage.trim();
+    if (body.length === 0 || body.length > MESSAGE_SHORTCUT_MAX_LENGTH) return;
+    pendingCreateRef.current = { message: body, submittedAt: Date.now() };
+    onCreate(body);
   };
 
   const newDraftValid =
@@ -141,17 +142,16 @@ export function MessageShortcutManagerDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-2xl mx-auto max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
           <DialogHeader className="p-4 border-b border-border shrink-0">
-            <DialogTitle>メッセージショートカット</DialogTitle>
+            <DialogTitle>{m.chat.shortcuts.title}</DialogTitle>
             <DialogDescription>
-              選択するとセッションへ即送信されます。複数行可・末尾で Enter
-              が押されます。
+              {m.chat.shortcuts.description}
             </DialogDescription>
           </DialogHeader>
 
           <div className="overflow-y-auto p-4 space-y-4 flex-1">
             {shortcuts.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                登録されたショートカットがありません。下のフォームから追加してください。
+                {m.chat.shortcuts.empty}
               </p>
             )}
             {shortcuts.map(s => {
@@ -166,7 +166,7 @@ export function MessageShortcutManagerDialog({
                   <Textarea
                     value={d.message}
                     onChange={e => setDraft(s.id, { message: e.target.value })}
-                    placeholder="送信本文（1〜4000字、複数行可）"
+                    placeholder={m.chat.shortcuts.bodyPlaceholder}
                     className="min-h-[80px] text-sm"
                   />
                   <div className="flex justify-end gap-2">
@@ -177,7 +177,7 @@ export function MessageShortcutManagerDialog({
                       onClick={() => setPendingDelete(s)}
                     >
                       <Trash2 className="w-4 h-4 mr-1" />
-                      削除
+                      {m.common.delete}
                     </Button>
                     <Button
                       size="sm"
@@ -185,7 +185,7 @@ export function MessageShortcutManagerDialog({
                       disabled={!dirty || !valid}
                     >
                       <Save className="w-4 h-4 mr-1" />
-                      保存
+                      {m.common.save}
                     </Button>
                   </div>
                 </div>
@@ -193,11 +193,13 @@ export function MessageShortcutManagerDialog({
             })}
 
             <div className="border-t border-border pt-4 mt-4 space-y-2">
-              <h4 className="text-sm font-semibold">新規追加</h4>
+              <h4 className="text-sm font-semibold">
+                {m.chat.shortcuts.addHeading}
+              </h4>
               <Textarea
                 value={newMessage}
                 onChange={e => setNewMessage(e.target.value)}
-                placeholder="送信本文（例: 現在のタスクの進捗を教えて）"
+                placeholder={m.chat.shortcuts.newPlaceholder}
                 className="min-h-[80px] text-sm"
               />
               <div className="flex justify-end">
@@ -207,7 +209,7 @@ export function MessageShortcutManagerDialog({
                   disabled={!newDraftValid}
                 >
                   <Plus className="w-4 h-4 mr-1" />
-                  追加
+                  {m.chat.shortcuts.add}
                 </Button>
               </div>
             </div>
@@ -223,16 +225,18 @@ export function MessageShortcutManagerDialog({
       >
         <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>ショートカットを削除</AlertDialogTitle>
+            <AlertDialogTitle>{m.chat.shortcuts.deleteTitle}</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingDelete
-                ? `「${previewOf(pendingDelete.message)}」を削除します。よろしいですか？`
-                : "このショートカットを削除します。よろしいですか？"}
+                ? m.chat.shortcuts.deleteConfirm(
+                    previewOf(pendingDelete.message)
+                  )
+                : m.chat.shortcuts.deleteConfirmGeneric}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
             <AlertDialogCancel className="h-12 md:h-10">
-              キャンセル
+              {m.common.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
@@ -241,7 +245,7 @@ export function MessageShortcutManagerDialog({
                 setPendingDelete(null);
               }}
             >
-              削除
+              {m.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
