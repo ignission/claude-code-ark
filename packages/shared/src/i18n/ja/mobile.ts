@@ -1,1 +1,52 @@
-export const mobile = {};
+export const mobile = {
+  list: {
+    arkMenu: "Arkのメニュー",
+    manageScreens: "画面の管理",
+    newTask: "新しいタスク",
+    newSession: "新規セッション",
+  },
+  layout: {
+    back: "戻る",
+    screenSelect: "表示する画面",
+    screenFallbackName: "画面",
+    manage: "管理",
+    tabsLabel: "画面の切り替え",
+    sessionTab: "セッション",
+    screenTab: "画面",
+  },
+  quickActions: {
+    attachFile: "ファイルを添付",
+    pasteImage: "画像を貼り付け",
+    slashCommands: "スラッシュコマンド",
+  },
+  viewMode: {
+    label: "表示モード",
+    chat: "会話",
+    board: "図",
+  },
+  session: {
+    unsupportedFile: "未対応のファイルです",
+    readFailed: "読み込みに失敗しました",
+    clipboardNoImage: "クリップボードに画像がありません",
+    clipboardReadFailed: "クリップボードを読み取れませんでした",
+    uploadFailed: "アップロードに失敗しました",
+    copyTerminalBuffer: "端末のバッファをコピー",
+    reloadTerminal: "端末を再読み込み",
+    terminalStarting: "ターミナルを起動中...",
+    sendFilesTitle: (count: number) => `ファイルを送信（${count}件）`,
+    removeFile: "このファイルを取り除く",
+    addMessagePlaceholder: "メッセージを追加（任意）",
+    sending: "送信中...",
+    send: "送信",
+    messagePlaceholder: "メッセージを入力... (Enter送信)",
+    backToList: "一覧へ戻る",
+    moreActions: "その他の操作",
+    restartSession: "セッションを再起動",
+    deleteSession: "セッションを削除",
+    answerInChat: "会話で答える",
+    restartConfirmTitle: "セッションを再起動しますか？",
+    restartConfirmBody:
+      "このセッションを再起動するとClaude会話履歴・実行中コマンド・ターミナル内容がすべて失われます。続行しますか？",
+    restart: "再起動",
+  },
+};

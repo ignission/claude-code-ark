@@ -35,6 +35,7 @@ import { MobileSessionView } from "@/components/MobileSessionView";
 import { ScreenPane } from "@/components/ScreenPane";
 import type { SplitTaskTarget } from "@/components/SessionSectionList";
 import type { ViewerTab } from "@/components/TerminalPane";
+import { m } from "@/lib/i18n";
 import type {
   ChatViewRequest,
   DiagramOpenRequest,
@@ -562,11 +563,11 @@ export function MobileLayout({
               onClick={() => onChangeActiveTab("session")}
             >
               <ChevronLeft className="size-4" aria-hidden="true" />
-              戻る
+              {m.mobile.layout.back}
             </button>
             {screens.length > 1 ? (
               <select
-                aria-label="表示する画面"
+                aria-label={m.mobile.layout.screenSelect}
                 className="text-sm bg-transparent"
                 value={activeScreenId ?? ""}
                 onChange={e => setSelectedScreenId(e.target.value)}
@@ -579,7 +580,7 @@ export function MobileLayout({
               </select>
             ) : (
               <span className="text-sm font-medium">
-                {screens[0]?.name ?? "画面"}
+                {screens[0]?.name ?? m.mobile.layout.screenFallbackName}
               </span>
             )}
             <button
@@ -587,7 +588,7 @@ export function MobileLayout({
               className="ml-auto text-sm text-muted-foreground"
               onClick={onOpenScreenManager}
             >
-              管理
+              {m.mobile.layout.manage}
             </button>
           </div>
           <div className="flex-1 min-h-0 relative">
@@ -616,7 +617,7 @@ export function MobileLayout({
       {/* 下部タブ。選択中は緑の線ではなく、文字色とウェイトで示す */}
       {showBottomNav && (
         <nav
-          aria-label="画面の切り替え"
+          aria-label={m.mobile.layout.tabsLabel}
           className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-border bg-background"
         >
           <button
@@ -625,7 +626,7 @@ export function MobileLayout({
             className={tabClassName(activeTab === "session")}
             onClick={() => onChangeActiveTab("session")}
           >
-            セッション
+            {m.mobile.layout.sessionTab}
           </button>
           {hasScreens && (
             <button
@@ -634,7 +635,7 @@ export function MobileLayout({
               className={tabClassName(activeTab === "screen")}
               onClick={handleOpenScreenTab}
             >
-              画面
+              {m.mobile.layout.screenTab}
             </button>
           )}
         </nav>

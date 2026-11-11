@@ -23,6 +23,7 @@ import {
   isSafeRelPath,
   isValidSha,
 } from "./git-view.js";
+import { m } from "./i18n.js";
 
 export interface GitViewHandlersDeps {
   getWorktreePath: (sessionId: string) => string | undefined;
@@ -71,7 +72,7 @@ export function createGitViewHandlers(deps: GitViewHandlersDeps) {
         if (!isRecord(data) || typeof data.sessionId !== "string") return;
         const cwd = deps.getWorktreePath(data.sessionId);
         if (cwd === undefined) {
-          return reply({ ok: false, error: "セッションが見つかりません" });
+          return reply({ ok: false, error: m().serverGit.sessionNotFound });
         }
         const result = await run(cwd, data);
         if (result === null) return;

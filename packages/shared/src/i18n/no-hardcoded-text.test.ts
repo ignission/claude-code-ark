@@ -12,7 +12,11 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../..");
 
 /** 見る場所。多言語化が済んだパッケージを足していく */
-const SCANNED_DIRS = ["packages/web/src"];
+const SCANNED_DIRS = [
+  "packages/web/src",
+  "packages/server/src",
+  "packages/desktop/src",
+];
 
 /** 辞書そのもの */
 const DICTIONARY_DIR = "packages/shared/src/i18n/";
@@ -28,57 +32,37 @@ const ALLOWED: Record<string, string> = {
   "packages/web/src/lib/speech-text.ts": "。！？",
 };
 
-/**
- * まだ置き換えていないファイル (Gitタブ、ファイル、ボード、TODO、モバイル、音声)。
- * 次の変更で置き換え、この一覧ごと消す。ここへ新しく足さない。
- */
-const PENDING = new Set([
-  "packages/web/src/components/DiagramPane.tsx",
-  "packages/web/src/components/DiagramSwitcher.tsx",
-  "packages/web/src/components/FileEditor.tsx",
-  "packages/web/src/components/FilePane.tsx",
-  "packages/web/src/components/FilePeek.tsx",
-  "packages/web/src/components/FileTree.tsx",
-  "packages/web/src/components/FileViewerPane.tsx",
-  "packages/web/src/components/git/GitCommitDetail.tsx",
-  "packages/web/src/components/git/GitCommitList.tsx",
-  "packages/web/src/components/git/GitPane.tsx",
-  "packages/web/src/components/git/GitRefLabels.tsx",
-  "packages/web/src/components/git/GitSidebar.tsx",
-  "packages/web/src/components/git/useGitOps.tsx",
-  "packages/web/src/components/HtmlViewerPane.tsx",
-  "packages/web/src/components/MobileLayout.tsx",
-  "packages/web/src/components/MobileQuickActionRow.tsx",
-  "packages/web/src/components/MobileSessionList.tsx",
-  "packages/web/src/components/MobileSessionViewModeToggle.tsx",
-  "packages/web/src/components/MobileSessionView.tsx",
-  "packages/web/src/components/TodoPane.tsx",
-  "packages/web/src/components/VoiceModeOverlay.tsx",
-  "packages/web/src/hooks/useVoiceMode.ts",
-  "packages/web/src/lib/diagram-browser.ts",
-  "packages/web/src/lib/diagram-delete-state.ts",
-  "packages/web/src/lib/diagram-delete-transport.ts",
-  "packages/web/src/lib/file-api.ts",
-  "packages/web/src/lib/git-api.ts",
-  "packages/web/src/lib/git-format.ts",
-  "packages/web/src/lib/speech-text.ts",
-  "packages/web/src/lib/todo-api.ts",
-  "packages/web/src/lib/todo-draft.ts",
-  "packages/web/src/lib/voice-mode-machine.ts",
-]);
-
 const JAPANESE = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
 const JAPANESE_OR_PUNCT =
   /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}、。「」！？]/u;
 
+/** この文字の直後の `/` は、割り算ではなく正規表現の始まりと読む */
+const BEFORE_REGEX = new Set("(,=:[!&|?{};+-*%<>~^");
+
+/** `start` の `/` から始まる正規表現リテラルの終わり (閉じる `/` の次) を返す。同じ行で閉じなければ -1 */
+function regexEnd(source: string, start: number): number {
+  let inClass = false;
+  for (let i = start + 1; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "\n") return -1;
+    if (ch === "\\") i += 1;
+    else if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    else if (ch === "/" && !inClass) return i + 1;
+  }
+  return -1;
+}
+
 /**
  * コメントを空白に置き換える。行数は保つ。
- * 文字列とテンプレートの中の `//` はコメントと見なさない。
+ * 文字列、テンプレート、正規表現の中の `//` や引用符は、コメントや文字列の始まりと見なさない。
  */
 export function stripComments(source: string): string {
   let out = "";
   let i = 0;
   let quote: string | null = null;
+  /** 直前の、空白でない文字 (正規表現の始まりかを見分ける) */
+  let previous = "";
   while (i < source.length) {
     const ch = source[i];
     const next = source[i + 1];
@@ -91,7 +75,10 @@ export function stripComments(source: string): string {
       }
       // 引用符は行をまたがない。JSXの地の文のアポストロフィを文字列の始まりと
       // 読み違えても、その行で打ち切る
-      if (ch === quote || (ch === "\n" && quote !== "`")) quote = null;
+      if (ch === quote || (ch === "\n" && quote !== "`")) {
+        previous = quote;
+        quote = null;
+      }
       i += 1;
       continue;
     }
@@ -106,7 +93,17 @@ export function stripComments(source: string): string {
       i = stop;
       continue;
     }
+    if (ch === "/" && (previous === "" || BEFORE_REGEX.has(previous))) {
+      const end = regexEnd(source, i);
+      if (end !== -1) {
+        out += source.slice(i, end);
+        previous = "/";
+        i = end;
+        continue;
+      }
+    }
     if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    if (!/\s/.test(ch)) previous = ch;
     out += ch;
     i += 1;
   }
@@ -132,7 +129,7 @@ function listSourceFiles(dir: string): string[] {
 function findViolations(): string[] {
   const violations: string[] = [];
   for (const file of SCANNED_DIRS.flatMap(listSourceFiles)) {
-    if (file.startsWith(DICTIONARY_DIR) || PENDING.has(file)) continue;
+    if (file.startsWith(DICTIONARY_DIR)) continue;
     const allowed = new Set(ALLOWED[file] ?? "");
     const lines = stripComments(
       readFileSync(path.join(REPO_ROOT, file), "utf8")
@@ -161,6 +158,14 @@ describe("stripComments", () => {
   it("文字列とテンプレートの中の // は残す", () => {
     expect(stripComments('const u = "http://あ";')).toContain("あ");
     expect(stripComments("const u = `a // あ`;")).toContain("あ");
+  });
+
+  it("正規表現の中の引用符を、文字列の始まりと読まない", () => {
+    const stripped = stripComments(
+      "if (/[`\"']/.test(x)) {\n  // あ\n}\nconst b = a / 2; // い"
+    );
+    expect(JAPANESE.test(stripped)).toBe(false);
+    expect(stripped).toContain("a / 2");
   });
 
   it("JSXのコメントを落とす", () => {

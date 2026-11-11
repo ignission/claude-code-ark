@@ -77,7 +77,7 @@ export class TunnelHealthMonitor {
 
       if (result.healthy) {
         if (this.unhealthySince !== null) {
-          console.log(`[Tunnel] 接続が回復しました (${result.detail})`);
+          console.log(`[Tunnel] Connection recovered (${result.detail})`);
         }
         this.unhealthySince = null;
         return;
@@ -86,20 +86,20 @@ export class TunnelHealthMonitor {
       const now = this.now();
       if (this.unhealthySince === null) {
         this.unhealthySince = now;
-        console.warn(`[Tunnel] 接続が不健全です (${result.detail})`);
+        console.warn(`[Tunnel] Connection is unhealthy (${result.detail})`);
       }
       if (now - this.unhealthySince < this.options.unhealthyThresholdMs) {
         return;
       }
 
       console.warn(
-        `[Tunnel] 不健全な状態が ${Math.round((now - this.unhealthySince) / 1000)} 秒続いたため張り直します (${result.detail})`
+        `[Tunnel] Unhealthy for ${Math.round((now - this.unhealthySince) / 1000)}s; restarting the tunnel (${result.detail})`
       );
       try {
         await this.options.onUnhealthy();
       } catch (error) {
         console.error(
-          "[Tunnel] 張り直しに失敗しました:",
+          "[Tunnel] Failed to restart the tunnel:",
           error instanceof Error ? error.message : String(error)
         );
       }

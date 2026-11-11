@@ -269,11 +269,11 @@ export class CliSessionStatusReader {
     try {
       parsed = JSON.parse(text);
     } catch (error) {
-      this.reportMalformed(file, `JSON として読めません: ${String(error)}`);
+      this.reportMalformed(file, `not valid JSON: ${String(error)}`);
       return null;
     }
     if (typeof parsed !== "object" || parsed === null) {
-      this.reportMalformed(file, "オブジェクトではありません");
+      this.reportMalformed(file, "not an object");
       return null;
     }
     const json = parsed as Record<string, unknown>;

@@ -68,7 +68,7 @@ export function createKeychainProfileBridge(): KeychainProfileBridge {
   //
   // 現状 skeleton: F0:B-3 未検証のため unsupported を返す。
   // F6-followup で検証結果に応じて分岐ロジックを追加。
-  log.info("[keychain-bridge] F0:B-3 未検証のため unsupported モード");
+  log.info("[keychain-bridge] unsupported mode: F0:B-3 is not verified");
   return createUnsupportedBridge("F0:B-3 verification pending");
 }
 

@@ -7,7 +7,12 @@
  * 始めさせないため、タップ → reducer → 副作用 が同じ呼び出しの中で終わる必要がある。
  */
 
-import { CONFIRM_ON_SCREEN, REPLY_ON_SCREEN } from "./speech-text";
+import { m } from "@/lib/i18n";
+import {
+  CONFIRM_ON_SCREEN,
+  endsWithSentenceEnd,
+  REPLY_ON_SCREEN,
+} from "./speech-text";
 
 export type VoicePhase =
   | "off"
@@ -122,13 +127,14 @@ const unchanged = (state: VoiceState): Transition => ({ state, effects: [] });
 
 /**
  * 送れなかった指示を、前の未送信の指示につなげる。改行でつなぐと、tmux に送ったときに途中の改行で
- * 送信が確定しうるので「。」でつなぐ
+ * 送信が確定しうるので、文の区切り (日本語は「。」、英語は ". ") でつなぐ
  */
-function appendUnsent(previous: string | null, text: string): string {
+export function appendUnsent(previous: string | null, text: string): string {
   if (previous === null) return text;
-  return /[。！？!?]$/.test(previous)
-    ? `${previous}${text}`
-    : `${previous}。${text}`;
+  const joiner = endsWithSentenceEnd(previous)
+    ? m.voice.unsentJoiner.afterSentenceEnd
+    : m.voice.unsentJoiner.midSentence;
+  return `${previous}${joiner}${text}`;
 }
 
 function speak(
@@ -225,15 +231,13 @@ export function recognitionErrorNotice(
     case "not-allowed":
     case "service-not-allowed":
       // 読み上げの後に自動で開こうとして拒否されたのは想定内。タップを待つだけ
-      return auto
-        ? null
-        : "マイクか音声入力が許可されていません。iPhoneの設定で、Safariのマイクと音声入力 (Siri) を確かめてください";
+      return auto ? null : m.voice.notice.notAllowed;
     case "network":
-      return "音声認識につながりません (network)";
+      return m.voice.notice.network;
     case "audio-capture":
-      return "マイクが使えません (audio-capture)";
+      return m.voice.notice.audioCapture;
     default:
-      return `音声認識が止まりました (${error})`;
+      return m.voice.notice.stopped(error);
   }
 }
 
@@ -351,14 +355,14 @@ export function reduceVoice(
           [CONFIRM_ON_SCREEN],
           "screen",
           [stop],
-          "確認が出ていたので送っていません"
+          m.voice.notice.heldForConfirm
         );
       }
       if (action.guard === "disconnected") {
         return toReady(
           { ...state, ...holdTranscript(state) },
           [stop],
-          "接続が切れていたので送っていません"
+          m.voice.notice.heldForDisconnect
         );
       }
       const sent: VoiceEffect[] = [stop, { type: "send", text }];
@@ -454,7 +458,7 @@ export function reduceVoice(
         action.sentences,
         "screen",
         interrupted ? [{ type: "abortRecognition" }] : [],
-        wasConfirming ? "質問が来たので送っていません" : null
+        wasConfirming ? m.voice.notice.heldForQuestion : null
       );
     }
     case "awaiting":

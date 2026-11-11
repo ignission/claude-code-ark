@@ -80,6 +80,13 @@ import { createGitViewHandlers } from "./lib/git-view-handlers.js";
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
+import {
+  hasLocaleHint,
+  localeFromHeaders,
+  m,
+  rememberLocale,
+  runWithLocale,
+} from "./lib/i18n.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
   checkManagedWorktree,
@@ -218,7 +225,10 @@ function saveTunnelState(port: number): void {
       "utf-8"
     );
   } catch (error) {
-    console.error("[Tunnel] 状態ファイルの保存に失敗:", getErrorMessage(error));
+    console.error(
+      "[Tunnel] Failed to save the state file:",
+      getErrorMessage(error)
+    );
   }
 }
 
@@ -229,7 +239,10 @@ function removeTunnelState(): void {
       fs.unlinkSync(TUNNEL_STATE_FILE);
     }
   } catch (error) {
-    console.error("[Tunnel] 状態ファイルの削除に失敗:", getErrorMessage(error));
+    console.error(
+      "[Tunnel] Failed to remove the state file:",
+      getErrorMessage(error)
+    );
   }
 }
 
@@ -401,7 +414,8 @@ export async function startServer(
       )
     : null;
   if (prStatusCollector) prStatusCollector.start();
-  else console.log("[PrStatus] gh が見つからないので、PRとCIの状態は出さない");
+  else
+    console.log("[PrStatus] gh not found; PR and CI status will not be shown");
 
   // ===== プランの使用量 =====
   const configDirOf = (sessionId: string) =>
@@ -467,6 +481,16 @@ export async function startServer(
   // JSON body parser（Settings API用）
   app.use(express.json({ limit: "10kb" }));
 
+  // 利用者に見せる文の言語を、リクエストごとに決める (lib/i18n.ts)。
+  // hook や MCP からの呼び出しは言語の手がかりを持たないので、最後に見た利用者の言語のままにする
+  app.use((req, _res, next) => {
+    if (hasLocaleHint(req.headers)) {
+      runWithLocale(localeFromHeaders(req.headers), next);
+    } else {
+      next();
+    }
+  });
+
   // ===== AskUserQuestion hook 受け口 =====
   // セッション内 claude の PreToolUse hook (auq-hook-bridge が --settings で
   // 注入) から、回答待ち質問の構造化データが POST される。
@@ -476,7 +500,7 @@ export async function startServer(
     if (!auqHookBridge.verifyToken(req.headers[AUQ_TOKEN_HEADER])) {
       // 旧 token を保持したままの常駐 claude などからの hook。
       // token は DB 永続化しているので通常は起きないが、調査の手がかりに残す
-      console.warn("[AuqHook] 403: token 不一致の hook を拒否しました");
+      console.warn("[AuqHook] 403: rejected a hook with a mismatched token");
       res.status(403).json({ error: "forbidden" });
       return;
     }
@@ -492,7 +516,7 @@ export async function startServer(
       typeof body.tool_input !== "object"
     ) {
       console.warn(
-        `[AuqHook] 400: 想定外 payload (tool=${String(body?.tool_name)})`
+        `[AuqHook] 400: unexpected payload (tool=${String(body?.tool_name)})`
       );
       res.status(400).json({ error: "bad request" });
       return;
@@ -500,7 +524,9 @@ export async function startServer(
     const session = sessionOrchestrator.getSessionByWorktree(body.cwd);
     if (!session) {
       // Ark 管理外の claude (ユーザーが手動起動した等) からの hook は無視
-      console.log(`[AuqHook] 管理外 cwd からの hook を無視: ${body.cwd}`);
+      console.log(
+        `[AuqHook] Ignored a hook from an unmanaged cwd: ${body.cwd}`
+      );
       res.status(204).end();
       return;
     }
@@ -514,7 +540,7 @@ export async function startServer(
       at: entry.at,
       questions: entry.questions,
     });
-    console.log(`[AuqHook] session:auq 配信: ${session.id} (${body.cwd})`);
+    console.log(`[AuqHook] Sent session:auq: ${session.id} (${body.cwd})`);
     res.status(204).end();
   });
 
@@ -621,7 +647,7 @@ export async function startServer(
         worktree = await createWorktree(repoPath, branchName, baseBranch);
       } catch (error) {
         console.error(
-          `[Task] worktree の作成に失敗しました (repo=${repoPath}, branch=${branchName}, base=${baseBranch ?? "HEAD"}): ${getErrorMessage(error)}`
+          `[Task] Failed to create the worktree (repo=${repoPath}, branch=${branchName}, base=${baseBranch ?? "HEAD"}): ${getErrorMessage(error)}`
         );
         throw error;
       }
@@ -663,7 +689,9 @@ export async function startServer(
       const parent = sessionOrchestrator.getSessionByWorktree(worktreePath);
       const repoPath = parent?.repoPath;
       if (!repoPath) {
-        throw new Error("呼び出し元の worktree のリポジトリが分かりません");
+        throw new Error(
+          "Could not determine the repository of the calling worktree"
+        );
       }
       const baseBranch =
         input.baseBranch?.trim() || (await getAttachedBranch(worktreePath));
@@ -696,7 +724,7 @@ export async function startServer(
       if (!resolved.ok) {
         return {
           ok: false,
-          error: `worktree を解決できません: ${resolved.reason}`,
+          error: `Could not resolve the worktree: ${resolved.reason}`,
         };
       }
       // セッション検索は引数の worktreePath（registry 登録時の生パス）で行う。
@@ -712,7 +740,7 @@ export async function startServer(
       if (!session) {
         return {
           ok: false,
-          error: "この worktree のセッションが見つかりません",
+          error: "No session found for this worktree",
         };
       }
       // ファイル読み込みは realpath（resolved.path）を使う規約なのでこちらはそのまま。
@@ -821,12 +849,12 @@ export async function startServer(
     const worktreePath = req.query.worktreePath;
     const relPath = req.query.path;
     if (typeof worktreePath !== "string" || typeof relPath !== "string") {
-      res.status(400).json({ error: "worktreePath と path が必要です" });
+      res.status(400).json({ error: m().server.diagram.paramsRequired });
       return;
     }
     const resolved = resolveManagedWorktreePath(worktreePath);
     if (!resolved) {
-      res.status(403).json({ error: "管理外の worktree です" });
+      res.status(403).json({ error: m().server.diagram.unmanagedWorktree });
       return;
     }
     const result = await readDiagram(resolved, relPath);
@@ -862,7 +890,7 @@ export async function startServer(
       res.setHeader("Cache-Control", "no-store");
       res.send(png);
     } catch (e) {
-      console.error("[Screenshot] エラー:", getErrorMessage(e));
+      console.error("[Screenshot] Error:", getErrorMessage(e));
       res.status(500).json({ error: getErrorMessage(e) });
     }
   });
@@ -1374,7 +1402,7 @@ export async function startServer(
           });
         });
       } catch (e) {
-        console.error("[Screen] upgrade に失敗:", getErrorMessage(e));
+        console.error("[Screen] upgrade failed:", getErrorMessage(e));
         socket.destroy();
       }
       return;
@@ -1445,7 +1473,7 @@ export async function startServer(
       lastBridgeSnapshot = snapshot;
       io.to(BRIDGE_ROOM).emit("bridge:snapshot", snapshot);
     } catch (err) {
-      console.error("[Bridge] スナップショット失敗:", getErrorMessage(err));
+      console.error("[Bridge] Snapshot failed:", getErrorMessage(err));
     }
   };
 
@@ -1456,7 +1484,7 @@ export async function startServer(
       lastGridSnapshots = snapshots;
       io.to(GRID_ROOM).emit("session:grid:snapshot", snapshots);
     } catch (err) {
-      console.error("[Grid] スナップショット失敗:", getErrorMessage(err));
+      console.error("[Grid] Snapshot failed:", getErrorMessage(err));
     }
   };
 
@@ -1470,6 +1498,11 @@ export async function startServer(
 
   io.on("connection", socket => {
     console.log(`Client connected: ${socket.id}`);
+
+    // このソケットのイベントは、接続したブラウザの言語で処理する (lib/i18n.ts)
+    const socketLocale = localeFromHeaders(socket.handshake.headers);
+    rememberLocale(socketLocale);
+    socket.use((_packet, next) => runWithLocale(socketLocale, next));
 
     // このソケット接続で選択中のリポジトリパス
     let currentRepoPath: string | null = null;
@@ -1558,12 +1591,12 @@ export async function startServer(
 
       recovery.catch(err => {
         console.error(
-          `[Socket] ttyd自動復元失敗 (${session.id}):`,
+          `[Socket] Failed to auto-restore ttyd (${session.id}):`,
           getErrorMessage(err)
         );
         socket.emit("session:error", {
           sessionId: session.id,
-          error: `ターミナルの起動に失敗しました: ${getErrorMessage(err)}`,
+          error: m().server.terminalStartFailed(getErrorMessage(err)),
         });
       });
     }
@@ -1575,7 +1608,7 @@ export async function startServer(
         scanRepositories(savedBasePath)
           .then(repos => socket.emit("repos:scanned", repos))
           .catch(err => {
-            console.error("[Socket] 自動スキャン失敗:", getErrorMessage(err));
+            console.error("[Socket] Auto scan failed:", getErrorMessage(err));
             socket.emit("repos:scanning", {
               basePath: savedBasePath,
               status: "error",
@@ -1611,8 +1644,7 @@ export async function startServer(
     socket.on("fs:list", async (data, callback) => {
       if (allowedRepos.length > 0) {
         callback({
-          error:
-            "このサーバーでは許可リポジトリのみ利用可能なためフォルダ参照は無効です",
+          error: m().server.folderBrowseDisabled,
         });
         return;
       }
@@ -1676,7 +1708,7 @@ export async function startServer(
         } catch (error) {
           // UI 通知だけでなくサーバーログにも残して調査可能にする (Issue #213 ③)
           console.error(
-            `[Worktree] 作成に失敗しました (repo=${repoPath}, branch=${branchName}, base=${baseBranch ?? "HEAD"}): ${getErrorMessage(error)}`
+            `[Worktree] Failed to create (repo=${repoPath}, branch=${branchName}, base=${baseBranch ?? "HEAD"}): ${getErrorMessage(error)}`
           );
           socket.emit("worktree:error", getErrorMessage(error));
           return;
@@ -1752,7 +1784,7 @@ export async function startServer(
       } catch (error) {
         // UI 通知だけでなくサーバーログにも残して調査可能にする (Issue #213 ③)
         console.error(
-          `[Worktree] 削除に失敗しました (repo=${repoPath}, path=${worktreePath}): ${getErrorMessage(error)}`
+          `[Worktree] Failed to remove (repo=${repoPath}, path=${worktreePath}): ${getErrorMessage(error)}`
         );
         socket.emit("worktree:error", getErrorMessage(error));
       }
@@ -1765,7 +1797,7 @@ export async function startServer(
       try {
         const repoPath = data?.repoPath;
         if (typeof repoPath !== "string" || !repoPath) {
-          throw new Error("リポジトリが指定されていません");
+          throw new Error(m().server.repoNotSpecified);
         }
         if (allowedRepos.length > 0 && !allowedRepos.includes(repoPath)) {
           throw new Error("Repository not in allowed list");
@@ -1865,11 +1897,13 @@ export async function startServer(
               });
             } catch (wtError) {
               console.error(
-                `[Session] Worktree削除に失敗（セッションは削除済み）: ${getErrorMessage(wtError)}`
+                `[Session] Failed to remove the worktree (the session was already deleted): ${getErrorMessage(wtError)}`
               );
               socket.emit("session:error", {
                 sessionId,
-                error: `セッションは削除しましたが、Worktreeの削除に失敗しました: ${getErrorMessage(wtError)}`,
+                error: m().server.sessionDeletedButWorktreeRemoveFailed(
+                  getErrorMessage(wtError)
+                ),
               });
               return;
             }
@@ -1978,7 +2012,7 @@ export async function startServer(
             return db.clearSessionLastDiagramIfMatches(sessionId, relPath);
           } catch (error) {
             console.error(
-              "[Diagram] last_diagram_path の消去に失敗しました:",
+              "[Diagram] Failed to clear last_diagram_path:",
               getErrorMessage(error)
             );
             throw error;
@@ -2203,24 +2237,26 @@ export async function startServer(
           callback(
             result.value
               ? { text: result.value }
-              : { error: "バッファが空です" }
+              : { error: m().server.copy.bufferEmpty }
           );
           return;
         }
         // 「バッファが無い」と tmux の失敗を区別して返す (#393)
         switch (result.failure.kind) {
           case "no-buffer":
-            callback({ error: "バッファが空です" });
+            callback({ error: m().server.copy.bufferEmpty });
             break;
           case "no-session":
-            callback({ error: "セッションが見つかりません" });
+            callback({ error: m().server.sessionNotFound });
             break;
           default:
             console.warn(
               `[Copy] ${sessionId}: ${describeTmuxReadFailure(result.failure)}`
             );
             callback({
-              error: `tmux バッファを取得できません: ${describeTmuxReadFailure(result.failure)}`,
+              error: m().server.copy.bufferUnavailable(
+                describeTmuxReadFailure(result.failure)
+              ),
             });
         }
       } catch (error) {
@@ -2310,7 +2346,7 @@ export async function startServer(
           if (!sessionOrchestrator.getSession(sessionId)) {
             socket.emit("file-upload:error", {
               requestId,
-              message: "無効なセッションIDです",
+              message: m().server.fileUpload.invalidSessionId,
               code: "INVALID_SESSION_ID",
             });
             return;
@@ -2330,7 +2366,7 @@ export async function startServer(
             message:
               error instanceof FileUploadManagerError
                 ? error.message
-                : "ファイルのアップロードに失敗しました",
+                : m().server.fileUpload.failed,
             code,
           });
         }
@@ -2381,7 +2417,7 @@ export async function startServer(
       },
       removeWorktree: async (sessionId, worktreePath) => {
         const repoPath = sessionOrchestrator.getSession(sessionId)?.repoPath;
-        if (!repoPath) throw new Error("セッションが見つかりません");
+        if (!repoPath) throw new Error(m().server.sessionNotFound);
         await removeWorktreeWithSession(repoPath, worktreePath);
       },
     });
@@ -2404,7 +2440,7 @@ export async function startServer(
           content: "",
           mimeType: "application/octet-stream",
           size: 0,
-          error: "リクエストが多すぎます",
+          error: m().server.fileRead.tooManyRequests,
         });
         return;
       }
@@ -2420,7 +2456,7 @@ export async function startServer(
               content: "",
               mimeType: "application/octet-stream",
               size: 0,
-              error: "有効なセッションが必要です",
+              error: m().server.fileRead.validSessionRequired,
             });
             return;
           }
@@ -2431,7 +2467,7 @@ export async function startServer(
               content: "",
               mimeType: "application/octet-stream",
               size: 0,
-              error: "不正なパスです",
+              error: m().server.fileRead.invalidPath,
             });
             return;
           }
@@ -2448,7 +2484,7 @@ export async function startServer(
             content: "",
             mimeType: "application/octet-stream",
             size: 0,
-            error: "セッションが見つかりません",
+            error: m().server.sessionNotFound,
           });
           return;
         }
@@ -2473,7 +2509,7 @@ export async function startServer(
     /** プロファイル切替機能未サポート時の共通レスポンス */
     const emitUnsupported = () => {
       socket.emit("profile:error", {
-        message: "プロファイル切替機能は Linux + claude CLI 必須です",
+        message: m().server.profile.unsupported,
         code: "unsupported",
       });
     };
@@ -2521,7 +2557,7 @@ export async function startServer(
     const validateConfigDir = (configDir: string): string | null => {
       if (typeof configDir !== "string" || configDir.trim().length === 0) {
         socket.emit("profile:error", {
-          message: "configDir は必須です",
+          message: m().server.profile.configDirRequired,
           code: "invalid_path",
         });
         return null;
@@ -2534,7 +2570,7 @@ export async function startServer(
       // 絶対パス必須
       if (!path.isAbsolute(expanded)) {
         socket.emit("profile:error", {
-          message: "configDir は絶対パスで指定してください",
+          message: m().server.profile.configDirNotAbsolute,
           code: "invalid_path",
         });
         return null;
@@ -2542,7 +2578,7 @@ export async function startServer(
       // 危険文字チェック (git.ts validatePath と同等)
       if (/[;&|`$(){}[\]<>!"'\\]/.test(expanded)) {
         socket.emit("profile:error", {
-          message: "configDir に使用できない文字が含まれています",
+          message: m().server.profile.configDirInvalidChars,
           code: "invalid_path",
         });
         return null;
@@ -2553,7 +2589,7 @@ export async function startServer(
       for (const f of forbidden) {
         if (normalized === f || normalized.startsWith(`${f}/`)) {
           socket.emit("profile:error", {
-            message: `configDir に禁止パス (${f}) は使用できません`,
+            message: m().server.profile.configDirForbidden(f),
             code: "forbidden_path",
           });
           return null;
@@ -2584,7 +2620,7 @@ export async function startServer(
       }
       if (typeof name !== "string" || name.trim().length === 0) {
         socket.emit("profile:error", {
-          message: "name は必須です",
+          message: m().server.profile.nameRequired,
           code: "invalid_name",
         });
         return;
@@ -2610,7 +2646,7 @@ export async function startServer(
       }
       if (typeof id !== "string" || id.length === 0) {
         socket.emit("profile:error", {
-          message: "id は必須です",
+          message: m().server.idRequired,
           code: "invalid_id",
         });
         return;
@@ -2619,7 +2655,7 @@ export async function startServer(
       if (name !== undefined) {
         if (typeof name !== "string" || name.trim().length === 0) {
           socket.emit("profile:error", {
-            message: "name は空にできません",
+            message: m().server.profile.nameEmpty,
             code: "invalid_name",
           });
           return;
@@ -2748,7 +2784,7 @@ export async function startServer(
       const { id, ...rest } = data ?? ({} as { id?: string });
       if (typeof id !== "string" || id.length === 0) {
         socket.emit("screen:error", {
-          message: "id は必須です",
+          message: m().server.idRequired,
           code: "invalid_id",
         });
         return;
@@ -2778,7 +2814,7 @@ export async function startServer(
       const id = (data as { id?: unknown } | null)?.id;
       if (typeof id !== "string" || id.length === 0) {
         socket.emit("screen:error", {
-          message: "id は必須です",
+          message: m().server.idRequired,
           code: "invalid_id",
         });
         return;
@@ -2807,7 +2843,7 @@ export async function startServer(
             : null
         );
       } catch (e) {
-        console.error("[Screen] credentials に失敗:", getErrorMessage(e));
+        console.error("[Screen] credentials failed:", getErrorMessage(e));
         callback(null);
       }
     });
@@ -2839,7 +2875,7 @@ export async function startServer(
         data.text
       ).then(result => {
         if (!result.ok && result.reason !== "unsupported") {
-          console.warn(`[Screen] paste に失敗: ${result.reason}`);
+          console.warn(`[Screen] paste failed: ${result.reason}`);
         }
         callback(result);
       });
@@ -2872,7 +2908,7 @@ export async function startServer(
     socket.on("shortcut:create", payload => {
       if (typeof payload !== "object" || payload === null) {
         socket.emit("shortcut:error", {
-          message: "payload が不正です",
+          message: m().server.invalidPayload,
           code: "invalid_payload",
         });
         return;
@@ -2884,7 +2920,9 @@ export async function startServer(
         trimmedMessage.length > MESSAGE_SHORTCUT_MAX_LENGTH
       ) {
         socket.emit("shortcut:error", {
-          message: `message は 1〜${MESSAGE_SHORTCUT_MAX_LENGTH} 文字で入力してください`,
+          message: m().server.shortcut.messageLength(
+            MESSAGE_SHORTCUT_MAX_LENGTH
+          ),
           code: "invalid_message",
         });
         return;
@@ -2903,7 +2941,7 @@ export async function startServer(
     socket.on("shortcut:update", payload => {
       if (typeof payload !== "object" || payload === null) {
         socket.emit("shortcut:error", {
-          message: "payload が不正です",
+          message: m().server.invalidPayload,
           code: "invalid_payload",
         });
         return;
@@ -2915,7 +2953,7 @@ export async function startServer(
       };
       if (typeof id !== "string" || id.length === 0) {
         socket.emit("shortcut:error", {
-          message: "id は必須です",
+          message: m().server.idRequired,
           code: "invalid_id",
         });
         return;
@@ -2928,7 +2966,9 @@ export async function startServer(
           trimmed.length > MESSAGE_SHORTCUT_MAX_LENGTH
         ) {
           socket.emit("shortcut:error", {
-            message: `message は 1〜${MESSAGE_SHORTCUT_MAX_LENGTH} 文字で入力してください`,
+            message: m().server.shortcut.messageLength(
+              MESSAGE_SHORTCUT_MAX_LENGTH
+            ),
             code: "invalid_message",
           });
           return;
@@ -2938,7 +2978,7 @@ export async function startServer(
       if (sortOrder !== undefined) {
         if (!Number.isInteger(sortOrder)) {
           socket.emit("shortcut:error", {
-            message: "sortOrder は整数で指定してください",
+            message: m().server.shortcut.sortOrderNotInteger,
             code: "invalid_sort_order",
           });
           return;
@@ -2947,7 +2987,7 @@ export async function startServer(
       }
       if (Object.keys(patch).length === 0) {
         socket.emit("shortcut:error", {
-          message: "更新する項目を指定してください",
+          message: m().server.shortcut.emptyPatch,
           code: "empty_patch",
         });
         return;
@@ -2964,7 +3004,7 @@ export async function startServer(
     socket.on("shortcut:delete", payload => {
       if (typeof payload !== "object" || payload === null) {
         socket.emit("shortcut:error", {
-          message: "payload が不正です",
+          message: m().server.invalidPayload,
           code: "invalid_payload",
         });
         return;
@@ -2972,7 +3012,7 @@ export async function startServer(
       const { id } = payload as { id?: unknown };
       if (typeof id !== "string" || id.length === 0) {
         socket.emit("shortcut:error", {
-          message: "id は必須です",
+          message: m().server.idRequired,
           code: "invalid_id",
         });
         return;
@@ -2993,7 +3033,7 @@ export async function startServer(
       }
       if (typeof repoPath !== "string" || repoPath.length === 0) {
         socket.emit("profile:error", {
-          message: "repoPath は必須です",
+          message: m().server.profile.repoPathRequired,
           code: "invalid_repo",
         });
         return;
@@ -3007,7 +3047,7 @@ export async function startServer(
         canonicalRepoPath = fs.realpathSync(repoPath);
       } catch {
         socket.emit("profile:error", {
-          message: "リポジトリパスが解決できません",
+          message: m().server.profile.repoPathUnresolvable,
           code: "invalid_repo",
         });
         return;
@@ -3021,7 +3061,7 @@ export async function startServer(
         !allowedRepos.includes(canonicalRepoPath)
       ) {
         socket.emit("profile:error", {
-          message: "リポジトリが許可リストに含まれていません",
+          message: m().server.profile.repoNotAllowed,
           code: "repo_not_allowed",
         });
         return;
@@ -3029,7 +3069,7 @@ export async function startServer(
       try {
         if (!(await isGitRepository(canonicalRepoPath))) {
           socket.emit("profile:error", {
-            message: "リポジトリパスが有効なgitリポジトリではありません",
+            message: m().server.profile.notGitRepository,
             code: "invalid_repo",
           });
           return;
@@ -3068,7 +3108,7 @@ export async function startServer(
       }
       if (typeof worktreePath !== "string" || worktreePath.length === 0) {
         socket.emit("profile:error", {
-          message: "worktreePath は必須です",
+          message: m().server.profile.worktreePathRequired,
           code: "invalid_worktree",
         });
         return;
@@ -3080,7 +3120,7 @@ export async function startServer(
         canonicalWorktreePath = fs.realpathSync(worktreePath);
       } catch {
         socket.emit("profile:error", {
-          message: "worktreeパスが解決できません",
+          message: m().server.profile.worktreePathUnresolvable,
           code: "invalid_worktree",
         });
         return;
@@ -3088,7 +3128,7 @@ export async function startServer(
       try {
         if (!(await isGitRepository(canonicalWorktreePath))) {
           socket.emit("profile:error", {
-            message: "worktreeパスがgit working treeではありません",
+            message: m().server.profile.notGitWorkingTree,
             code: "invalid_worktree",
           });
           return;
@@ -3120,7 +3160,7 @@ export async function startServer(
           })();
           if (!allowedMatch) {
             socket.emit("profile:error", {
-              message: "リポジトリが許可リストに含まれていません",
+              message: m().server.profile.repoNotAllowed,
               code: "repo_not_allowed",
             });
             return;
@@ -3252,13 +3292,13 @@ export async function startServer(
     socket.on("usage:request", async () => {
       if (!capabilities.multiProfileSupported) {
         socket.emit("usage:error", {
-          message: "この環境ではプロファイル機能が使えません",
+          message: m().server.usage.unavailable,
         });
         return;
       }
       if (usageInFlight) {
         socket.emit("usage:error", {
-          message: "Usage取得が既に進行中です",
+          message: m().server.usage.inProgress,
         });
         return;
       }
@@ -3297,7 +3337,7 @@ export async function startServer(
         : [
             {
               id: "__default__",
-              name: "デフォルト",
+              name: m().server.usage.defaultProfileName,
               configDir: "",
               createdAt: 0,
               updatedAt: 0,
@@ -3307,7 +3347,7 @@ export async function startServer(
 
       if (profiles.length === 0) {
         socket.emit("usage:error", {
-          message: "プロファイルが登録されていません",
+          message: m().server.usage.noProfiles,
         });
         return;
       }
@@ -3318,14 +3358,14 @@ export async function startServer(
       };
       usageCollector.on("usage:progress", onProgress);
       console.log(
-        `[UsageCollector] 開始: ${profiles.length} プロファイル (要求元: ${socket.id})`
+        `[UsageCollector] Started: ${profiles.length} profiles (requested by: ${socket.id})`
       );
 
       try {
         const report = await usageCollector.collect(profiles);
         io.emit("usage:complete", report);
         console.log(
-          `[UsageCollector] 完了: ok=${report.entries.filter(e => e.status === "ok").length}/${report.entries.length}`
+          `[UsageCollector] Done: ok=${report.entries.filter(e => e.status === "ok").length}/${report.entries.length}`
         );
       } catch (e) {
         socket.emit("usage:error", { message: getErrorMessage(e) });
@@ -3437,12 +3477,10 @@ export async function startServer(
       try {
         const deleted = await fileUploadManager.cleanup();
         if (deleted > 0) {
-          console.log(
-            `[FileUpload] 期限切れファイル ${deleted} 件を削除しました`
-          );
+          console.log(`[FileUpload] Removed ${deleted} expired file(s)`);
         }
       } catch (error) {
-        console.error("[FileUpload] クリーンアップに失敗:", error);
+        console.error("[FileUpload] Cleanup failed:", error);
       }
     },
     60 * 60 * 1000 // 1時間
@@ -3450,7 +3488,7 @@ export async function startServer(
 
   // 起動時に1回クリーンアップ
   fileUploadManager.cleanup().catch(error => {
-    console.error("[FileUpload] 起動時クリーンアップに失敗:", error);
+    console.error("[FileUpload] Startup cleanup failed:", error);
   });
 
   // server.listen を Promise 化し、リスニング開始まで startServer を解決しない。
@@ -3476,7 +3514,10 @@ export async function startServer(
   } catch (err) {
     // hook が無くてもセッション自体は動く (AUQ カードが出ないだけ) ので
     // 起動は継続する
-    console.error("[AuqHook] settings 書き出しに失敗:", getErrorMessage(err));
+    console.error(
+      "[AuqHook] Failed to write the settings file:",
+      getErrorMessage(err)
+    );
   }
 
   // Start Quick Tunnel if enabled
@@ -3520,7 +3561,7 @@ export async function startServer(
 
     // 接続 0 本が続くと TunnelManager が cloudflared を張り直す (#452)
     tunnel.on("restart", url => {
-      console.log(`[Tunnel] Named Tunnel を自動で張り直しました: ${url}`);
+      console.log(`[Tunnel] Named Tunnel re-established automatically: ${url}`);
     });
 
     try {
@@ -3546,22 +3587,22 @@ export async function startServer(
     const savedState = loadTunnelState();
     if (savedState) {
       console.log(
-        "[Tunnel] 前回のトンネル状態を検出しました。自動復旧を開始します..."
+        "[Tunnel] Found a previous tunnel state. Starting auto recovery..."
       );
       try {
         const url = await startQuickTunnelShared(savedState.port);
         // tunnelToken は startQuickTunnelShared の副作用でセットされるが、
         // 型システムからは保証できないので ?? "" で defensive にフォールバックする。
         await printRemoteAccessInfo(url, tunnelToken ?? "");
-        console.log("[Tunnel] トンネルの自動復旧に成功しました");
+        console.log("[Tunnel] Tunnel auto recovery succeeded");
       } catch (error) {
         console.error(
-          "[Tunnel] トンネルの自動復旧に失敗:",
+          "[Tunnel] Tunnel auto recovery failed:",
           getErrorMessage(error)
         );
         removeTunnelState();
         console.log(
-          "[Tunnel] 状態ファイルを削除しました。トンネルなしで継続します"
+          "[Tunnel] Removed the state file. Continuing without a tunnel"
         );
       }
     }
@@ -3588,14 +3629,14 @@ export async function startServer(
       try {
         activeTunnel.stop();
       } catch (error) {
-        console.error("[Tunnel] stop に失敗:", getErrorMessage(error));
+        console.error("[Tunnel] stop failed:", getErrorMessage(error));
       }
     }
     if (namedTunnel) {
       try {
         namedTunnel.stop();
       } catch (error) {
-        console.error("[Tunnel] named stop に失敗:", getErrorMessage(error));
+        console.error("[Tunnel] named stop failed:", getErrorMessage(error));
       }
     }
     try {

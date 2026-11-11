@@ -231,7 +231,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
               recognitionSettled = true;
               clearSilence();
               stopMeter();
-              diagnose("final", `${text.length}文字`);
+              diagnose("final", `${text.length} chars`);
               // マイクを手放した後の音声の状態を残す (iOS のマイク表示が消えないときの手がかり)
               if (audioDiagnosticTimerRef.current !== null) {
                 clearTimeout(audioDiagnosticTimerRef.current);
@@ -288,7 +288,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
           return;
         case "speak": {
           const startedAt = Date.now();
-          diagnose("speak", `${effect.sentences.join("").length}文字`);
+          diagnose("speak", `${effect.sentences.join("").length} chars`);
           port.speak(
             effect.sentences,
             () => {
@@ -303,7 +303,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
           port.cancelSpeech();
           return;
         case "send":
-          diagnose("send", `${effect.text.length}文字`);
+          diagnose("send", `${effect.text.length} chars`);
           optionsRef.current.onSendMessage(effect.text);
           return;
         case "requestWakeLock":
@@ -399,7 +399,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     if (isPaused) return;
     if (!activeAuq || spokenAuqRef.current === activeAuq.toolUseId) return;
     spokenAuqRef.current = activeAuq.toolUseId;
-    diagnose("question", `${activeAuq.questions.length}問`);
+    diagnose("question", `${activeAuq.questions.length} questions`);
     dispatch({
       type: "question",
       sentences: questionsToSpeechSentences(activeAuq.questions),
@@ -488,7 +488,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
       const { cursor: next, turnEnd } = scanTurnEnds(cursor, events);
       cursorRef.current = next;
       if (!turnEnd) return;
-      diagnose("turn-end", `${turnEnd.text.length}文字`);
+      diagnose("turn-end", `${turnEnd.text.length} chars`);
       // 読み上げの上限は返答全体で数える (本文ブロックが別々に届いても超えない)
       if (!turnEnd.continues) {
         speechBudgetRef.current = { used: 0, exhausted: false };

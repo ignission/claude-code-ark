@@ -11,6 +11,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { RepoInfo, Worktree } from "@ark/shared";
 import { getErrorMessage } from "./errors.js";
+import { m } from "./i18n.js";
 
 const execAsync = promisify(exec);
 
@@ -165,11 +166,11 @@ export async function scanRepositories(
   try {
     const stats = await fs.promises.stat(safePath);
     if (!stats.isDirectory()) {
-      throw new Error("指定されたパスはディレクトリではありません");
+      throw new Error(m().serverGit.repo.notADirectory);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error("指定されたパスが存在しません");
+      throw new Error(m().serverGit.repo.pathNotFound);
     }
     throw error;
   }
@@ -182,7 +183,7 @@ export async function scanRepositories(
   } catch {
     // findコマンドが失敗した場合は再帰探索にフォールバック
     console.warn(
-      "findコマンドによる探索に失敗しました。再帰探索にフォールバックします。"
+      "Scanning with the find command failed. Falling back to a recursive scan."
     );
   }
 
@@ -386,7 +387,7 @@ async function cleanupLocalBranch(
   } catch (error) {
     if ((error as { code?: number | string }).code !== 1) {
       return keep(
-        `ブランチ '${safeBranch}' の到達可能性の判定に失敗しました: ${getErrorMessage(error)}`
+        `Failed to check whether branch '${safeBranch}' is reachable: ${getErrorMessage(error)}`
       );
     }
   }
@@ -396,13 +397,13 @@ async function cleanupLocalBranch(
     try {
       await execAsync(`git branch -D "${safeBranch}"`, { cwd: gitRoot });
       console.log(
-        `[Git] ${safeBaseRef} に取り込み済みのブランチ '${safeBranch}' を削除しました`
+        `[Git] Deleted branch '${safeBranch}', which is already merged into ${safeBaseRef}`
       );
       return { deleted: true };
     } catch (error) {
       // 削除失敗は「未マージ」と誤分類せず、失敗として明示する
       return keep(
-        `ブランチ '${safeBranch}' の削除に失敗しました: ${getErrorMessage(error)}`
+        `Failed to delete branch '${safeBranch}': ${getErrorMessage(error)}`
       );
     }
   }
@@ -418,7 +419,7 @@ async function cleanupLocalBranch(
     remoteContains = stdout.trim().length > 0;
   } catch (error) {
     return keep(
-      `ブランチ '${safeBranch}' のリモート取り込み状況の確認に失敗しました: ${getErrorMessage(error)}`
+      `Failed to check whether branch '${safeBranch}' is contained in a remote branch: ${getErrorMessage(error)}`
     );
   }
 
@@ -426,18 +427,18 @@ async function cleanupLocalBranch(
     try {
       await execAsync(`git branch -D "${safeBranch}"`, { cwd: gitRoot });
       console.log(
-        `[Git] リモート取り込み済みブランチ '${safeBranch}' を削除しました`
+        `[Git] Deleted branch '${safeBranch}', which is contained in a remote branch`
       );
       return { deleted: true };
     } catch (error) {
       return keep(
-        `ブランチ '${safeBranch}' の削除に失敗しました: ${getErrorMessage(error)}`
+        `Failed to delete branch '${safeBranch}': ${getErrorMessage(error)}`
       );
     }
   }
 
   return keep(
-    `ブランチ '${safeBranch}' は未マージのコミットを持つ可能性があるため削除しませんでした（不要な場合は git branch -D ${safeBranch} で削除してください）`
+    `Kept branch '${safeBranch}' because it may have unmerged commits (delete it with git branch -D ${safeBranch} if you don't need it)`
   );
 }
 
@@ -463,9 +464,7 @@ export async function createWorktree(
 
   // Check if path already exists
   if (fs.existsSync(worktreePath)) {
-    throw new Error(
-      `作成先ディレクトリが既に存在します: ${worktreePath}（前回の worktree 削除の残骸の可能性があります。不要であれば削除してから再試行してください）`
-    );
+    throw new Error(m().serverGit.repo.worktreePathExists(worktreePath));
   }
 
   const baseRef = baseBranch ? validateBranchName(baseBranch) : "HEAD";
@@ -480,7 +479,7 @@ export async function createWorktree(
     const inUse = worktrees.find(w => w.branch === safeBranch);
     if (inUse) {
       throw new Error(
-        `ブランチ '${safeBranch}' は既に別の worktree で使用中です: ${inUse.path}`
+        m().serverGit.repo.branchUsedByWorktree(safeBranch, inUse.path)
       );
     }
 
@@ -488,8 +487,8 @@ export async function createWorktree(
     if (!cleanup.deleted) {
       attachExisting = true;
       console.log(
-        `[Git] 既存ブランチ '${safeBranch}' を再利用して worktree を作成します${
-          baseBranch ? `（baseBranch '${baseBranch}' は使用されません）` : ""
+        `[Git] Creating the worktree from the existing branch '${safeBranch}'${
+          baseBranch ? ` (baseBranch '${baseBranch}' is not used)` : ""
         }`
       );
     }
@@ -512,7 +511,7 @@ export async function createWorktree(
     }
   } catch (error) {
     console.error(
-      `[Git] worktree の作成に失敗しました (branch=${safeBranch}, path=${worktreePath}): ${getErrorMessage(error)}`
+      `[Git] Failed to create the worktree (branch=${safeBranch}, path=${worktreePath}): ${getErrorMessage(error)}`
     );
     throw error;
   }
@@ -573,7 +572,7 @@ export async function deleteWorktree(
     });
   } catch (error) {
     console.error(
-      `[Git] worktree の削除に失敗しました (${safeWorktreePath}): ${getErrorMessage(error)}`
+      `[Git] Failed to remove the worktree (${safeWorktreePath}): ${getErrorMessage(error)}`
     );
     // 後始末 (Issue #213 ④) は「Directory not empty」（削除途中の残骸）に限定する。
     // locked worktree や権限問題等、git が明示的に拒否したケースまで rm -rf しない
@@ -592,14 +591,16 @@ export async function deleteWorktree(
       await execAsync("git worktree prune", { cwd: gitRoot });
     } catch (cleanupError) {
       console.error(
-        `[Git] worktree の後始末に失敗しました (${safeWorktreePath}): ${getErrorMessage(cleanupError)}`
+        `[Git] Failed to clean up the worktree (${safeWorktreePath}): ${getErrorMessage(cleanupError)}`
       );
       throw error;
     }
     if (fs.existsSync(safeWorktreePath)) {
       throw error;
     }
-    console.log(`[Git] worktree の残骸を後始末しました (${safeWorktreePath})`);
+    console.log(
+      `[Git] Cleaned up the leftover worktree directory (${safeWorktreePath})`
+    );
   }
 
   // ローカルブランチの後始末 (Issue #213 ①)。detached 等は対象外
@@ -613,7 +614,7 @@ export async function deleteWorktree(
   try {
     validateBranchName(branch);
   } catch {
-    const reason = `ブランチ名 '${branch}' が不正なため後始末をスキップしました`;
+    const reason = `Skipped the branch cleanup because the branch name '${branch}' is invalid`;
     console.warn(`[Git] ${reason}`);
     return { branch, branchCleanup: "kept", branchKeptReason: reason };
   }

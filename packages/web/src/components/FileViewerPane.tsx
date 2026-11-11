@@ -7,6 +7,7 @@ import {
   HIGHLIGHT_LINE_STYLE,
   isHighlightedLine,
 } from "@/lib/file-viewer-highlight";
+import { m } from "@/lib/i18n";
 
 interface FileViewerPaneProps {
   filePath: string;
@@ -31,7 +32,7 @@ export function FileViewerPane({
     return (
       <div className="h-full flex items-center justify-center text-destructive bg-background p-4">
         <div className="text-center">
-          <p className="text-lg font-medium">ファイルを開けません</p>
+          <p className="text-lg font-medium">{m.files.cannotOpen}</p>
           <p className="text-sm text-muted-foreground mt-2">{error}</p>
         </div>
       </div>
@@ -65,7 +66,7 @@ export function FileViewerPane({
           />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">
-            <p>バイナリファイルのプレビューはできません</p>
+            <p>{m.files.viewer.binaryNoPreview}</p>
           </div>
         )}
       </div>
@@ -123,7 +124,7 @@ export function ImageRenderer({
 
   return (
     <div className="flex items-center justify-center h-full text-muted-foreground">
-      <p>画像ファイル: {filePath.split("/").pop()}</p>
+      <p>{m.files.viewer.imageFile(filePath.split("/").pop() ?? filePath)}</p>
     </div>
   );
 }

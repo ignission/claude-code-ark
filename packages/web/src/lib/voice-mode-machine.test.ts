@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setLocaleForTest } from "@/lib/i18n";
 import { CONFIRM_ON_SCREEN, REPLY_ON_SCREEN } from "./speech-text";
 import {
+  appendUnsent,
   CONFIRM_MS,
   INITIAL_VOICE_STATE,
+  recognitionErrorNotice,
   reduceVoice,
   type VoiceAction,
   type VoiceEffect,
@@ -422,5 +425,45 @@ describe("reduceVoice", () => {
       { type: "hidden" }
     ).state;
     expect(hidden.unsent).toBe("テストを直して");
+  });
+});
+
+describe("appendUnsent", () => {
+  afterEach(() => setLocaleForTest("ja"));
+
+  it("日本語は「。」でつなぎ、前が文末で終わっていれば何も挟まない", () => {
+    expect(appendUnsent(null, "テストを直して")).toBe("テストを直して");
+    expect(appendUnsent("テストを直して", "pushして")).toBe(
+      "テストを直して。pushして"
+    );
+    expect(appendUnsent("テストを直して。", "pushして")).toBe(
+      "テストを直して。pushして"
+    );
+  });
+
+  it("英語はピリオドと空白でつなぎ、前が文末で終わっていれば空白だけを挟む", () => {
+    setLocaleForTest("en");
+    expect(appendUnsent("Fix the test", "Then push")).toBe(
+      "Fix the test. Then push"
+    );
+    expect(appendUnsent("Fix the test.", "Then push")).toBe(
+      "Fix the test. Then push"
+    );
+    expect(appendUnsent("Fix the test.", "Then push")).not.toContain("\n");
+  });
+});
+
+describe("英語のときの一言", () => {
+  afterEach(() => setLocaleForTest("ja"));
+
+  it("認識のエラーと、送らなかった理由を英語で出す", () => {
+    setLocaleForTest("en");
+    expect(recognitionErrorNotice("network", false)).toBe(
+      "Can't reach speech recognition (network)"
+    );
+    expect(recognitionErrorNotice("bad-grammar", false)).toBe(
+      "Speech recognition stopped (bad-grammar)"
+    );
+    expect(recognitionErrorNotice("not-allowed", true)).toBeNull();
   });
 });

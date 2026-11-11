@@ -236,7 +236,7 @@ export class PrStatusCollector {
         if (result.kind === "error") {
           if (this.lastError.get(target.sessionId) !== result.message) {
             console.warn(
-              `[PrStatus] ${target.worktreePath} を読めない (前の値を残す): ${result.message}`
+              `[PrStatus] Failed to read ${target.worktreePath} (keeping the previous value): ${result.message}`
             );
           }
           this.lastError.set(target.sessionId, result.message);
@@ -315,7 +315,7 @@ export class PrStatusCollector {
       return result;
     }
     console.warn(
-      `[PrStatus] ${worktreePath} はghのどのアカウントからも見えないので、PRを出さない`
+      `[PrStatus] ${worktreePath} is not visible to any gh account; not showing PRs`
     );
     this.accountOf.set(worktreePath, null);
     return { kind: "none" };

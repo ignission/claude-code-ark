@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { m } from "@/lib/i18n";
 
 interface HtmlViewerPaneProps {
   filePath: string;
@@ -73,10 +74,10 @@ export function HtmlViewerPane({ filePath }: HtmlViewerPaneProps) {
       await navigator.clipboard.write([
         new ClipboardItem({ "image/png": blobPromise }),
       ]);
-      toast.success("画像をクリップボードにコピーしました");
+      toast.success(m.files.html.copied);
     } catch (e) {
       toast.error(
-        `画像のコピーに失敗しました: ${e instanceof Error ? e.message : String(e)}`
+        m.files.html.copyFailed(e instanceof Error ? e.message : String(e))
       );
     } finally {
       setExporting(false);
@@ -104,7 +105,7 @@ export function HtmlViewerPane({ filePath }: HtmlViewerPaneProps) {
       URL.revokeObjectURL(url);
     } catch (e) {
       toast.error(
-        `画像のダウンロードに失敗しました: ${e instanceof Error ? e.message : String(e)}`
+        m.files.html.downloadFailed(e instanceof Error ? e.message : String(e))
       );
     } finally {
       setExporting(false);
@@ -127,17 +128,17 @@ export function HtmlViewerPane({ filePath }: HtmlViewerPaneProps) {
               ) : (
                 <Camera className="w-3.5 h-3.5" />
               )}
-              画像保存
+              {m.files.html.saveImage}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem onSelect={handleCopyImage}>
               <Camera className="w-4 h-4 mr-2" />
-              クリップボードにコピー
+              {m.files.html.copyToClipboard}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={handleDownloadImage}>
               <Download className="w-4 h-4 mr-2" />
-              PNG をダウンロード
+              {m.files.html.downloadPng}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -145,11 +146,11 @@ export function HtmlViewerPane({ filePath }: HtmlViewerPaneProps) {
       <div className="flex-1 min-h-0">
         {error ? (
           <div className="flex items-center justify-center h-full text-destructive">
-            <p>HTMLファイルの読み込みに失敗しました: {error}</p>
+            <p>{m.files.html.loadFailed(error)}</p>
           </div>
         ) : htmlContent === null ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
-            <p>読み込み中...</p>
+            <p>{m.common.loading}</p>
           </div>
         ) : (
           <iframe

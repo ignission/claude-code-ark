@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Profile, UsageEntry, UsageReport } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
+import { m } from "./i18n.js";
 import { resolveClaudePath, resolveTmuxPath } from "./system.js";
 
 /**
@@ -452,7 +453,9 @@ export class UsageCollector extends EventEmitter {
         return {
           ...baseEntry,
           status: "error",
-          errorMessage: `claude起動コマンド送信失敗 (stderr: ${sendClaude.stderr.trim()})`,
+          errorMessage: m().serverLib.usage.launchSendFailed(
+            sendClaude.stderr.trim()
+          ),
         };
       }
 
@@ -472,7 +475,7 @@ export class UsageCollector extends EventEmitter {
         return {
           ...baseEntry,
           status: "timeout",
-          errorMessage: "claude CLIの起動を検出できませんでした",
+          errorMessage: m().serverLib.usage.launchNotDetected,
         };
       }
 
@@ -487,7 +490,7 @@ export class UsageCollector extends EventEmitter {
         return {
           ...baseEntry,
           status: "error",
-          errorMessage: "/usage 送信に失敗しました",
+          errorMessage: m().serverLib.usage.usageSendFailed,
         };
       }
 
@@ -504,7 +507,7 @@ export class UsageCollector extends EventEmitter {
         return {
           ...baseEntry,
           status: "timeout",
-          errorMessage: "/usage 結果が時間内に表示されませんでした",
+          errorMessage: m().serverLib.usage.usageResultTimeout,
         };
       }
 
@@ -513,7 +516,7 @@ export class UsageCollector extends EventEmitter {
         return {
           ...baseEntry,
           status: "error",
-          errorMessage: "/usage 出力のパースに失敗しました",
+          errorMessage: m().serverLib.usage.usageParseFailed,
           rawOutput:
             process.env.NODE_ENV === "development" ? captured : undefined,
         };

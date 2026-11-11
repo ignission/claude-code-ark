@@ -22,6 +22,7 @@ import {
   pushBranch,
   renameBranch,
 } from "./git-ops.js";
+import { m } from "./i18n.js";
 
 export interface GitOpsHandlersDeps {
   getWorktreePath: (sessionId: string) => string | undefined;
@@ -67,7 +68,7 @@ const runningWorktrees = new Set<string>();
 export function createGitOpsHandlers(deps: GitOpsHandlersDeps) {
   async function exclusive<T>(cwd: string, run: () => Promise<T>): Promise<T> {
     if (runningWorktrees.has(cwd)) {
-      throw new GitOpError("別の Git の操作が実行中です");
+      throw new GitOpError(m().serverGit.ops.inProgress);
     }
     runningWorktrees.add(cwd);
     try {
@@ -85,11 +86,11 @@ export function createGitOpsHandlers(deps: GitOpsHandlersDeps) {
       const reply = cb as (r: T | Failure) => void;
       try {
         if (!isRecord(data) || typeof data.sessionId !== "string") {
-          return reply({ ok: false, error: "要求の形が不正です" });
+          return reply({ ok: false, error: m().serverGit.ops.invalidRequest });
         }
         const cwd = deps.getWorktreePath(data.sessionId);
         if (cwd === undefined) {
-          return reply({ ok: false, error: "セッションが見つかりません" });
+          return reply({ ok: false, error: m().serverGit.sessionNotFound });
         }
         const result = await exclusive(cwd, () => run(cwd, data));
         reply({ ok: true, ...result } as T);

@@ -46,7 +46,7 @@ export function createCachedMinifier(
         }).code;
       } catch (e) {
         console.warn(
-          `[injected-minify] ${loader} の圧縮に失敗したため元のソースを注入します`,
+          `[injected-minify] Failed to minify ${loader}; injecting the original source`,
           e
         );
         cached = source;

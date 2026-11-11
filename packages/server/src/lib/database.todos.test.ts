@@ -98,7 +98,7 @@ describe("SessionDatabase: todos", () => {
 
   it("本文が空なら投げる", () => {
     expect(() => db.addTodo({ worktreePath: "/w/a", text: " \n " })).toThrow(
-      "TODO の本文が空です"
+      "TODO text is empty"
     );
   });
 

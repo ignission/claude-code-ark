@@ -3,11 +3,23 @@
  *
  * PCサイドバーと同じ並べ方・行の中身・行メニュー (SessionSectionList) を、カードの形で出す。
  * RepoGridViewはPCだけなので、「このリポジトリの全セッションを並べて見る」は渡さない。
+ *
+ * 見出しの「Ark」はPCのサイドバーと同じくメニューを開き、言語の切替を置く
+ * (モバイルにはサイドバーが無いので、切替の入口はここだけ)。
  */
 
-import { ListPlus, Monitor, Plus } from "lucide-react";
+import { LOCALES } from "@ark/shared/i18n";
+import { Check, ChevronDown, ListPlus, Monitor, Plus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { changeLocale, LOCALE_NAMES, locale, m } from "@/lib/i18n";
 import {
   SessionSectionList,
   type SessionSectionListProps,
@@ -36,7 +48,39 @@ export function MobileSessionList({
     <div className="flex-1 flex flex-col min-h-0 safe-area-x">
       <header className="flex h-14 shrink-0 items-center gap-1 pl-5 pr-2">
         <h1 className="flex-1 text-[22px] font-bold tracking-[-0.01em] text-foreground">
-          Ark
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={m.mobile.list.arkMenu}
+                className="-ml-2 inline-flex h-12 items-center gap-1 rounded-md px-2"
+              >
+                Ark
+                <ChevronDown
+                  className="size-5 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-48">
+              <DropdownMenuLabel>{m.common.language}</DropdownMenuLabel>
+              {LOCALES.map(code => (
+                <DropdownMenuItem
+                  key={code}
+                  lang={code}
+                  className="min-h-11"
+                  onSelect={() => changeLocale(code)}
+                >
+                  {code === locale ? (
+                    <Check aria-hidden="true" />
+                  ) : (
+                    <span className="size-4" aria-hidden="true" />
+                  )}
+                  {LOCALE_NAMES[code]}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </h1>
         {notificationControl}
         {onOpenScreenManager && (
@@ -45,8 +89,8 @@ export function MobileSessionList({
             size="icon"
             className="h-12 w-12"
             onClick={onOpenScreenManager}
-            aria-label="画面の管理"
-            title="画面の管理"
+            aria-label={m.mobile.list.manageScreens}
+            title={m.mobile.list.manageScreens}
           >
             <Monitor className="size-6" />
           </Button>
@@ -56,8 +100,8 @@ export function MobileSessionList({
           size="icon"
           className="h-12 w-12"
           onClick={onNewTask}
-          aria-label="新しいタスク"
-          title="新しいタスク"
+          aria-label={m.mobile.list.newTask}
+          title={m.mobile.list.newTask}
         >
           <ListPlus className="size-6" />
         </Button>
@@ -66,8 +110,8 @@ export function MobileSessionList({
           size="icon"
           className="h-12 w-12"
           onClick={onNewSession}
-          aria-label="新規セッション"
-          title="新規セッション"
+          aria-label={m.mobile.list.newSession}
+          title={m.mobile.list.newSession}
         >
           <Plus className="size-6" />
         </Button>

@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { type Browser, chromium } from "playwright-core";
 import { findChromiumExecutable } from "./chromium-executable.js";
 import { getErrorMessage } from "./errors.js";
+import { m } from "./i18n.js";
 
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_VIEWPORT_WIDTH = 1280;
@@ -77,9 +78,7 @@ class HtmlScreenshotter {
       .catch(e => {
         this.launching = null;
         throw new Error(
-          `Chromium 起動失敗: ${getErrorMessage(e)}。` +
-            "Playwright Chromium がインストールされていない可能性があります " +
-            "(pnpm exec playwright install chromium-headless-shell)"
+          m().serverFiles.screenshot.chromiumLaunchFailed(getErrorMessage(e))
         );
       });
     return this.launching;

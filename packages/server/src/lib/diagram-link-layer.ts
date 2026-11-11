@@ -33,9 +33,9 @@ export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}">
     if(href==null)return;
     if(href.charAt(0)==="#")return;
     event.preventDefault();
-    // 本文は選択してコピーする。リンクの上で選択を終えたクリックで
-    // 飛んでしまうと選択が使えないので、選択が残っているときは開かない
-    // (遷移だけは止める)
+    // Body text is selected and copied. A click that ends a selection on a link
+    // must not navigate (the selection would be lost), so do not open the link
+    // while a selection remains (only the navigation is stopped)
     if(hasTextSelection())return;
     var scheme=schemeOf(href);
     if(scheme&&scheme!=="http"&&scheme!=="https")return;
@@ -43,8 +43,8 @@ export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}">
     port.postMessage({type:"ark:diagram-open-link",href:href});
   }
   document.addEventListener("click",onActivate,true);
-  // 中クリックは click ではなく auxclick で来る。sandbox が既定の新しいタブを
-  // 塞ぐので、拾わないと「押しても何も起きない」になる
+  // A middle click arrives as auxclick, not click. The sandbox blocks the default
+  // new tab, so without handling it here nothing would happen on press
   document.addEventListener("auxclick",function(event){
     if(event.button!==1)return;
     onActivate(event);

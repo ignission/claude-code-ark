@@ -474,7 +474,7 @@ export class SessionOrchestrator extends EventEmitter {
     );
     if (!fromSessionEnv.ok && !isExpectedAbsence(fromSessionEnv)) {
       console.warn(
-        `[Orchestrator] ${tmuxSession.tmuxSessionName}: CLAUDE_CONFIG_DIR を tmux session env から読めません (${describeTmuxReadFailure(fromSessionEnv.failure)})。pane environ へフォールバックします`
+        `[Orchestrator] ${tmuxSession.tmuxSessionName}: cannot read CLAUDE_CONFIG_DIR from the tmux session env (${describeTmuxReadFailure(fromSessionEnv.failure)}). Falling back to the pane environ`
       );
     }
     const fromPaneEnv = fromSessionEnv.ok
@@ -482,7 +482,7 @@ export class SessionOrchestrator extends EventEmitter {
       : tmuxManager.getPaneEnv(tmuxSession.id, "CLAUDE_CONFIG_DIR");
     if (!fromPaneEnv.ok && !isExpectedAbsence(fromPaneEnv)) {
       console.warn(
-        `[Orchestrator] ${tmuxSession.tmuxSessionName}: CLAUDE_CONFIG_DIR を pane environ から読めません (${describeTmuxReadFailure(fromPaneEnv.failure)})。プロファイル無しで復元します`
+        `[Orchestrator] ${tmuxSession.tmuxSessionName}: cannot read CLAUDE_CONFIG_DIR from the pane environ (${describeTmuxReadFailure(fromPaneEnv.failure)}). Restoring without a profile`
       );
     }
     if (!fromPaneEnv.ok || !fromPaneEnv.value) return null;
@@ -985,7 +985,7 @@ export class SessionOrchestrator extends EventEmitter {
       }
     } catch (error) {
       console.error(
-        `[SessionOrchestrator] sendMessage 後の status 更新に失敗 (${sessionId}): ${getErrorMessage(error)}`
+        `[SessionOrchestrator] Failed to update status after sendMessage (${sessionId}): ${getErrorMessage(error)}`
       );
     }
   }

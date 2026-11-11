@@ -10,6 +10,7 @@
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { m } from "./i18n.js";
 import { getUploadsDir } from "./paths.js";
 
 export interface SaveFileResult {
@@ -124,7 +125,7 @@ export class FileUploadManager {
     const sanitizedSessionId = this.sanitizeSessionId(sessionId);
     if (!sanitizedSessionId) {
       throw new FileUploadManagerError(
-        "無効なセッションIDです",
+        m().serverFiles.upload.invalidSessionId,
         "INVALID_SESSION_ID"
       );
     }
@@ -132,7 +133,7 @@ export class FileUploadManager {
     const extension = this.resolveExtension(mimeType, originalFilename);
     if (!extension) {
       throw new FileUploadManagerError(
-        `許可されていないファイル形式です: ${mimeType}`,
+        m().serverFiles.upload.invalidMimeType(mimeType),
         "INVALID_MIME_TYPE"
       );
     }
@@ -140,7 +141,9 @@ export class FileUploadManager {
     const buffer = Buffer.from(base64Data, "base64");
     if (buffer.length > MAX_FILE_SIZE) {
       throw new FileUploadManagerError(
-        `ファイルサイズが上限（20MB）を超えています: ${(buffer.length / 1024 / 1024).toFixed(2)}MB`,
+        m().serverFiles.upload.tooLarge(
+          (buffer.length / 1024 / 1024).toFixed(2)
+        ),
         "FILE_TOO_LARGE"
       );
     }
@@ -154,7 +157,9 @@ export class FileUploadManager {
       await fs.writeFile(filePath, buffer);
     } catch (error) {
       throw new FileUploadManagerError(
-        `ファイルの保存に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
+        m().serverFiles.upload.saveFailed(
+          error instanceof Error ? error.message : String(error)
+        ),
         "SAVE_FAILED"
       );
     }
@@ -198,7 +203,7 @@ export class FileUploadManager {
       return deletedCount;
     } catch (error) {
       throw new FileUploadManagerError(
-        `クリーンアップに失敗しました: ${error instanceof Error ? error.message : String(error)}`,
+        `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
         "CLEANUP_FAILED"
       );
     }

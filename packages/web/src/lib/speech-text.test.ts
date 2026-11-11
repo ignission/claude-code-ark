@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setLocaleForTest } from "@/lib/i18n";
 import {
   ANSWER_ON_SCREEN,
   CODE_PLACEHOLDER,
   CONTINUED_SUFFIX,
+  endsWithSentenceEnd,
   questionsToSpeechSentences,
+  splitSentences,
   TABLE_PLACEHOLDER,
   toSpeechSentences,
 } from "./speech-text";
@@ -133,6 +136,59 @@ describe("questionsToSpeechSentences", () => {
       "どちらで進めますか？",
       "選択肢は、A案、B案。",
       ANSWER_ON_SCREEN,
+    ]);
+  });
+});
+
+describe("英語のとき", () => {
+  afterEach(() => setLocaleForTest("ja"));
+
+  it("空白が続くピリオドで文に分け、版やファイル名のピリオドでは分けない", () => {
+    expect(
+      splitSentences("Fixed it in v1.2. See app.ts for details! Done?", "en")
+    ).toEqual(["Fixed it in v1.2.", "See app.ts for details!", "Done?"]);
+  });
+
+  it("日本語の句点でも分ける (返答が日本語のことがある)", () => {
+    expect(splitSentences("直しました。確認してください。", "en")).toEqual([
+      "直しました。",
+      "確認してください。",
+    ]);
+  });
+
+  it("日本語のときはピリオドで分けない", () => {
+    expect(splitSentences("Fixed it. Done.", "ja")).toEqual([
+      "Fixed it. Done.",
+    ]);
+  });
+
+  it("文末のピリオドは英語のときだけ文末とみなす", () => {
+    expect(endsWithSentenceEnd("Fix the test.", "en")).toBe(true);
+    expect(endsWithSentenceEnd("Fix the test.", "ja")).toBe(false);
+    expect(endsWithSentenceEnd("直して。", "en")).toBe(true);
+    expect(endsWithSentenceEnd("Fix the test", "en")).toBe(false);
+  });
+
+  it("返答を英語の文に分ける", () => {
+    setLocaleForTest("en");
+    expect(toSpeechSentences("I fixed the bug. Tests pass now.")).toEqual([
+      "I fixed the bug.",
+      "Tests pass now.",
+    ]);
+  });
+
+  it("質問の前置きと選択肢を英語で読む", () => {
+    setLocaleForTest("en");
+    const sentences = questionsToSpeechSentences([
+      {
+        question: "Which one should I use?",
+        options: [{ label: "Plan A" }, { label: "Plan B" }],
+      },
+    ]);
+    expect(sentences.slice(0, 3)).toEqual([
+      "Claude has a question.",
+      "Which one should I use?",
+      "The options are: Plan A, Plan B.",
     ]);
   });
 });

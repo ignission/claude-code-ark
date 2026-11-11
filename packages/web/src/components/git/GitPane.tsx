@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { createGitApi, type GitApi } from "@/lib/git-api";
 import { countChanges } from "@/lib/git-format";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { GitCommitDetail } from "./GitCommitDetail";
 import { GitCommitList } from "./GitCommitList";
@@ -411,7 +412,7 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
   }, [dragging]);
 
   if (!api) {
-    return <Centered>接続中…</Centered>;
+    return <Centered>{m.git.connecting}</Centered>;
   }
   if (!data) {
     if (error) {
@@ -423,7 +424,7 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
             onClick={handleRetry}
             className="rounded-sm border border-border px-2.5 py-1 text-foreground hover:bg-muted"
           >
-            再試行
+            {m.git.retry}
           </button>
         </Centered>
       );
@@ -433,8 +434,8 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
 
   const changeCount = countChanges(data.status);
   const sidebarLabel = sidebarCollapsed
-    ? "サイドバーを開く"
-    : "サイドバーを折りたたむ";
+    ? m.git.pane.openSidebar
+    : m.git.pane.collapseSidebar;
 
   return (
     <div data-testid="git-pane" className="flex h-full min-h-0 gap-2 px-2 pb-2">
@@ -506,7 +507,7 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
         </div>
         <button
           type="button"
-          aria-label="一覧と詳細の高さを調整"
+          aria-label={m.git.pane.resizeHandle}
           onMouseDown={e => {
             e.preventDefault();
             setDragging(true);
@@ -574,7 +575,7 @@ function RemoteButtons({
     <>
       <button
         type="button"
-        title="fetch (すべてのリモート)"
+        title={m.git.pane.fetchTitle}
         aria-label="fetch"
         disabled={busy !== null}
         onClick={onFetch}
@@ -585,9 +586,7 @@ function RemoteButtons({
       <button
         type="button"
         title={
-          branch
-            ? `pull: ${branch.name} を fast-forward で進める`
-            : "ブランチにいないので pull できません"
+          branch ? m.git.pane.pullTitle(branch.name) : m.git.pane.pullDisabled
         }
         aria-label="pull"
         disabled={busy !== null || !branch}
@@ -601,8 +600,8 @@ function RemoteButtons({
         type="button"
         title={
           branch
-            ? `push: ${branch.name}${branch.upstream ? ` → ${branch.upstream}` : " (新しく upstream を作る)"}`
-            : "ブランチにいないので push できません"
+            ? m.git.pane.pushTitle(branch.name, branch.upstream)
+            : m.git.pane.pushDisabled
         }
         aria-label="push"
         disabled={busy !== null || !branch}
@@ -631,7 +630,7 @@ function Skeleton() {
     <div
       data-testid="git-skeleton"
       role="status"
-      aria-label="読み込み中"
+      aria-label={m.git.loadingLabel}
       className="h-full animate-pulse bg-background py-2"
     >
       {widths.map((width, i) => (

@@ -1,4 +1,5 @@
 import type { DiagramDeleteResponse } from "@ark/shared";
+import { m } from "@/lib/i18n";
 
 export function shouldRefreshDiagramList(
   sessionId: string,
@@ -24,7 +25,7 @@ export function applyDiagramDeleteResponse(response: DiagramDeleteResponse): {
 }
 
 export function getDiagramEmptyState(diagramCount: number): string {
-  return diagramCount > 0 ? "上の一覧から図を選択" : "図がありません";
+  return diagramCount > 0 ? m.board.selectFromList : m.board.empty;
 }
 
 /** まとめて消すときに、図ごとの知らせを 1 つに重ねる (同じ文は 1 度だけ) */

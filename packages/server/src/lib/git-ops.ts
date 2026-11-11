@@ -12,6 +12,7 @@
 
 import { execFile, spawn } from "node:child_process";
 import { isValidSha } from "./git-view.js";
+import { m } from "./i18n.js";
 
 const LOCAL_TIMEOUT_MS = 10_000;
 export const REMOTE_TIMEOUT_MS = 120_000;
@@ -83,7 +84,7 @@ function runGit(
     const collect = (append: (text: string) => void) => (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_BUFFER)
-        return kill(new GitOpError("git の出力が大きすぎます"));
+        return kill(new GitOpError(m().serverGit.run.outputTooLarge));
       append(chunk.toString("utf8"));
     };
     child.stdout.on(
@@ -95,7 +96,7 @@ function runGit(
       collect(t => (stderr += t))
     );
     const timer = setTimeout(
-      () => kill(new GitOpError("git がタイムアウトしました")),
+      () => kill(new GitOpError(m().serverGit.run.timeout)),
       remote ? REMOTE_TIMEOUT_MS : LOCAL_TIMEOUT_MS
     );
     child.on("error", err => {
@@ -104,8 +105,8 @@ function runGit(
       reject(
         new GitOpError(
           code === "ENOENT"
-            ? "git コマンドが見つかりません"
-            : `git の実行に失敗しました: ${err.message}`
+            ? m().serverGit.run.notFound
+            : m().serverGit.run.failed(err.message)
         )
       );
     });
@@ -113,9 +114,12 @@ function runGit(
       clearTimeout(timer);
       if (failure) return reject(failure);
       if (code === 0) return resolve({ stdout, stderr });
+      const reason = describeStderr(stderr);
       reject(
         new GitOpError(
-          `git の実行に失敗しました: ${describeStderr(stderr) || `終了コード ${code}`}`
+          reason
+            ? m().serverGit.run.failed(reason)
+            : m().serverGit.run.failedWithExitCode(code)
         )
       );
     });
@@ -151,7 +155,7 @@ function exitCode(cwd: string, args: string[]): Promise<number> {
         if (!err) return resolve(0);
         const code = (err as { code?: unknown }).code;
         if (typeof code === "number") return resolve(code);
-        reject(new GitOpError(`git の実行に失敗しました: ${err.message}`));
+        reject(new GitOpError(m().serverGit.run.failed(err.message)));
       }
     );
   });
@@ -168,10 +172,10 @@ export async function assertBranchName(
   name: unknown
 ): Promise<string> {
   if (typeof name !== "string" || name.trim() === "") {
-    throw new GitOpError("ブランチ名を入力してください");
+    throw new GitOpError(m().serverGit.ops.branchNameRequired);
   }
   if (name.startsWith("-") || name.includes("\0")) {
-    throw new GitOpError(`ブランチ名として使えません: ${name}`);
+    throw new GitOpError(m().serverGit.ops.invalidBranchName(name));
   }
   // --branch は `@` や `@{-1}` を実在のブランチ名へ展開して通すので、
   // 展開されずにそのまま返ってきた名前だけを受け付ける
@@ -179,7 +183,7 @@ export async function assertBranchName(
     () => null
   );
   if (out?.stdout.trim() !== name) {
-    throw new GitOpError(`ブランチ名として使えません: ${name}`);
+    throw new GitOpError(m().serverGit.ops.invalidBranchName(name));
   }
   return name;
 }
@@ -194,7 +198,7 @@ async function assertRemote(cwd: string, remote: unknown): Promise<string> {
     typeof remote !== "string" ||
     !(await listRemotes(cwd)).includes(remote)
   ) {
-    throw new GitOpError(`リモートが見つかりません: ${String(remote)}`);
+    throw new GitOpError(m().serverGit.ops.remoteNotFound(String(remote)));
   }
   return remote;
 }
@@ -256,7 +260,7 @@ function parseUpstream(v: unknown): BranchUpstream | undefined {
     !u.merge.startsWith("refs/") ||
     /[\0\n]/.test(u.remote + u.merge)
   ) {
-    throw new GitOpError("追跡先が不正です");
+    throw new GitOpError(m().serverGit.ops.invalidUpstream);
   }
   return { remote: u.remote, merge: u.merge };
 }
@@ -297,10 +301,11 @@ export async function createBranch(
   upstream?: unknown
 ): Promise<void> {
   const branch = await assertBranchName(cwd, name);
-  if (!isValidSha(startPoint)) throw new GitOpError("起点のコミットが不正です");
+  if (!isValidSha(startPoint))
+    throw new GitOpError(m().serverGit.ops.invalidStartPoint);
   const track = parseUpstream(upstream);
   if (await localBranchExists(cwd, branch)) {
-    throw new GitOpError(`ブランチ ${branch} は既にあります`);
+    throw new GitOpError(m().serverGit.ops.branchExists(branch));
   }
   await runGit(cwd, ["branch", "--no-track", "--", branch, startPoint]);
   if (track) await restoreUpstream(cwd, branch, track);
@@ -314,10 +319,10 @@ export async function renameBranch(
   const oldName = await assertBranchName(cwd, from);
   const newName = await assertBranchName(cwd, to);
   if (!(await localBranchExists(cwd, oldName))) {
-    throw new GitOpError(`ブランチ ${oldName} が見つかりません`);
+    throw new GitOpError(m().serverGit.ops.branchNotFound(oldName));
   }
   if (await localBranchExists(cwd, newName)) {
-    throw new GitOpError(`ブランチ ${newName} は既にあります`);
+    throw new GitOpError(m().serverGit.ops.branchExists(newName));
   }
   await runGit(cwd, ["branch", "-m", "--", oldName, newName]);
 }
@@ -341,7 +346,7 @@ async function isMerged(
   ]);
   if (code === 0) return true;
   if (code !== 1)
-    throw new GitOpError(`ブランチ ${name} の取り込みを確かめられません`);
+    throw new GitOpError(m().serverGit.ops.cannotCheckMerged(name));
   const { stdout } = await runGit(cwd, [
     "for-each-ref",
     "--count=1",
@@ -420,7 +425,7 @@ export async function mainWorktreePath(cwd: string): Promise<string> {
   const { stdout } = await runGit(cwd, ["worktree", "list", "--porcelain"]);
   const first = stdout.split("\n")[0] ?? "";
   if (!first.startsWith("worktree ")) {
-    throw new GitOpError("リポジトリ本体の作業ツリーが分かりません");
+    throw new GitOpError(m().serverGit.ops.mainWorktreeUnknown);
   }
   return first.slice("worktree ".length);
 }
@@ -452,29 +457,24 @@ export async function deleteBranch(
 }> {
   const branch = await assertBranchName(cwd, name);
   const sha = await refSha(cwd, `refs/heads/${branch}`);
-  if (!sha) throw new GitOpError(`ブランチ ${branch} が見つかりません`);
+  if (!sha) throw new GitOpError(m().serverGit.ops.branchNotFound(branch));
   const at = await checkedOutAt(cwd, branch);
   // 作業ツリーを消したあとは cwd が無くなりうるので、以降はリポジトリ本体で動かす
   const root = at ? await mainWorktreePath(cwd) : cwd;
   if (at && at === root) {
-    throw new GitOpError(
-      `ブランチ ${branch} はリポジトリ本体の作業ツリーで使用中なので、削除できません`
-    );
+    throw new GitOpError(m().serverGit.ops.branchInMainWorktree(branch));
   }
   if (at && !options.removeWorktree) {
     // 作業ツリーごと消すかを 1 回の確認で聞けるよう、取り込みの有無も添えて断る
     const merged = force || (await isMerged(cwd, branch, sha));
     throw new GitOpError(
-      `ブランチ ${branch} は作業ツリー ${at} で使用中です`,
+      m().serverGit.ops.branchInWorktree(branch, at),
       !merged,
       at
     );
   }
   if (!force && !(await isMerged(cwd, branch, sha))) {
-    throw new GitOpError(
-      `ブランチ ${branch} には、どこにも取り込まれていないコミットがあります`,
-      true
-    );
+    throw new GitOpError(m().serverGit.ops.branchNotMerged(branch), true);
   }
   const upstream = await readUpstream(cwd, branch);
   if (at && options.removeWorktree) {
@@ -518,7 +518,7 @@ async function deleteCheckedRef(
     if (upstream)
       await restoreUpstream(cwd, branch, upstream).catch(() => false);
     throw new GitOpError(
-      `ブランチ ${branch} が確かめている間に ${deleted.slice(0, 7)} へ動いたので、削除をやめました`
+      m().serverGit.ops.branchMoved(branch, deleted.slice(0, 7))
     );
   }
 }
@@ -543,7 +543,7 @@ export async function pullFastForward(cwd: string): Promise<void> {
     "HEAD",
   ]).catch(() => ({ stdout: "" }));
   if (!stdout.trim())
-    throw new GitOpError("ブランチにいないので pull できません");
+    throw new GitOpError(m().serverGit.ops.cannotPullDetached);
   await runGit(
     cwd,
     ["pull", "--ff-only", "--no-rebase", "--no-autostash", "--no-squash"],
@@ -556,7 +556,7 @@ export async function pullFastForward(cwd: string): Promise<void> {
 /** upstream の無いブランチを push する先。origin、無ければ最初のリモート */
 async function defaultRemote(cwd: string): Promise<string> {
   const remotes = await listRemotes(cwd);
-  if (remotes.length === 0) throw new GitOpError("リモートがありません");
+  if (remotes.length === 0) throw new GitOpError(m().serverGit.ops.noRemotes);
   return remotes.includes("origin") ? "origin" : remotes[0];
 }
 
@@ -572,7 +572,7 @@ export async function pushBranch(
 ): Promise<{ remote: string; remoteBranch: string }> {
   const branch = await assertBranchName(cwd, name);
   if (!(await localBranchExists(cwd, branch))) {
-    throw new GitOpError(`ブランチ ${branch} が見つかりません`);
+    throw new GitOpError(m().serverGit.ops.branchNotFound(branch));
   }
   const upstream = await readUpstream(cwd, branch);
   if (
@@ -659,11 +659,13 @@ export async function deleteRemoteBranch(
     !trackingName.startsWith(`${remoteName}/`) ||
     /[\0\n]/.test(trackingName)
   ) {
-    throw new GitOpError("リモートのブランチの指定が不正です");
+    throw new GitOpError(m().serverGit.ops.invalidRemoteBranch);
   }
   const trackingRef = `refs/remotes/${trackingName}`;
   if (!(await refSha(cwd, trackingRef))) {
-    throw new GitOpError(`${trackingName} が見つかりません`);
+    throw new GitOpError(
+      m().serverGit.ops.trackingBranchNotFound(trackingName)
+    );
   }
   const refspecs = (
     await runGit(cwd, ["config", "--get-all", `remote.${remoteName}.fetch`])
@@ -674,9 +676,7 @@ export async function deleteRemoteBranch(
     .filter(Boolean);
   const source = sourceOfTrackingRef(trackingRef, refspecs);
   if (!source?.startsWith("refs/heads/")) {
-    throw new GitOpError(
-      `${trackingName} がリモートのどのブランチか、fetch の設定から特定できません`
-    );
+    throw new GitOpError(m().serverGit.ops.trackingSourceUnknown(trackingName));
   }
   const { stdout } = await runGit(cwd, [
     "for-each-ref",
@@ -690,15 +690,11 @@ export async function deleteRemoteBranch(
     ["ls-remote", "--symref", "--", remoteName, "HEAD"],
     { remote: true }
   ).catch(() => {
-    throw new GitOpError(
-      `リモート ${remoteName} の既定のブランチを確かめられないので、削除をやめました`
-    );
+    throw new GitOpError(m().serverGit.ops.remoteDefaultUnknown(remoteName));
   });
   const headTarget = /^ref: (\S+)\tHEAD$/m.exec(remoteHead.stdout)?.[1];
   if (stdout.trim() === trackingRef || headTarget === source) {
-    throw new GitOpError(
-      `${trackingName} はリモートの既定のブランチなので消せません`
-    );
+    throw new GitOpError(m().serverGit.ops.remoteDefaultBranch(trackingName));
   }
   await runGit(cwd, ["push", "--", remoteName, `:${source}`], {
     remote: true,

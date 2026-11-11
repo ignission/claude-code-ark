@@ -35,6 +35,7 @@ import type {
 } from "@ark/shared";
 import type { CliSessionState } from "./cli-session-status.js";
 import { getErrorMessage } from "./errors.js";
+import { m } from "./i18n.js";
 
 export interface LaunchState {
   bridgeStatus: BridgeSessionStatus;
@@ -145,13 +146,11 @@ export function validateTaskInput(input: { name: unknown; prompt: unknown }): {
       ? input.name.trim().replace(/\s+/g, "-")
       : "";
   const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
-  if (!name) throw new Error("タスク名が空です");
+  if (!name) throw new Error(m().serverGit.task.nameEmpty);
   if (!/^[a-zA-Z0-9._\-/]+$/.test(name) || name.startsWith("-")) {
-    throw new Error(
-      "タスク名は英数字と . _ - / だけで書いてください (ブランチ名になります)"
-    );
+    throw new Error(m().serverGit.task.nameInvalid);
   }
-  if (!prompt) throw new Error("プロンプトが空です");
+  if (!prompt) throw new Error(m().serverGit.task.promptEmpty);
   return { name, prompt };
 }
 
@@ -204,17 +203,17 @@ export async function startTask(
 
 /** delivery の結果を、人と Claude に返す 1 文にする */
 export function describeDelivery(delivery: PromptDelivery): string {
-  if (delivery.sent) return "最初の文を送りました";
+  if (delivery.sent) return m().serverGit.task.promptSent;
   switch (delivery.reason) {
     case "awaiting":
-      return "セッションが確認の応答を待っているため、最初の文を送っていません (セッションを開いて答えてから送ってください)";
+      return m().serverGit.task.notSentAwaiting;
     case "timeout":
-      return "claude の起動を確かめられなかったため、最初の文を送っていません";
+      return m().serverGit.task.notSentTimeout;
     case "unsupported":
-      return "この環境では claude の起動を確かめられないため、最初の文を送っていません";
+      return m().serverGit.task.notSentUnsupported;
     case "gone":
-      return "セッションが止められたため、最初の文を送っていません";
+      return m().serverGit.task.notSentGone;
     case "error":
-      return `最初の文の送信に失敗しました: ${delivery.error}`;
+      return m().serverGit.task.sendFailed(delivery.error);
   }
 }

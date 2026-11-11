@@ -20,7 +20,8 @@ import type {
   GitRefs,
   GitStatus,
 } from "@ark/shared";
-import { resolveReadablePath } from "./file-manager.js";
+import { FileNotFoundError, resolveReadablePath } from "./file-manager.js";
+import { m } from "./i18n.js";
 
 const GIT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BUFFER = 64 * 1024 * 1024;
@@ -49,11 +50,19 @@ export function isSafeRelPath(p: unknown): p is string {
 
 // ---- git の呼び出し ----
 
+/** 失敗の種別。見分けるのは文ではなくこの値 (文は利用者の言語で変わる) */
+type GitRunFailure =
+  | "notFound"
+  | "tooBig"
+  | "timeout"
+  | "notRepository"
+  | "failed";
+
 class GitRunError extends Error {
   constructor(
     message: string,
     readonly stderr: string,
-    readonly tooBig = false
+    readonly kind: GitRunFailure
   ) {
     super(message);
   }
@@ -89,23 +98,35 @@ function runGit(
         const errText = stderr.toString("utf8").trim();
         if (e.code === "ENOENT") {
           return reject(
-            new GitRunError("git コマンドが見つかりません", errText)
+            new GitRunError(m().serverGit.run.notFound, errText, "notFound")
           );
         }
         if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-          return reject(new GitRunError("git の出力が大きすぎます", "", true));
+          return reject(
+            new GitRunError(m().serverGit.run.outputTooLarge, "", "tooBig")
+          );
         }
         if (e.killed) {
-          return reject(new GitRunError("git がタイムアウトしました", errText));
+          return reject(
+            new GitRunError(m().serverGit.run.timeout, errText, "timeout")
+          );
         }
         if (/not a git repository/i.test(errText)) {
           return reject(
-            new GitRunError("git リポジトリではありません", errText)
+            new GitRunError(
+              m().serverGit.run.notRepository,
+              errText,
+              "notRepository"
+            )
           );
         }
         const firstLine = errText.split("\n")[0] || e.message;
         reject(
-          new GitRunError(`git の実行に失敗しました: ${firstLine}`, errText)
+          new GitRunError(
+            m().serverGit.run.failed(firstLine),
+            errText,
+            "failed"
+          )
         );
       }
     );
@@ -132,9 +153,9 @@ async function gitOrNull(cwd: string, args: string[]): Promise<string | null> {
   } catch (err) {
     if (
       err instanceof GitRunError &&
-      (err.message.includes("見つかりません") ||
-        err.message.includes("リポジトリではありません") ||
-        err.message.includes("タイムアウト"))
+      (err.kind === "notFound" ||
+        err.kind === "notRepository" ||
+        err.kind === "timeout")
     ) {
       throw err;
     }
@@ -493,8 +514,8 @@ async function resolveCommit(cwd: string, sha: string): Promise<string> {
     "-q",
     `${sha}^{commit}`,
   ]).catch(err => {
-    if (err instanceof GitRunError && err.message.includes("失敗しました")) {
-      throw new Error("コミットが見つかりません");
+    if (err instanceof GitRunError && err.kind === "failed") {
+      throw new Error(m().serverGit.view.commitNotFound);
     }
     throw err;
   });
@@ -506,7 +527,7 @@ export async function getCommit(
   sha: string
 ): Promise<{ commit: GitCommitDetail; files: GitFileChange[] }> {
   await assertRepository(cwd);
-  if (!isValidSha(sha)) throw new Error("コミットの指定が不正です");
+  if (!isValidSha(sha)) throw new Error(m().serverGit.view.invalidCommit);
   const resolved = await resolveCommit(cwd, sha);
 
   const [out, refMap] = await Promise.all([
@@ -561,7 +582,7 @@ async function readBlob(cwd: string, spec: string): Promise<Side> {
     return { data };
   } catch (err) {
     if (err instanceof GitRunError) {
-      if (err.tooBig) return { tooLarge: true };
+      if (err.kind === "tooBig") return { tooLarge: true };
       if (MISSING_RE.test(err.stderr)) return { data: Buffer.alloc(0) };
     }
     throw err;
@@ -585,7 +606,7 @@ async function readWorkingFile(cwd: string, relPath: string): Promise<Side> {
     parent = await resolveReadablePath(cwd, path.dirname(relPath));
   } catch (err) {
     // 作業ツリーから消えたディレクトリ
-    if (err instanceof Error && err.message.includes("見つかりません")) {
+    if (err instanceof FileNotFoundError) {
       return { data: Buffer.alloc(0) };
     }
     throw err;
@@ -628,7 +649,7 @@ async function unmergedBase(cwd: string, p: string): Promise<string | null> {
 }
 
 function pathSpec(rev: string, p: string): string {
-  if (p.startsWith(":")) throw new Error("パスが不正です");
+  if (p.startsWith(":")) throw new Error(m().serverGit.view.invalidPath);
   return `${rev}:${p}`;
 }
 
@@ -648,7 +669,7 @@ export async function getFileDiff(
     !isSafeRelPath(path) ||
     (oldPath !== undefined && !isSafeRelPath(oldPath))
   ) {
-    throw new Error("パスが不正です");
+    throw new Error(m().serverGit.view.invalidPath);
   }
   const from = oldPath ?? path;
   const empty = (): Side => ({ data: Buffer.alloc(0) });
@@ -657,7 +678,8 @@ export async function getFileDiff(
 
   switch (target.kind) {
     case "commit": {
-      if (!isValidSha(target.sha)) throw new Error("コミットの指定が不正です");
+      if (!isValidSha(target.sha))
+        throw new Error(m().serverGit.view.invalidCommit);
       // readBlob は「無い」をすべて片側が無いものとして空にする。コミット自体が
       // 無いときに空同士の差を返さないよう、先に確かめる
       const sha = await resolveCommit(cwd, target.sha);
@@ -695,7 +717,7 @@ export async function getFileDiff(
       newSide = await readWorkingFile(cwd, path);
       break;
     default:
-      throw new Error("差分の対象が不正です");
+      throw new Error(m().serverGit.view.invalidDiffTarget);
   }
 
   if ("tooLarge" in oldSide || "tooLarge" in newSide) {
