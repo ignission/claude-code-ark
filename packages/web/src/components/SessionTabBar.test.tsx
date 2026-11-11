@@ -51,6 +51,15 @@ describe("SessionTabBar", () => {
       "false",
       "true",
     ]);
+    // タブと、それが見せる画面を結ぶ
+    expect(tabs.map(tab => tab.id)).toEqual([
+      "session-tab-s1",
+      "session-tab-s2",
+    ]);
+    expect(tabs.map(tab => tab.getAttribute("aria-controls"))).toEqual([
+      "session-panel-s1",
+      "session-panel-s2",
+    ]);
   });
 
   it("タブを押すと選び、×を押すと閉じる (選ぶ方は呼ばない)", () => {

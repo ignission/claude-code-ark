@@ -7,6 +7,7 @@
 import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { m } from "@/lib/i18n";
+import { sessionPanelId, sessionTabId } from "@/lib/session-tabs";
 import type { StatusKey } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { StatusChip } from "./StatusChip";
@@ -86,6 +87,8 @@ export function SessionTabBar({
             <button
               type="button"
               role="tab"
+              id={sessionTabId(tab.sessionId)}
+              aria-controls={sessionPanelId(tab.sessionId)}
               aria-selected={isActive}
               title={tab.title}
               onClick={() => onSelect(tab.sessionId)}

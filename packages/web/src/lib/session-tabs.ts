@@ -11,6 +11,16 @@
  * ここは並びの計算だけを持つ。どれを選んでいるかは Dashboard の selectedSessionId が持つ。
  */
 
+/** タブの要素のid。タブと、それが見せるセッションの画面 (tabpanel) を結ぶ */
+export function sessionTabId(sessionId: string): string {
+  return `session-tab-${sessionId}`;
+}
+
+/** タブが見せるセッションの画面の要素のid */
+export function sessionPanelId(sessionId: string): string {
+  return `session-panel-${sessionId}`;
+}
+
 /** 保存した値から読むときの正規化。壊れた値や型の違う値は捨てる */
 export function normalizeSessionTabs(value: unknown): string[] {
   if (!Array.isArray(value)) return [];

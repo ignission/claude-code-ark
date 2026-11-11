@@ -79,6 +79,8 @@ import {
   openSessionTab,
   pruneSessionTabs,
   replaceSessionTab,
+  sessionPanelId,
+  sessionTabId,
 } from "@/lib/session-tabs";
 import { resolveStatusKey } from "@/lib/status-tone";
 import { buildTodoDraft, todoBranchCandidate } from "@/lib/todo-draft";
@@ -1273,6 +1275,14 @@ export default function Dashboard() {
                   return (
                     <div
                       key={session.id}
+                      id={sessionPanelId(session.id)}
+                      // タブがあるセッションだけ、タブと結ぶ (閉じたタブを指す参照を残さない)
+                      {...(sessionTabs.includes(session.id)
+                        ? {
+                            role: "tabpanel",
+                            "aria-labelledby": sessionTabId(session.id),
+                          }
+                        : {})}
                       className={isActive ? "h-full flex flex-col" : "hidden"}
                     >
                       <SplitViewPane
