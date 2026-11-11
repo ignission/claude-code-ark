@@ -7,6 +7,13 @@ import { MobileSessionList } from "./MobileSessionList";
 
 const testDoubles = vi.hoisted(() => ({
   sectionList: vi.fn(),
+  changeLocale: vi.fn(),
+}));
+
+// changeLocale は cookie を書いて読み込み直すので、呼ばれたことだけを見る
+vi.mock("@/lib/i18n", async importOriginal => ({
+  ...(await importOriginal<typeof import("@/lib/i18n")>()),
+  changeLocale: testDoubles.changeLocale,
 }));
 
 vi.mock("./SessionSectionList", () => ({
@@ -30,6 +37,7 @@ function mount(element: ReactElement): HTMLDivElement {
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   testDoubles.sectionList.mockClear();
+  testDoubles.changeLocale.mockClear();
 });
 
 afterEach(() => {
@@ -151,5 +159,12 @@ describe("MobileSessionList", () => {
     expect(items.map(item => item.lang)).toEqual(["ja", "en"]);
     expect(items[0].querySelector("svg")).not.toBeNull();
     expect(items[1].querySelector("svg")).toBeNull();
+
+    // いまの言語でない方を選ぶと、その言語へ切り替える
+    act(() => {
+      items[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(testDoubles.changeLocale).toHaveBeenCalledTimes(1);
+    expect(testDoubles.changeLocale).toHaveBeenCalledWith("en");
   });
 });
