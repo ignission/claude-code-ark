@@ -16,7 +16,7 @@ It drives the real interactive `claude` CLI inside tmux, so your plan, your sett
   <img
     src=".github/assets/ark-board.png"
     width="880"
-    alt="Ark on a desktop: a session list on the left, a conversation in the middle, and a sequence diagram Claude drew on the board on the right"
+    alt="Ark on a desktop: a session list on the left, a conversation in the middle, and a diagram Claude drew on the board on the right"
   />
 </p>
 
@@ -43,7 +43,7 @@ You need to be logged in to Claude Code. If Claude Code has never run on the mac
 
 ### You can tell where every session stands without opening it
 
-The sidebar sorts sessions into "your turn", "working" and "idle". When Claude asks a question, Ark opens the terminal so you can answer Claude Code's own prompt there.
+The sidebar sorts sessions into "Your turn", "Working" and "Inactive". When Claude asks a question, Ark opens the terminal so you can answer Claude Code's own prompt there.
 
 If a session's branch has a GitHub pull request, its row shows the PR number and the check result (✓ / ✕ / pending, merged, closed); clicking it opens the PR. When checks fail, Ark sends a notification. Ark reads this with the [GitHub CLI](https://cli.github.com/) (`gh`) once a minute.
 
@@ -74,7 +74,7 @@ Claude draws diagrams, screen mockups, and clickable prototypes as free-form HTM
   <img
     src=".github/assets/ark-mobile-sessions.png"
     width="260"
-    alt="The session list on a phone, grouped into your turn and idle"
+    alt="The session list on a phone, with three sessions waiting for you"
   />
 </p>
 
@@ -85,6 +85,7 @@ The mobile UI has its own session list, chat view, terminal with quick keys, and
 - Paste, drop or attach images, PDFs, text files and spreadsheets to send them to Claude.
 - Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser. Ark connects with `ssh -o BatchMode=yes` as the user running the server, so that user needs a key without a passphrase (or one loaded in ssh-agent) and the host already in `known_hosts`.
 - Use a different Claude account per repository (Linux only).
+- Use Ark in English or Japanese. It follows your browser's language, and you can switch it from the Ark menu at the top of the session list. The macOS app's own dialogs follow the system language.
 - Keep topics set aside mid-conversation in the TODO tab. Press the TODO button to the left of the chat input and Claude writes the topics it set aside down as TODOs. Only you can complete or delete one. See [Branch TODOs](#branch-todos).
 - Start a session in a new worktree from just a name and a prompt: without a parent from the list header, or as a child task split off a session row. See [New tasks](#new-tasks).
 
@@ -215,7 +216,6 @@ The first message is sent only after Ark sees claude running and waiting for inp
 - **The Git tab and file editing are desktop only.** On a phone, files open read-only.
 - **Per-repository accounts work on Linux only**, because macOS keeps Claude's credentials in the Keychain.
 - **Voice mode is for iPhone** and runs only while the screen is on and Ark is in the foreground.
-- **The UI is in Japanese.**
 
 ## Development
 
