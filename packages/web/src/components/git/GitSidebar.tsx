@@ -23,6 +23,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { GitSelection } from "./types";
 import type { GitOpsActions } from "./useGitOps";
@@ -177,7 +178,7 @@ export function GitSidebar({
 
   return (
     <nav
-      aria-label="Git の参照"
+      aria-label={m.git.sidebar.navLabel}
       className="flex h-full flex-col overflow-y-auto overflow-x-hidden py-1"
     >
       <button
@@ -191,7 +192,7 @@ export function GitSidebar({
           aria-hidden="true"
         />
         <span className="min-w-0 flex-1 truncate">
-          変更{changeCount > 0 && ` (${changeCount})`}
+          {m.git.sidebar.changes(changeCount)}
         </span>
       </button>
       <button type="button" onClick={onShowAll} className={cn(ROW, "pl-2")}>
@@ -199,63 +200,69 @@ export function GitSidebar({
           className="size-4 shrink-0 text-muted-foreground"
           aria-hidden="true"
         />
-        <span className="min-w-0 flex-1 truncate">すべてのコミット</span>
+        <span className="min-w-0 flex-1 truncate">
+          {m.git.sidebar.allCommits}
+        </span>
       </button>
 
       <div className="h-2 shrink-0" />
 
-      {group("branches", "ブランチ", refs?.branches.length ?? 0, () =>
-        (refs?.branches ?? []).map(branch =>
-          refRow(
-            `branch:${branch.name}`,
-            branch.sha,
-            1,
-            <>
-              {branch.current ? (
-                <Check
-                  className="size-3.5 shrink-0 text-primary"
-                  strokeWidth={3}
-                  aria-label="いまのブランチ"
-                />
-              ) : (
-                <GitBranch
-                  className="size-3.5 shrink-0 text-muted-foreground"
-                  aria-hidden="true"
-                />
-              )}
-              <span
-                className={cn(
-                  "min-w-0 flex-1 truncate",
-                  branch.current && "font-semibold"
+      {group(
+        "branches",
+        m.git.sidebar.branches,
+        refs?.branches.length ?? 0,
+        () =>
+          (refs?.branches ?? []).map(branch =>
+            refRow(
+              `branch:${branch.name}`,
+              branch.sha,
+              1,
+              <>
+                {branch.current ? (
+                  <Check
+                    className="size-3.5 shrink-0 text-primary"
+                    strokeWidth={3}
+                    aria-label={m.git.sidebar.currentBranch}
+                  />
+                ) : (
+                  <GitBranch
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
                 )}
-              >
-                {branch.name}
-              </span>
-              {((branch.ahead ?? 0) > 0 || (branch.behind ?? 0) > 0) && (
                 <span
-                  data-testid="git-ahead-behind"
-                  className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
+                  className={cn(
+                    "min-w-0 flex-1 truncate",
+                    branch.current && "font-semibold"
+                  )}
                 >
-                  {[
-                    (branch.ahead ?? 0) > 0 ? `↑${branch.ahead}` : "",
-                    (branch.behind ?? 0) > 0 ? `↓${branch.behind}` : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
+                  {branch.name}
                 </span>
-              )}
-            </>,
-            branch.upstream
-              ? `${branch.name} → ${branch.upstream}`
-              : branch.name,
-            ops && (
-              <BranchMenu branch={branch} ops={ops} remoteBusy={remoteBusy} />
+                {((branch.ahead ?? 0) > 0 || (branch.behind ?? 0) > 0) && (
+                  <span
+                    data-testid="git-ahead-behind"
+                    className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
+                  >
+                    {[
+                      (branch.ahead ?? 0) > 0 ? `↑${branch.ahead}` : "",
+                      (branch.behind ?? 0) > 0 ? `↓${branch.behind}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  </span>
+                )}
+              </>,
+              branch.upstream
+                ? `${branch.name} → ${branch.upstream}`
+                : branch.name,
+              ops && (
+                <BranchMenu branch={branch} ops={ops} remoteBusy={remoteBusy} />
+              )
             )
           )
-        )
       )}
 
-      {group("remotes", "リモート", refs?.remotes.length ?? 0, () =>
+      {group("remotes", m.git.sidebar.remotes, refs?.remotes.length ?? 0, () =>
         remoteGroups.map(([host, branches]) => (
           <div key={host} data-remote={host}>
             <div className="flex h-[26px] items-center gap-1.5 pr-2 pl-[22px] text-[13px] text-muted-foreground">
@@ -290,7 +297,7 @@ export function GitSidebar({
         ))
       )}
 
-      {group("tags", "タグ", refs?.tags.length ?? 0, () =>
+      {group("tags", m.git.sidebar.tags, refs?.tags.length ?? 0, () =>
         (refs?.tags ?? []).map(tag =>
           refRow(
             `tag:${tag.name}`,
@@ -308,7 +315,7 @@ export function GitSidebar({
         )
       )}
 
-      {group("stashes", "スタッシュ", refs?.stashes.length ?? 0, () =>
+      {group("stashes", m.git.sidebar.stashes, refs?.stashes.length ?? 0, () =>
         (refs?.stashes ?? []).map(stash =>
           refRow(
             `stash:${stash.name}`,
@@ -348,7 +355,7 @@ function BranchMenu({
 }) {
   // 作業ツリーで使用中のブランチは作業ツリーごと消す。リポジトリ本体の作業ツリーは消せない
   const blocked = branch.mainWorktree
-    ? "リポジトリ本体の作業ツリーで使用中なので削除できません"
+    ? m.git.sidebar.mainWorktreeBlocked
     : null;
   const withWorktree = branch.worktreePath !== undefined && !blocked;
   return (
@@ -358,14 +365,14 @@ function BranchMenu({
         onSelect={() => ops.createBranchAt(branch.sha)}
       >
         <GitBranchPlus className={ITEM_ICON} aria-hidden="true" />
-        ここから新しいブランチ
+        {m.git.sidebar.newBranchHere}
       </ContextMenuItem>
       <ContextMenuItem
         disabled={remoteBusy}
         onSelect={() => ops.renameBranch(branch.name)}
       >
         <Pencil className={ITEM_ICON} aria-hidden="true" />
-        名前を変更
+        {m.git.sidebar.rename}
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem
@@ -375,7 +382,9 @@ function BranchMenu({
         <ArrowUpFromLine className={ITEM_ICON} aria-hidden="true" />
         push
         {!branch.upstream && (
-          <span className="ml-auto text-muted-foreground text-xs">新規</span>
+          <span className="ml-auto text-muted-foreground text-xs">
+            {m.git.sidebar.pushNew}
+          </span>
         )}
       </ContextMenuItem>
       {branch.current && (
@@ -392,14 +401,14 @@ function BranchMenu({
         onSelect={() => ops.deleteBranch(branch.name)}
       >
         <Trash2 className="size-4" aria-hidden="true" />
-        {withWorktree ? "作業ツリーごと削除" : "削除"}
+        {withWorktree ? m.git.sidebar.deleteWithWorktree : m.common.delete}
       </ContextMenuItem>
       {(blocked || withWorktree) && (
         <div className="px-2 pb-1.5 text-[11px] text-muted-foreground">
           {blocked ??
             (branch.current
-              ? "このセッションの作業ツリー"
-              : `使用中: ${branch.worktreePath}`)}
+              ? m.git.sidebar.thisSessionWorktree
+              : m.git.sidebar.inUseAt(branch.worktreePath ?? ""))}
         </div>
       )}
     </>
@@ -426,7 +435,7 @@ function RemoteBranchMenu({
         onSelect={() => ops.createBranchAt(remote.sha)}
       >
         <GitBranchPlus className={ITEM_ICON} aria-hidden="true" />
-        ここから新しいブランチ
+        {m.git.sidebar.newBranchHere}
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem
@@ -435,16 +444,16 @@ function RemoteBranchMenu({
         onSelect={() => ops.deleteRemoteBranch(remote.remote, remote.name)}
       >
         <Trash2 className="size-4" aria-hidden="true" />
-        リモートから削除
+        {m.git.sidebar.deleteFromRemote}
       </ContextMenuItem>
       {remote.isDefault && (
         <div className="px-2 pb-1.5 text-[11px] text-muted-foreground">
-          リモートの既定のブランチは削除できません
+          {m.git.sidebar.defaultBranchBlocked}
         </div>
       )}
       {remote.unknownRemote && (
         <div className="px-2 pb-1.5 text-[11px] text-muted-foreground">
-          リモート {remote.remote} は設定にありません
+          {m.git.sidebar.unknownRemote(remote.remote)}
         </div>
       )}
     </>

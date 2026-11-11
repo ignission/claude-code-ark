@@ -5,12 +5,13 @@ import type {
   TodoOpResponse,
 } from "@ark/shared";
 import type { Socket } from "socket.io-client";
+import { m } from "@/lib/i18n";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 /** サーバーは不正な payload に ack を返さないので、必ずここで打ち切る */
 const ACK_TIMEOUT_MS = 5000;
-const NO_RESPONSE = "サーバーから応答がありません";
+const NO_RESPONSE = m.todo.api.noResponse;
 
 type TodoEvent =
   | "todo:list"

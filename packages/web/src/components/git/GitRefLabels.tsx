@@ -1,5 +1,6 @@
 import type { GitRef } from "@ark/shared";
 import { Archive, Check, Cloud, Tag } from "lucide-react";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const KIND_ORDER: Record<GitRef["kind"], number> = {
@@ -32,7 +33,7 @@ export function GitRefLabel({ gitRef, color }: GitRefLabelProps) {
     return (
       <span
         data-ref-kind={kind}
-        title={`${name} (いまのブランチ)`}
+        title={m.git.refs.currentBranchTitle(name)}
         className={cn(
           BASE,
           "border-primary bg-primary font-semibold text-primary-foreground"

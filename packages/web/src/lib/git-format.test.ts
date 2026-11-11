@@ -1,5 +1,5 @@
 import type { GitCommit } from "@ark/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   authorHue,
   authorInitials,
@@ -9,6 +9,7 @@ import {
   formatRelativeTime,
   shortSha,
 } from "./git-format";
+import { setLocaleForTest } from "./i18n";
 
 /** ローカル時刻で組む (暦の日数はローカルで数えるため) */
 const at = (y: number, m: number, d: number, h = 0, min = 0, s = 0) =>
@@ -48,6 +49,28 @@ describe("formatRelativeTime", () => {
 
   it("未来の時刻 (時計のずれ) は「たった今」", () => {
     expect(rel(now + 5 * 60_000)).toBe("たった今");
+  });
+});
+
+describe("formatRelativeTime (英語)", () => {
+  const now = at(2026, 10, 8, 12, 0, 0);
+  const rel = (ms: number) => formatRelativeTime(sec(ms), now);
+
+  beforeEach(() => setLocaleForTest("en"));
+  afterEach(() => setLocaleForTest("ja"));
+
+  it("列に収まる短い書き方で出す", () => {
+    expect(rel(now - 30_000)).toBe("just now");
+    expect(rel(at(2026, 10, 8, 11, 59))).toBe("1m ago");
+    expect(rel(at(2026, 10, 8, 11, 57))).toBe("3m ago");
+    expect(rel(at(2026, 10, 8, 11, 0))).toBe("1h ago");
+    expect(rel(at(2026, 10, 7, 13, 0))).toBe("23h ago");
+  });
+
+  it("24 時間以上は暦の日数で言い、7 日以上前は日付", () => {
+    expect(rel(at(2026, 10, 7, 11, 0))).toBe("yesterday");
+    expect(rel(at(2026, 10, 5, 8, 0))).toBe("3d ago");
+    expect(rel(at(2026, 10, 1, 8, 0))).toBe("2026/10/01");
   });
 });
 

@@ -1,4 +1,5 @@
 import type { DiagramDeleteRequest, DiagramDeleteResponse } from "@ark/shared";
+import { m } from "@/lib/i18n";
 
 interface DiagramDeleteSocket {
   connected: boolean;
@@ -17,7 +18,7 @@ export function requestDiagramDelete(
 ): Promise<DiagramDeleteResponse> {
   return new Promise((resolve, reject) => {
     if (!socket?.connected) {
-      reject(new Error("ソケットが切断されています"));
+      reject(new Error(m.board.disconnected));
       return;
     }
 
@@ -25,7 +26,7 @@ export function requestDiagramDelete(
     const timeoutId = globalThis.setTimeout(() => {
       if (settled) return;
       settled = true;
-      reject(new Error("図の削除がタイムアウトしました"));
+      reject(new Error(m.board.deleteTimeout));
     }, 10000);
 
     socket.emit(

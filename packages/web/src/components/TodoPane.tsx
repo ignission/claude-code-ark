@@ -11,6 +11,7 @@
 import type { Todo } from "@ark/shared";
 import { Check, GitBranchPlus, MessageSquareText, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 interface TodoPaneProps {
@@ -56,9 +57,7 @@ function StartedLine({ todo, ...props }: { todo: Todo } & RowProps) {
   if (path === null) return null;
   const label = props.worktreeLabel(path);
   const text =
-    path === todo.worktreePath
-      ? "このセッションで始めた"
-      : `→ ${label ?? "削除済みのworktree"}で始めた`;
+    path === todo.worktreePath ? m.todo.startedHere : m.todo.startedIn(label);
   const canOpen =
     label !== null &&
     props.onOpenWorktree !== undefined &&
@@ -89,7 +88,7 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
     <li className="group flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-muted">
       <button
         type="button"
-        aria-label={done ? "未完了に戻す" : "完了にする"}
+        aria-label={done ? m.todo.markUndone : m.todo.markDone}
         onClick={() => onSetDone(todo.id, !done)}
         className={cn(
           "mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded border",
@@ -117,8 +116,8 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
       {canStart && props.onStartHere && (
         <button
           type="button"
-          aria-label="元のセッションで話す"
-          title="元のセッションで話す"
+          aria-label={m.todo.talkHere}
+          title={m.todo.talkHere}
           onClick={() => props.onStartHere?.(todo)}
           className={ROW_ICON_BUTTON}
         >
@@ -130,8 +129,8 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
         (props.canStartInNewWorktree?.(todo) ?? true) && (
           <button
             type="button"
-            aria-label="新しいworktreeで話す"
-            title="新しいworktreeで話す"
+            aria-label={m.todo.talkInNewWorktree}
+            title={m.todo.talkInNewWorktree}
             onClick={() => props.onStartInNewWorktree?.(todo)}
             className={ROW_ICON_BUTTON}
           >
@@ -140,7 +139,7 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
         )}
       <button
         type="button"
-        aria-label="TODO を消す"
+        aria-label={m.todo.remove}
         onClick={() => onRemove(todo.id)}
         className={ROW_ICON_BUTTON}
       >
@@ -206,7 +205,7 @@ export function TodoPane(props: TodoPaneProps) {
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
-            {value === "session" ? "このセッション" : "すべて"}
+            {value === "session" ? m.todo.scopeSession : m.todo.scopeAll}
           </button>
         ))}
       </div>
@@ -220,7 +219,7 @@ export function TodoPane(props: TodoPaneProps) {
           <>
             {open.length === 0 ? (
               <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                保留にした話題はありません
+                {m.todo.empty}
               </p>
             ) : (
               <ul>
@@ -237,7 +236,7 @@ export function TodoPane(props: TodoPaneProps) {
                   onClick={() => setShowDone(v => !v)}
                   className="px-2 text-xs font-semibold text-muted-foreground hover:text-foreground"
                 >
-                  完了 ({done.length})
+                  {m.todo.doneCount(done.length)}
                 </button>
                 {showDone && (
                   <ul className="mt-1">
@@ -251,7 +250,7 @@ export function TodoPane(props: TodoPaneProps) {
           </>
         ) : groups.length === 0 ? (
           <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-            保留にした話題はありません
+            {m.todo.empty}
           </p>
         ) : (
           groups.map(([worktreePath, list]) => {
@@ -270,7 +269,7 @@ export function TodoPane(props: TodoPaneProps) {
                       {label}
                     </button>
                   ) : (
-                    (label ?? "削除済み worktree")
+                    (label ?? m.todo.deletedWorktree)
                   )}
                 </h3>
                 <ul>

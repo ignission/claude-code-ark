@@ -7,6 +7,7 @@
 
 import type { DiagramListItem } from "@ark/shared";
 import { DIAGRAM_DIR } from "@ark/shared";
+import { locale, m } from "@/lib/i18n";
 
 export type DiagramSortKey = "name" | "mtime";
 
@@ -45,7 +46,7 @@ function compare(a: DiagramListItem, b: DiagramListItem, key: DiagramSortKey) {
     // 更新日時が読めなかった図は、どちらの向きでも古いものとして扱う
     return (a.mtimeMs ?? 0) - (b.mtimeMs ?? 0);
   }
-  return a.displayName.localeCompare(b.displayName, "ja");
+  return a.displayName.localeCompare(b.displayName, locale);
 }
 
 /** 絞り込んで並べる。問い合わせは空白で区切った語をすべて含むものを残す (大文字小文字は見ない) */
@@ -64,7 +65,7 @@ export function browseDiagrams(
     (a, b) =>
       sign * compare(a, b, sort.key) ||
       // 同じなら名前、それも同じならパスで、並びを決める
-      a.displayName.localeCompare(b.displayName, "ja") ||
+      a.displayName.localeCompare(b.displayName, locale) ||
       a.relPath.localeCompare(b.relPath)
   );
 }
@@ -86,12 +87,13 @@ export function formatDiagramTime(
     now.getDate()
   ).getTime();
   const time = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
-  if (mtimeMs >= startOfToday) return `今日 ${time}`;
-  if (mtimeMs >= startOfToday - 24 * 60 * 60 * 1000) return `昨日 ${time}`;
-  const day = `${at.getMonth() + 1}/${at.getDate()}`;
+  if (mtimeMs >= startOfToday) return m.board.time.today(time);
+  if (mtimeMs >= startOfToday - 24 * 60 * 60 * 1000)
+    return m.board.time.yesterday(time);
+  const month = at.getMonth() + 1;
   return at.getFullYear() === now.getFullYear()
-    ? day
-    : `${at.getFullYear()}/${day}`;
+    ? m.board.time.monthDay(month, at.getDate())
+    : m.board.time.yearMonthDay(at.getFullYear(), month, at.getDate());
 }
 
 export function loadDiagramSort(): DiagramSort {
