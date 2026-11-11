@@ -22,6 +22,11 @@ export const session = {
     working: "作業中",
     resting: "休止中",
   },
+  /** PCの画面の上に並べる、開いたセッションのタブ */
+  tabs: {
+    list: "開いているセッション",
+    close: (name: string) => `${name}のタブを閉じる`,
+  },
   /** モバイルの会話画面のヘッダー直下の帯と、切断の表示 */
   strip: {
     disconnected: "サーバーとつながっていません",

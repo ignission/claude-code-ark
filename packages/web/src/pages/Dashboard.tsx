@@ -25,6 +25,7 @@ import { ScreenManagerDialog } from "@/components/ScreenManagerDialog";
 import { ScreenPane } from "@/components/ScreenPane";
 import type { SplitTaskTarget } from "@/components/SessionSectionList";
 import { SessionSidebar } from "@/components/SessionSidebar";
+import { SessionTabBar, type SessionTabItem } from "@/components/SessionTabBar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { SplitViewPane } from "@/components/SplitViewPane";
 import { TodoPane } from "@/components/TodoPane";
@@ -72,6 +73,14 @@ import {
   isNotificationEnabledForSession,
   normalizeSessionNotificationSettings,
 } from "@/lib/session-notifications";
+import {
+  closeSessionTab,
+  normalizeSessionTabs,
+  openSessionTab,
+  pruneSessionTabs,
+  replaceSessionTab,
+} from "@/lib/session-tabs";
+import { resolveStatusKey } from "@/lib/status-tone";
 import { buildTodoDraft, todoBranchCandidate } from "@/lib/todo-draft";
 import {
   findSessionIdByWorktreePath,
@@ -194,6 +203,8 @@ export default function Dashboard() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
+  // PCの画面の上に並べるタブ (開いたセッションの並び)。決まりは lib/session-tabs.ts
+  const [sessionTabs, setSessionTabs] = useState<string[]>([]);
   const [mobileActiveTab, setMobileActiveTab] = useState<MobileTab>("session");
   const [mobileSessionSubView, setMobileSessionSubView] =
     useState<SessionSubView>("list");
@@ -504,6 +515,9 @@ export default function Dashboard() {
       setSelectedSessionId(
         normalizeSessionId(getSetting<unknown>("selectedSessionId", null))
       );
+      setSessionTabs(
+        normalizeSessionTabs(getSetting<unknown>("sessionTabs", []))
+      );
       setMobileActiveTab(
         normalizeMobileTab(getSetting<unknown>("mobile.activeTab", "session"))
       );
@@ -531,6 +545,28 @@ export default function Dashboard() {
       setSetting("selectedSessionId", selectedSessionId);
     }
   }, [selectedSessionId, setSetting]);
+
+  // タブの並びのサーバー永続化
+  useEffect(() => {
+    if (settingsInitializedRef.current) {
+      setSetting("sessionTabs", sessionTabs);
+    }
+  }, [sessionTabs, setSetting]);
+
+  // セッションが選ばれたらタブに加える。一覧、通知、グリッド、自動選択、復元の
+  // どの経路で選ばれても同じに扱うため、選ぶ側ではなく選択の変化を見る
+  useEffect(() => {
+    if (selectedSessionId && sessions.has(selectedSessionId)) {
+      setSessionTabs(prev => openSessionTab(prev, selectedSessionId));
+    }
+  }, [selectedSessionId, sessions]);
+
+  // 無くなったセッションのタブを落とす。session:list を受ける前は、復元した並びを
+  // 早まって落とさない
+  useEffect(() => {
+    if (!sessionsLoaded) return;
+    setSessionTabs(prev => pruneSessionTabs(prev, id => sessions.has(id)));
+  }, [sessions, sessionsLoaded]);
 
   // モバイル UI 状態の永続化
   useEffect(() => {
@@ -625,6 +661,10 @@ export default function Dashboard() {
       setSelectedSessionId(prev =>
         prev === data.oldSessionId ? data.session.id : prev
       );
+      // タブも同じ位置のまま新しいIDへ付け替える
+      setSessionTabs(prev =>
+        replaceSessionTab(prev, data.oldSessionId, data.session.id)
+      );
     };
     socket.on("session:restarted", handler);
     return () => {
@@ -636,6 +676,36 @@ export default function Dashboard() {
   const handleSelectSession = useCallback((id: string | null) => {
     setSelectedSessionId(id);
   }, []);
+
+  // タブを閉じる。選んでいたタブなら隣へ移る。セッションは止めない
+  const handleCloseSessionTab = useCallback(
+    (sessionId: string) => {
+      const closed = closeSessionTab(sessionTabs, sessionId);
+      setSessionTabs(closed.tabs);
+      if (selectedSessionId === sessionId) {
+        setSelectedSessionId(closed.neighbor);
+      }
+    },
+    [sessionTabs, selectedSessionId]
+  );
+
+  // タブに出す中身。ラベルはサイドバーと通知と同じ出所 (sessionNotificationLabels)
+  const sessionTabItems = useMemo(() => {
+    const items: SessionTabItem[] = [];
+    for (const sessionId of sessionTabs) {
+      const session = sessions.get(sessionId);
+      if (!session) continue;
+      items.push({
+        sessionId,
+        label:
+          sessionNotificationLabels.get(sessionId) ??
+          getBaseName(session.worktreePath),
+        title: session.worktreePath,
+        statusKey: resolveStatusKey(true, sessionStatuses.get(sessionId)),
+      });
+    }
+    return items;
+  }, [sessionTabs, sessions, sessionNotificationLabels, sessionStatuses]);
 
   // サイドバーとモバイルの一覧の行に出す、未完了の TODO の件数 (キーは sessionId)
   const sessionTodoCounts = useMemo(() => {
@@ -1066,6 +1136,16 @@ export default function Dashboard() {
                   <span>{m.session.strip.disconnected}</span>
                 </div>
               )}
+              <SessionTabBar
+                tabs={sessionTabItems}
+                activeSessionId={
+                  selectedSessionId && sessions.has(selectedSessionId)
+                    ? selectedSessionId
+                    : null
+                }
+                onSelect={handleSelectSession}
+                onClose={handleCloseSessionTab}
+              />
               <div className="flex-1 overflow-hidden relative">
                 {/* リポジトリグリッドビュー: gridRepoPath が設定されているとき
                     全 TerminalPane と独立して表示する (ttyd iframe は非マウント) */}

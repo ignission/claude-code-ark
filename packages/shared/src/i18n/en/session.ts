@@ -24,6 +24,10 @@ export const session: Messages["session"] = {
     working: "Working",
     resting: "Inactive",
   },
+  tabs: {
+    list: "Open sessions",
+    close: (name: string) => `Close the ${name} tab`,
+  },
   strip: {
     disconnected: "Not connected to the server",
     question: "Has a question for you",
