@@ -23,7 +23,10 @@ import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { ScreenManagerDialog } from "@/components/ScreenManagerDialog";
 import { ScreenPane } from "@/components/ScreenPane";
-import type { SplitTaskTarget } from "@/components/SessionSectionList";
+import {
+  revealSelectedSessionRow,
+  type SplitTaskTarget,
+} from "@/components/SessionSectionList";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SessionTabBar, type SessionTabItem } from "@/components/SessionTabBar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
@@ -679,6 +682,19 @@ export default function Dashboard() {
     setSelectedSessionId(id);
   }, []);
 
+  // タブを押す。選んでいるタブをもう一度押したときは選択が替わらないので、
+  // 一覧の行を見える位置へ寄せるところだけを行う (一覧を手でスクロールしたあとの探し直し)
+  const handleSelectSessionTab = useCallback(
+    (sessionId: string) => {
+      if (sessionId === selectedSessionId) {
+        revealSelectedSessionRow();
+        return;
+      }
+      setSelectedSessionId(sessionId);
+    },
+    [selectedSessionId]
+  );
+
   // タブを閉じる。選んでいたタブなら隣へ移る。セッションは止めない
   const handleCloseSessionTab = useCallback(
     (sessionId: string) => {
@@ -705,18 +721,22 @@ export default function Dashboard() {
     [worktrees, repoList]
   );
 
-  // タブに出す中身。ラベルはサイドバーと通知と同じ出所 (sessionNotificationLabels)
+  // タブに出す中身
   const sessionTabItems = useMemo(() => {
     const items: SessionTabItem[] = [];
     for (const sessionId of sessionTabs) {
       const session = sessions.get(sessionId);
       if (!session) continue;
+      const wt = worktrees.find(w => w.id === session.worktreeId);
       items.push({
         sessionId,
+        // 左の一覧の行 (SessionListRow) と同じ決め方: 主ラベルは自分で付けた名前、
+        // 無ければリポジトリ名。ブランチを添える
         label:
-          sessionNotificationLabels.get(sessionId) ??
+          worktreeDisplayNames.get(wt?.path ?? session.worktreePath)?.trim() ||
+          repoNameOfSession(session) ||
           getBaseName(session.worktreePath),
-        repoName: repoNameOfSession(session),
+        branch: wt?.branch ?? getBaseName(session.worktreePath),
         title: session.worktreePath,
         statusKey: resolveStatusKey(true, sessionStatuses.get(sessionId)),
       });
@@ -725,7 +745,8 @@ export default function Dashboard() {
   }, [
     sessionTabs,
     sessions,
-    sessionNotificationLabels,
+    worktrees,
+    worktreeDisplayNames,
     sessionStatuses,
     repoNameOfSession,
   ]);
@@ -1166,7 +1187,7 @@ export default function Dashboard() {
                     ? selectedSessionId
                     : null
                 }
-                onSelect={handleSelectSession}
+                onSelect={handleSelectSessionTab}
                 onClose={handleCloseSessionTab}
               />
               <div className="flex-1 overflow-hidden relative">

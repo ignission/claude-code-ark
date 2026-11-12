@@ -125,28 +125,12 @@ describe("SessionTabBar", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("同じラベルが並んだときだけ、リポジトリ名を添える", () => {
+  it("左の一覧の行と同じ、主ラベルとブランチを出す", () => {
     const container = mount(
       <SessionTabBar
         tabs={[
-          {
-            sessionId: "s1",
-            label: "main",
-            repoName: "api",
-            statusKey: "IDLE",
-          },
-          {
-            sessionId: "s2",
-            label: "main",
-            repoName: "web",
-            statusKey: "IDLE",
-          },
-          {
-            sessionId: "s3",
-            label: "docs",
-            repoName: "web",
-            statusKey: "IDLE",
-          },
+          { sessionId: "s1", label: "api", branch: "main", statusKey: "IDLE" },
+          { sessionId: "s2", label: "api", branch: "fix", statusKey: "IDLE" },
         ]}
         activeSessionId="s1"
         onSelect={vi.fn()}
@@ -157,8 +141,11 @@ describe("SessionTabBar", () => {
       tab => tab.textContent ?? ""
     );
     expect(texts[0]).toContain("api");
-    expect(texts[1]).toContain("web");
-    expect(texts[2]).not.toContain("web");
+    expect(texts[0]).toContain("main");
+    expect(texts[1]).toContain("fix");
+    expect(
+      container.querySelector('button[aria-label="api fixのタブを閉じる"]')
+    ).not.toBeNull();
   });
 
   it("タブが無ければ何も出さない", () => {
