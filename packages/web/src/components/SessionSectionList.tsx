@@ -132,6 +132,17 @@ function deleteDescription(target: DeleteTarget): string {
   return deleteSessionDescription(target.worktree);
 }
 
+/**
+ * 選んでいる行を、一覧のスクロールの中で見える位置へ寄せる。
+ * 選択が替わったときは行が自分で寄る (SessionListRow)。ここは、選択が替わらない操作
+ * (選んでいるタブをもう一度押すなど) から呼ぶ
+ */
+export function revealSelectedSessionRow(): void {
+  document
+    .querySelector('[data-session-list] [aria-current="true"]')
+    ?.scrollIntoView?.({ block: "nearest" });
+}
+
 export function SessionSectionList({
   variant,
   sessions,

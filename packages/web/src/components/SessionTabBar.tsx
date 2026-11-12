@@ -99,7 +99,11 @@ export function SessionTabBar({
                 labelClassName="sr-only"
               />
               {/* 左の一覧の行と同じ「主ラベル + ブランチ」で出し、どの行のタブかを分かるようにする */}
-              <span className="shrink-0 font-medium">{tab.label}</span>
+              {/* 主ラベルは幅を保ち、足りないぶんはブランチ側を先に切り詰める。主ラベルも
+                  長すぎれば切り詰めて、×や隣のタブに重ならないようにする */}
+              <span className="max-w-40 shrink-0 truncate font-medium">
+                {tab.label}
+              </span>
               {tab.branch && (
                 <span className="truncate font-mono text-[11px] text-muted-foreground">
                   {tab.branch}

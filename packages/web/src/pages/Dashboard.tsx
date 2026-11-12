@@ -23,7 +23,10 @@ import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { ScreenManagerDialog } from "@/components/ScreenManagerDialog";
 import { ScreenPane } from "@/components/ScreenPane";
-import type { SplitTaskTarget } from "@/components/SessionSectionList";
+import {
+  revealSelectedSessionRow,
+  type SplitTaskTarget,
+} from "@/components/SessionSectionList";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SessionTabBar, type SessionTabItem } from "@/components/SessionTabBar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
@@ -679,6 +682,19 @@ export default function Dashboard() {
     setSelectedSessionId(id);
   }, []);
 
+  // タブを押す。選んでいるタブをもう一度押したときは選択が替わらないので、
+  // 一覧の行を見える位置へ寄せるところだけを行う (一覧を手でスクロールしたあとの探し直し)
+  const handleSelectSessionTab = useCallback(
+    (sessionId: string) => {
+      if (sessionId === selectedSessionId) {
+        revealSelectedSessionRow();
+        return;
+      }
+      setSelectedSessionId(sessionId);
+    },
+    [selectedSessionId]
+  );
+
   // タブを閉じる。選んでいたタブなら隣へ移る。セッションは止めない
   const handleCloseSessionTab = useCallback(
     (sessionId: string) => {
@@ -1171,7 +1187,7 @@ export default function Dashboard() {
                     ? selectedSessionId
                     : null
                 }
-                onSelect={handleSelectSession}
+                onSelect={handleSelectSessionTab}
                 onClose={handleCloseSessionTab}
               />
               <div className="flex-1 overflow-hidden relative">
