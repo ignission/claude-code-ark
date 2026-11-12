@@ -241,18 +241,29 @@ export function SessionListRow({
     detailSegments.push({ key: "preview", node: previewText });
   }
 
+  // 選ばれた行が一覧のスクロールの外にあれば、見える位置へ寄せる。タブや通知から
+  // 選んだときに、一覧のどこにいるかを見失わないようにする
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (selected && variant === "sidebar") {
+      rowRef.current?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [selected, variant]);
+
   const row = (
     <div
+      ref={rowRef}
       className={cn(
         "group rounded-md border transition-colors",
         entry.nested && (variant === "sidebar" ? "ml-4" : "ml-5"),
         // sidebar の行は地に置き、選んだ行だけを面と線で示す (影は付けない)。
+        // 選んだ行の左には、上のタブの印と同じ色の線を引いて、タブと行を見比べられるようにする
         // card (モバイル) は指で押す的なので、行ごとの面を残す
         variant === "sidebar"
           ? cn(
               "px-2.5 py-1.5",
               selected
-                ? "border-sidebar-border bg-background"
+                ? "border-sidebar-border bg-background shadow-[inset_2px_0_0_0_var(--color-foreground)]"
                 : "border-transparent hover:bg-sidebar-accent"
             )
           : cn(

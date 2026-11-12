@@ -705,18 +705,22 @@ export default function Dashboard() {
     [worktrees, repoList]
   );
 
-  // タブに出す中身。ラベルはサイドバーと通知と同じ出所 (sessionNotificationLabels)
+  // タブに出す中身
   const sessionTabItems = useMemo(() => {
     const items: SessionTabItem[] = [];
     for (const sessionId of sessionTabs) {
       const session = sessions.get(sessionId);
       if (!session) continue;
+      const wt = worktrees.find(w => w.id === session.worktreeId);
       items.push({
         sessionId,
+        // 左の一覧の行 (SessionListRow) と同じ決め方: 主ラベルは自分で付けた名前、
+        // 無ければリポジトリ名。ブランチを添える
         label:
-          sessionNotificationLabels.get(sessionId) ??
+          worktreeDisplayNames.get(wt?.path ?? session.worktreePath)?.trim() ||
+          repoNameOfSession(session) ||
           getBaseName(session.worktreePath),
-        repoName: repoNameOfSession(session),
+        branch: wt?.branch ?? getBaseName(session.worktreePath),
         title: session.worktreePath,
         statusKey: resolveStatusKey(true, sessionStatuses.get(sessionId)),
       });
@@ -725,7 +729,8 @@ export default function Dashboard() {
   }, [
     sessionTabs,
     sessions,
-    sessionNotificationLabels,
+    worktrees,
+    worktreeDisplayNames,
     sessionStatuses,
     repoNameOfSession,
   ]);

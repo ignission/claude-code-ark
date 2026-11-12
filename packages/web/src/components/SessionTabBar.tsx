@@ -14,9 +14,10 @@ import { StatusChip } from "./StatusChip";
 
 export interface SessionTabItem {
   sessionId: string;
+  /** 主ラベル。左の一覧の行と同じもの (自分で付けた名前、無ければリポジトリ名) */
   label: string;
-  /** リポジトリ名。同じラベルのタブが並んだときだけ、見分けるために添える */
-  repoName?: string;
+  /** ブランチ名。同じリポジトリのタブを見分けるために添える */
+  branch?: string;
   /** ラベルだけでは見分けにくいときの補足 (worktreeのパス)。ツールチップに出す */
   title?: string;
   statusKey: StatusKey;
@@ -50,12 +51,6 @@ export function SessionTabBar({
   if (tabs.length === 0) return null;
   // 最後の1つは閉じさせない。閉じると選ぶものが無くなり、自動選択が同じセッションを開き直す
   const closable = tabs.length > 1;
-  // 別のリポジトリの同じブランチ名 (mainなど) が並ぶと見分けられないので、重なったラベルにだけ
-  // リポジトリ名を添える
-  const labelCounts = new Map<string, number>();
-  for (const tab of tabs) {
-    labelCounts.set(tab.label, (labelCounts.get(tab.label) ?? 0) + 1);
-  }
 
   return (
     <div
@@ -71,7 +66,7 @@ export function SessionTabBar({
             ref={isActive ? activeRef : undefined}
             data-session-id={tab.sessionId}
             className={cn(
-              "group flex min-w-0 max-w-56 shrink-0 items-center border-r border-border",
+              "group flex min-w-0 max-w-64 shrink-0 items-center border-r border-border",
               isActive
                 ? "bg-background text-foreground shadow-[inset_0_2px_0_0_var(--color-foreground)]"
                 : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
@@ -103,17 +98,20 @@ export function SessionTabBar({
                 className="px-0"
                 labelClassName="sr-only"
               />
-              <span className="truncate">{tab.label}</span>
-              {tab.repoName && (labelCounts.get(tab.label) ?? 0) > 1 && (
-                <span className="shrink-0 text-[11px] text-muted-foreground">
-                  {tab.repoName}
+              {/* 左の一覧の行と同じ「主ラベル + ブランチ」で出し、どの行のタブかを分かるようにする */}
+              <span className="shrink-0 font-medium">{tab.label}</span>
+              {tab.branch && (
+                <span className="truncate font-mono text-[11px] text-muted-foreground">
+                  {tab.branch}
                 </span>
               )}
             </button>
             {closable && (
               <button
                 type="button"
-                aria-label={m.session.tabs.close(tab.label)}
+                aria-label={m.session.tabs.close(
+                  tab.branch ? `${tab.label} ${tab.branch}` : tab.label
+                )}
                 onClick={() => onClose(tab.sessionId)}
                 className={cn(
                   "mr-1.5 inline-flex size-5 shrink-0 items-center justify-center rounded-sm hover:bg-foreground/10 focus-visible:opacity-100",
