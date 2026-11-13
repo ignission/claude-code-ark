@@ -1200,6 +1200,8 @@ export function MobileSessionView({
               openKey={tabs.find(tab => tab.type === "diagram")?.id}
               relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
               onSelectDiagram={onSelectDiagram}
+              // 図と会話は同時に見せられないので、引用を入れたら会話へ移って続きを書けるようにする
+              onQuoteToChat={() => handleViewModeChange("chat")}
             />
           </div>
           {/* 図モードの下部バーはセグメントと1タップの操作だけ。図の中に下端固定の UI が

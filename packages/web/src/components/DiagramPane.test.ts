@@ -1,3 +1,4 @@
+import { DIAGRAM_SELECTION_TEXT_LIMIT } from "@ark/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -10,7 +11,10 @@ import {
   getDiagramZoomSizerStyle,
   handleDiagramOpenLinkMessage,
   handleDiagramPinchMessage,
+  handleDiagramSelectEvent,
   parseDiagramLinkHref,
+  readDiagramScrollMessage,
+  readDiagramSelectMessage,
   resetDiagramZoom,
 } from "./DiagramPane";
 
@@ -298,5 +302,118 @@ describe("handleDiagramOpenLinkMessage", () => {
       )
     ).toBe(true);
     expect(posted).toEqual([]);
+  });
+});
+
+describe("スクロールの層からのメッセージ", () => {
+  it("位置を読む。数でない位置と別の種類は読まない", () => {
+    expect(
+      readDiagramScrollMessage({ type: "ark:diagram-scroll", x: 0, y: 320 })
+    ).toEqual({ x: 0, y: 320 });
+    expect(
+      readDiagramScrollMessage({ type: "ark:diagram-scroll", x: "0", y: 1 })
+    ).toBeNull();
+    expect(
+      readDiagramScrollMessage({ type: "ark:diagram-scroll", x: 0, y: NaN })
+    ).toBeNull();
+    expect(readDiagramScrollMessage({ type: "ark:diagram-pinch" })).toBeNull();
+    expect(readDiagramScrollMessage(null)).toBeNull();
+  });
+});
+
+describe("範囲選択の層からのメッセージ", () => {
+  it("囲み終えた文字と、切られたかどうかを読む", () => {
+    expect(
+      readDiagramSelectMessage({
+        type: "ark:diagram-selection",
+        text: "注文を受ける",
+        truncated: true,
+      })
+    ).toEqual({ kind: "selection", text: "注文を受ける", truncated: true });
+    expect(
+      readDiagramSelectMessage({ type: "ark:diagram-selection", text: "" })
+    ).toEqual({ kind: "selection", text: "", truncated: false });
+  });
+
+  it("上限を超える文字は、層が切っていなくてもここで切る", () => {
+    const event = readDiagramSelectMessage({
+      type: "ark:diagram-selection",
+      text: "あ".repeat(DIAGRAM_SELECTION_TEXT_LIMIT + 1),
+      truncated: false,
+    });
+    expect(event).toEqual({
+      kind: "selection",
+      text: "あ".repeat(DIAGRAM_SELECTION_TEXT_LIMIT),
+      truncated: true,
+    });
+  });
+
+  it("やめたことを読む。文字の無い選択と別の種類は読まない", () => {
+    expect(
+      readDiagramSelectMessage({ type: "ark:diagram-select-cancel" })
+    ).toEqual({ kind: "cancel" });
+    expect(
+      readDiagramSelectMessage({ type: "ark:diagram-selection", text: 1 })
+    ).toBeNull();
+    expect(readDiagramSelectMessage({ type: "ark:diagram-scroll" })).toBeNull();
+  });
+});
+
+describe("囲み終えた範囲を引用にする", () => {
+  function setup(selecting: boolean) {
+    const calls = {
+      stop: vi.fn(),
+      notify: vi.fn(),
+      quote: vi.fn(),
+      onQuoted: vi.fn(),
+    };
+    const context = {
+      selecting,
+      target: { worktreePath: "/wt", relPath: REL_PATH, name: "注文フロー" },
+      ...calls,
+    };
+    return { calls, context };
+  }
+  const selection = (text: string) =>
+    ({ kind: "selection", text, truncated: false }) as const;
+
+  it("選んでいる最中でなければ、図から届いた選択を受けない", () => {
+    const { calls, context } = setup(false);
+    handleDiagramSelectEvent(selection("勝手な文"), context);
+    handleDiagramSelectEvent({ kind: "cancel" }, context);
+    expect(calls.stop).not.toHaveBeenCalled();
+    expect(calls.quote).not.toHaveBeenCalled();
+    expect(calls.onQuoted).not.toHaveBeenCalled();
+  });
+
+  it("文字があれば、選ぶのをやめて下書きを置き、置いたことを知らせる", () => {
+    const { calls, context } = setup(true);
+    handleDiagramSelectEvent(selection("注文を受ける"), context);
+    expect(calls.stop).toHaveBeenCalledTimes(1);
+    expect(calls.quote).toHaveBeenCalledWith(
+      "/wt",
+      `ボード「注文フロー」(${REL_PATH}) のこの部分について:\n> 注文を受ける\n\n`
+    );
+    expect(calls.onQuoted).toHaveBeenCalledTimes(1);
+    expect(calls.notify).not.toHaveBeenCalled();
+  });
+
+  it("文字が無ければ、下書きを置かずに知らせを出す", () => {
+    const { calls, context } = setup(true);
+    handleDiagramSelectEvent(selection(""), context);
+    expect(calls.stop).toHaveBeenCalledTimes(1);
+    expect(calls.notify).toHaveBeenCalledWith(
+      "囲んだ範囲に文字がありませんでした。文字のある部分を囲んでください"
+    );
+    expect(calls.quote).not.toHaveBeenCalled();
+    expect(calls.onQuoted).not.toHaveBeenCalled();
+  });
+
+  it("やめたときは、選ぶのをやめるだけ", () => {
+    const { calls, context } = setup(true);
+    handleDiagramSelectEvent({ kind: "cancel" }, context);
+    expect(calls.stop).toHaveBeenCalledTimes(1);
+    expect(calls.quote).not.toHaveBeenCalled();
+    expect(calls.notify).not.toHaveBeenCalled();
   });
 });

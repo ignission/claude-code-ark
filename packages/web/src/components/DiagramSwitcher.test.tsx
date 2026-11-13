@@ -592,4 +592,31 @@ describe("DiagramSwitcher", () => {
     expect(onDelete).toHaveBeenCalledOnce();
     expect(onDelete).toHaveBeenCalledWith(diagrams[1].relPath, false);
   });
+
+  it("図の画面にだけ「一部を選んで聞く」を出し、押すと切り替えを頼む", () => {
+    const onToggleSelecting = vi.fn();
+    render({ onToggleSelecting });
+    const button = () =>
+      document.querySelector<HTMLButtonElement>(
+        'button[aria-label="一部を選んで聞く"]'
+      );
+    expect(button()?.getAttribute("aria-pressed")).toBe("false");
+    act(() => button()?.click());
+    expect(onToggleSelecting).toHaveBeenCalledTimes(1);
+
+    // 選んでいる間は、同じボタンがやめるボタンになる
+    render({ onToggleSelecting, selecting: true });
+    expect(
+      document
+        .querySelector('button[aria-label="選ぶのをやめる"]')
+        ?.getAttribute("aria-pressed")
+    ).toBe("true");
+
+    // 一覧の画面には出さない
+    act(() => back()?.click());
+    expect(button()).toBeNull();
+    expect(
+      document.querySelector('button[aria-label="選ぶのをやめる"]')
+    ).toBeNull();
+  });
 });

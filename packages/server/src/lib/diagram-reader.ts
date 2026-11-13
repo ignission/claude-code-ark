@@ -15,6 +15,8 @@ import { extractTitle, injectCsp } from "./diagram-file.js";
 import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { injectDiagramPinchLayer } from "./diagram-pinch-layer.js";
+import { injectDiagramScrollLayer } from "./diagram-scroll-layer.js";
+import { injectDiagramSelectLayer } from "./diagram-select-layer.js";
 import { errnoCode, errnoMessage } from "./errors.js";
 import { m } from "./i18n.js";
 
@@ -107,9 +109,16 @@ async function readRawVerified(
   }
 }
 
+const LAYERS: ReadonlyArray<(html: string) => string> = [
+  injectDiagramLinkLayer,
+  injectDiagramPinchLayer,
+  injectDiagramScrollLayer,
+  injectDiagramSelectLayer,
+];
+
 /**
  * 配信用に読む。書かれた HTML はそのまま見せ、Ark が足すのは meta CSP と、
- * リンクを親で開く層とピンチを親へ渡す層だけ。
+ * 親とやり取りする層 (リンク、ピンチ、スクロール位置、範囲選択) だけ。
  */
 export async function readDiagram(
   worktreeReal: string,
@@ -120,7 +129,7 @@ export async function readDiagram(
   return {
     ok: true,
     absPath: read.absPath,
-    html: injectDiagramPinchLayer(injectDiagramLinkLayer(injectCsp(read.raw))),
+    html: LAYERS.reduce((html, inject) => inject(html), injectCsp(read.raw)),
   };
 }
 

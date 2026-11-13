@@ -6,11 +6,12 @@
  * sandbox は allow-scripts のみで allow-same-origin を付けない。
  * 外部送信の遮断は本文に注入された meta CSP が担う（サーバー側で注入済み）。
  */
-import type {
-  ClientToServerEvents,
-  DiagramDeleteResponse,
-  DiagramListItem,
-  ServerToClientEvents,
+import {
+  type ClientToServerEvents,
+  DIAGRAM_SELECTION_TEXT_LIMIT,
+  type DiagramDeleteResponse,
+  type DiagramListItem,
+  type ServerToClientEvents,
 } from "@ark/shared";
 import type { CSSProperties, RefObject } from "react";
 import {
@@ -21,6 +22,8 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
+import { buildBoardQuoteDraft } from "@/lib/board-quote";
+import { requestChatDraft } from "@/lib/chat-draft-store";
 import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -52,6 +55,11 @@ export interface DiagramPaneProps {
   ) => Promise<DiagramDeleteResponse>;
   /** 未接続時は null。null の間は診断購読をスキップする */
   socket: TypedSocket | null;
+  /**
+   * 図の一部を囲んで、会話の入力欄へ引用を入れた直後に呼ばれる。図と会話を同時に
+   * 見せられない画面 (モバイル) が、会話へ切り替えるために使う
+   */
+  onQuoteToChat?: () => void;
 }
 
 /** ピンチの層 (diagram-pinch-layer.ts) が port 経由で送ってくるピンチ */
@@ -247,6 +255,107 @@ export function handleDiagramPinchMessage(
   return true;
 }
 
+/** スクロールの層 (diagram-scroll-layer.ts) が知らせてくる、図の文書のスクロール位置 */
+export interface DiagramScrollPosition {
+  x: number;
+  y: number;
+}
+
+export function readDiagramScrollMessage(
+  data: unknown
+): DiagramScrollPosition | null {
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    (data as { type?: unknown }).type !== "ark:diagram-scroll"
+  ) {
+    return null;
+  }
+  const { x, y } = data as { x?: unknown; y?: unknown };
+  if (typeof x !== "number" || typeof y !== "number") return null;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+/**
+ * 範囲選択の層 (diagram-select-layer.ts) からのメッセージ。
+ * - `selection`: 囲み終えた。text は囲んだ範囲に見えていた文字 (無ければ空)
+ * - `cancel`: 図の中で Escape が押され、選ぶのをやめた
+ */
+export type DiagramSelectEvent =
+  | { kind: "selection"; text: string; truncated: boolean }
+  | { kind: "cancel" };
+
+export function readDiagramSelectMessage(
+  data: unknown
+): DiagramSelectEvent | null {
+  if (typeof data !== "object" || data === null) return null;
+  const message = data as {
+    type?: unknown;
+    text?: unknown;
+    truncated?: unknown;
+  };
+  if (message.type === "ark:diagram-select-cancel") return { kind: "cancel" };
+  if (
+    message.type !== "ark:diagram-selection" ||
+    typeof message.text !== "string"
+  ) {
+    return null;
+  }
+  // 図自身のスクリプトも同じ port で送れるので、層が切った前提にせず、ここでも上限で切る
+  const over = message.text.length > DIAGRAM_SELECTION_TEXT_LIMIT;
+  return {
+    kind: "selection",
+    text: over
+      ? message.text.slice(0, DIAGRAM_SELECTION_TEXT_LIMIT)
+      : message.text,
+    truncated: over || message.truncated === true,
+  };
+}
+
+export interface DiagramSelectContext {
+  /** 人が「一部を選んで聞く」を押して、選んでいる最中か */
+  selecting: boolean;
+  target: { worktreePath: string; relPath?: string; name: string };
+  stop: () => void;
+  notify: (message: string) => void;
+  /** 会話の入力欄へ下書きを置く (chat-draft-store.ts の requestChatDraft) */
+  quote: (worktreePath: string, draft: string) => void;
+  onQuoted?: () => void;
+}
+
+/**
+ * 囲み終えた範囲を、会話の入力欄への引用にする。入れるだけで送らない (質問は人が続けて書く)。
+ *
+ * 人が選んでいる最中でなければ何もしない。port は window の message で図へ渡すので、
+ * 図自身のスクリプトも同じ port を拾える。選んでいないときの選択を受けると、図が勝手に
+ * 入力欄へ文を入れられてしまう。
+ */
+export function handleDiagramSelectEvent(
+  event: DiagramSelectEvent,
+  context: DiagramSelectContext
+): void {
+  if (!context.selecting) return;
+  context.stop();
+  if (event.kind === "cancel") return;
+  const { worktreePath, relPath, name } = context.target;
+  if (!relPath) return;
+  if (event.text === "") {
+    context.notify(m.board.quote.empty);
+    return;
+  }
+  context.quote(
+    worktreePath,
+    buildBoardQuoteDraft({
+      name,
+      relPath,
+      text: event.text,
+      truncated: event.truncated,
+    })
+  );
+  context.onQuoted?.();
+}
+
 export type DiagramLinkTarget =
   | { kind: "url"; url: string }
   | { kind: "file"; path: string; line: number | null; endLine: number | null };
@@ -361,6 +470,7 @@ export function DiagramPane({
   listDiagrams,
   deleteDiagram,
   onSelectDiagram,
+  onQuoteToChat,
 }: DiagramPaneProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -381,6 +491,25 @@ export function DiagramPane({
   const portRef = useRef<MessagePort | null>(null);
   const portGrantedForRef = useRef<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // 図の一部を囲んで聞くモード。囲み終えるか、やめると false に戻る
+  const [selecting, setSelecting] = useState(false);
+  const selectingRef = useRef(false);
+  const [quoteNotice, setQuoteNotice] = useState<string | null>(null);
+  // 図の文書のスクロール位置。同じ図の読み直しで、見ていた場所へ戻すために覚える
+  const scrollPositionRef = useRef<DiagramScrollPosition | null>(null);
+  // 囲み終えたときに引用へ入れる、いまの図の名前など。port の受け口は iframe の
+  // ロード時に作るので、そのあと一覧が届いても新しい名前を使えるよう ref で渡す
+  const quoteTargetRef = useRef({ worktreePath, relPath, name: relPath ?? "" });
+  quoteTargetRef.current = {
+    worktreePath,
+    relPath,
+    name:
+      diagrams.find(item => item.relPath === relPath)?.displayName ??
+      relPath?.split("/").at(-1) ??
+      "",
+  };
+  const onQuoteToChatRef = useRef(onQuoteToChat);
+  onQuoteToChatRef.current = onQuoteToChat;
 
   const load = useCallback(async () => {
     if (!relPath) return;
@@ -432,6 +561,9 @@ export function DiagramPane({
     setHtml(null);
     setError(null);
     setZoom(resetDiagramZoom());
+    setSelecting(false);
+    setQuoteNotice(null);
+    scrollPositionRef.current = null;
     portGrantedForRef.current = null;
     if (!relPath) {
       abortControllerRef.current?.abort();
@@ -480,6 +612,27 @@ export function DiagramPane({
       }
     };
   }, [worktreePath, isConnected, relPath, listDiagrams, listRefreshKey]);
+
+  // 範囲選択の開始と終了を図の中の層へ伝える。図が読み直されて層が作り直されたときは、
+  // handleIframeLoad が port を張り直した直後にもう一度伝える
+  useEffect(() => {
+    selectingRef.current = selecting;
+    portRef.current?.postMessage({
+      type: "ark:diagram-select",
+      active: selecting,
+    });
+  }, [selecting]);
+
+  // 選んでいる間の Escape。ボタンを押した直後はフォーカスが図の外 (この文書) にあり、
+  // 図の中の層にはキーが届かないので、こちらでも受ける
+  useEffect(() => {
+    if (!selecting) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelecting(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selecting]);
 
   // 図ファイルの更新監視。worktreePath / relPath が変わるたびに
   // 古い購読を解除してから新しい購読を張る。アンマウント時も同様に解除する。
@@ -605,6 +758,25 @@ export function DiagramPane({
         ) {
           return;
         }
+        const scroll = readDiagramScrollMessage(event.data);
+        if (scroll) {
+          scrollPositionRef.current = scroll;
+          return;
+        }
+        const select = readDiagramSelectMessage(event.data);
+        if (!select) return;
+        handleDiagramSelectEvent(select, {
+          selecting: selectingRef.current,
+          target: quoteTargetRef.current,
+          stop: () => {
+            // 続けて届いた2通目を受けないよう、描き直しを待たずに閉じる
+            selectingRef.current = false;
+            setSelecting(false);
+          },
+          notify: setQuoteNotice,
+          quote: requestChatDraft,
+          onQuoted: onQuoteToChatRef.current,
+        });
       };
 
       // targetOrigin に "*" を使う理由:
@@ -619,6 +791,17 @@ export function DiagramPane({
       iframeWindow.postMessage({ type: "ark:diagram-init" }, "*", [
         channel.port2,
       ]);
+      // 同じ図の読み直しなら、見ていた場所へ戻す。層は init を受けてから port を読み始めるので、
+      // init のあとに送ったものは順に届く
+      if (scrollPositionRef.current) {
+        channel.port1.postMessage({
+          type: "ark:diagram-restore-scroll",
+          ...scrollPositionRef.current,
+        });
+      }
+      if (selectingRef.current) {
+        channel.port1.postMessage({ type: "ark:diagram-select", active: true });
+      }
     },
     [html]
   );
@@ -639,7 +822,20 @@ export function DiagramPane({
         isConnected={isConnected}
         isDeleting={isDeleting}
         notice={deleteMessage}
+        selecting={selecting}
+        onToggleSelecting={() => {
+          setQuoteNotice(null);
+          setSelecting(value => !value);
+        }}
       />
+      {(selecting || quoteNotice) && (
+        <div
+          className="shrink-0 border-b border-border bg-well px-3 py-1.5 text-xs text-muted-foreground"
+          role="status"
+        >
+          {selecting ? m.board.quote.hint : quoteNotice}
+        </div>
+      )}
       {deleteMessage && (
         <div
           className="shrink-0 whitespace-pre-line border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"

@@ -29,6 +29,17 @@ export const board: Messages["board"] = {
   selectFromList: "Select a board from the list above",
   disconnected: "Socket is disconnected",
   deleteTimeout: "Deleting the board timed out",
+  quote: {
+    start: "Select a part to ask about",
+    startTitle:
+      "Draw a box around part of the board to quote it in the chat input",
+    stop: "Stop selecting",
+    hint: "Drag to draw a box around the part you want to ask about",
+    empty: "The box contained no text. Draw it around a part that has text.",
+    header: (name: string, relPath: string) =>
+      `About this part of the board "${name}" (${relPath}):`,
+    truncated: "(quoted up to here because it is long)",
+  },
   time: {
     today: (time: string) => `Today ${time}`,
     yesterday: (time: string) => `Yesterday ${time}`,

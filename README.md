@@ -53,7 +53,7 @@ Ark does not reimplement the agent. Each session is the interactive `claude` CLI
 
 ### Long explanations go on a board, not in the chat
 
-Claude draws diagrams, screen mockups, and clickable prototypes as free-form HTML on a board next to the conversation, whenever a picture says it better than text. Links in a diagram open the code beside it.
+Claude draws diagrams, screen mockups, and clickable prototypes as free-form HTML on a board next to the conversation, whenever a picture says it better than text. Links in a diagram open the code beside it. Press "Select a part to ask about" above the board and draw a box around part of a diagram: that part is quoted in the chat input, ready for your question or a request to change it.
 
 ### You can review without leaving
 
