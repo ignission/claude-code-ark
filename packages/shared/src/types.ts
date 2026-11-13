@@ -4,6 +4,18 @@
 export const DIAGRAM_DIR = ".claude/diagrams";
 
 /**
+ * ボードの一部を囲んだ1回の引用に入れる文字数の上限。図の中の層 (diagram-select-layer.ts) が
+ * 超えたぶんを切り、受け取る側 (DiagramPane.tsx) も同じ上限で切る (図自身のスクリプトも
+ * 同じ経路で送れるので、送る側だけでは守れない)。
+ *
+ * 引用は質問と一緒に tmux の send-keys へ1つの引数で渡る。tmux 3.4 は1つのコマンドが
+ * 16KB ほどを超えると command too long で断る (日本語 5,000 字は通り、8,000 字は断られた)。
+ * 日本語 2,000 字は 6KB で、1回の引用に質問を書き足しても届く (引用を何回も重ねたときまでは
+ * 守らない。長すぎる送信の扱いは送信の経路の問題)。
+ */
+export const DIAGRAM_SELECTION_TEXT_LIMIT = 2000;
+
+/**
  * Slash command 候補。チャットビュー入力欄の補完で使う。
  *  - `name`: `/foo` 形式 (先頭の `/` 含む)
  *  - `description`: 1 行説明 (frontmatter `description:` または組み込み定義)

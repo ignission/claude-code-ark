@@ -1,3 +1,4 @@
+import { DIAGRAM_SELECTION_TEXT_LIMIT } from "@ark/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -332,6 +333,19 @@ describe("範囲選択の層からのメッセージ", () => {
     expect(
       readDiagramSelectMessage({ type: "ark:diagram-selection", text: "" })
     ).toEqual({ kind: "selection", text: "", truncated: false });
+  });
+
+  it("上限を超える文字は、層が切っていなくてもここで切る", () => {
+    const event = readDiagramSelectMessage({
+      type: "ark:diagram-selection",
+      text: "あ".repeat(DIAGRAM_SELECTION_TEXT_LIMIT + 1),
+      truncated: false,
+    });
+    expect(event).toEqual({
+      kind: "selection",
+      text: "あ".repeat(DIAGRAM_SELECTION_TEXT_LIMIT),
+      truncated: true,
+    });
   });
 
   it("やめたことを読む。文字の無い選択と別の種類は読まない", () => {

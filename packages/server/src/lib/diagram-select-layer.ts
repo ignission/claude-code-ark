@@ -1,16 +1,7 @@
+import { DIAGRAM_SELECTION_TEXT_LIMIT } from "@ark/shared";
 import { createCachedMinifier } from "./injected-minify.js";
 
 export const DIAGRAM_SELECT_LAYER_MARKER = "ark-diagram-select-layer";
-
-/**
- * 1回の範囲選択で親へ送る文字数の上限。超えたぶんは切り、切ったことを一緒に送る。
- *
- * 引用は質問と一緒に tmux の send-keys へ1つの引数で渡る。tmux 3.4 は1つのコマンドが
- * 16KB ほどを超えると command too long で断る (日本語 5,000 字は通り、8,000 字は断られた)。
- * 日本語 2,000 字は 6KB で、1回の引用に質問を書き足しても届く (引用を何回も重ねたときまでは
- * 守らない。長すぎる送信の扱いは送信の経路の問題)。
- */
-export const DIAGRAM_SELECTION_TEXT_LIMIT = 2000;
 
 /**
  * ボードの一部を四角で囲み、その中に見えている文字を親へ渡す層。
@@ -20,7 +11,8 @@ export const DIAGRAM_SELECTION_TEXT_LIMIT = 2000;
  * 選ぶ、書く、送る、返信を読む、解決にする、と手数が多く、チャットに書くほうが早かった。
  *
  * 図の中身は解釈しない。囲んだ四角と重なる文字を、見えているまま写すだけにする
- * (要素の種類や構造には意味を持たせない)。文字の無い絵だけを囲んだときは空の文字列を送る。
+ * (要素の種類や構造には意味を持たせない)。折り返した文は、四角が触れた行だけを写す。
+ * 文字の無い絵だけを囲んだときは空の文字列を送る。
  *
  * 範囲選択は親が `ark:diagram-select` で始めさせる。普段はドラッグが本文の選択と
  * スクロールに使われるので、始めている間だけ全面に透明な膜を置いてドラッグを受ける。
@@ -53,29 +45,70 @@ export const SELECT_LAYER = `<script id="${DIAGRAM_SELECT_LAYER_MARKER}">
     }
     return document.body;
   }
+  function visible(element){
+    if(typeof element.checkVisibility==="function")return element.checkVisibility({opacityProperty:true,visibilityProperty:true});
+    return window.getComputedStyle(element).visibility!=="hidden";
+  }
+  // The part of a text node that lies on the lines the box touches. A node that
+  // wraps has one rect per line, so a box over one line does not quote the others
+  function partOf(node,range,selection){
+    range.selectNodeContents(node);
+    var rects=range.getClientRects();
+    var hits=[];
+    var shown=0;
+    for(var i=0;i<rects.length;i++){
+      if(rects[i].width<=0||rects[i].height<=0)continue;
+      shown++;
+      if(overlaps(rects[i],selection))hits.push(rects[i]);
+    }
+    var value=node.nodeValue;
+    if(hits.length===0)return "";
+    if(hits.length===shown)return value;
+    var part="";
+    var keep=false;
+    for(var c=0;c<value.length;c++){
+      range.setStart(node,c);
+      range.setEnd(node,c+1);
+      var rect=range.getBoundingClientRect();
+      // A character without a box (a space at a line break) follows the one before it
+      if(rect.width>0&&rect.height>0){
+        var x=(rect.left+rect.right)/2;
+        var y=(rect.top+rect.bottom)/2;
+        keep=false;
+        for(var h=0;h<hits.length;h++){
+          if(x>=hits[h].left&&x<=hits[h].right&&y>=hits[h].top&&y<=hits[h].bottom){keep=true;break;}
+        }
+      }
+      if(keep)part+=value.charAt(c);
+    }
+    return part;
+  }
   function collect(selection){
     var walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,null);
     var range=document.createRange();
     var lines=[];
     var lastBlock=null;
+    var pendingSpace=false;
     var node;
     while((node=walker.nextNode())){
       var value=node.nodeValue;
-      if(!value||!/\\S/.test(value))continue;
+      if(!value)continue;
       var parent=node.parentElement;
       if(!parent||parent.closest("script,style,noscript,template,[data-ark-layer]"))continue;
-      if(window.getComputedStyle(parent).visibility==="hidden")continue;
-      range.selectNodeContents(node);
-      var rects=range.getClientRects();
-      var hit=false;
-      for(var i=0;i<rects.length;i++){
-        if(rects[i].width>0&&rects[i].height>0&&overlaps(rects[i],selection)){hit=true;break;}
+      if(!/\\S/.test(value)){
+        // Whitespace between inline elements shows as a space. Keep it when the
+        // text on both sides of it is quoted
+        if(lines.length>0&&blockOf(parent)===lastBlock)pendingSpace=true;
+        continue;
       }
-      if(!hit)continue;
+      if(!visible(parent))continue;
+      var part=partOf(node,range,selection);
+      if(!part)continue;
       var block=blockOf(parent);
-      if(block===lastBlock&&lines.length>0)lines[lines.length-1]+=value;
-      else lines.push(value);
+      if(block===lastBlock&&lines.length>0)lines[lines.length-1]+=(pendingSpace?" ":"")+part;
+      else lines.push(part);
       lastBlock=block;
+      pendingSpace=false;
     }
     var text=lines.map(function(line){return line.replace(/\\s+/g," ").trim();}).filter(Boolean).join("\\n");
     if(text.length<=LIMIT)return {text:text,truncated:false};

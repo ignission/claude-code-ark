@@ -1,8 +1,8 @@
 import { runInNewContext } from "node:vm";
+import { DIAGRAM_SELECTION_TEXT_LIMIT } from "@ark/shared";
 import { describe, expect, it } from "vitest";
 import {
   DIAGRAM_SELECT_LAYER_MARKER,
-  DIAGRAM_SELECTION_TEXT_LIMIT,
   injectDiagramSelectLayer,
   SELECT_LAYER,
 } from "./diagram-select-layer.js";
@@ -211,6 +211,25 @@ describe("範囲選択", () => {
       {
         type: "ark:diagram-selection",
         text: "太字の続き と 改行",
+        truncated: false,
+      },
+    ]);
+  });
+
+  it("インラインの要素の間の空白は、両側を写すときに空白として残す", () => {
+    const layer = loadLayer([
+      { value: "not", rect: at(0, 0), block: "a", inline: true },
+      { value: " ", rect: at(100, 0), block: "a", inline: true },
+      { value: "approved", rect: at(110, 0), block: "a", inline: true },
+      { value: "\n  ", rect: at(0, 40), block: "b", inline: true },
+      { value: "次の行", rect: at(0, 40), block: "b", inline: true },
+    ]);
+    layer.fromParent({ type: "ark:diagram-select", active: true });
+    layer.drag([0, 0], [300, 80]);
+    expect(layer.sent).toEqual([
+      {
+        type: "ark:diagram-selection",
+        text: "not approved\n次の行",
         truncated: false,
       },
     ]);

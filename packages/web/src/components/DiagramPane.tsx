@@ -6,11 +6,12 @@
  * sandbox は allow-scripts のみで allow-same-origin を付けない。
  * 外部送信の遮断は本文に注入された meta CSP が担う（サーバー側で注入済み）。
  */
-import type {
-  ClientToServerEvents,
-  DiagramDeleteResponse,
-  DiagramListItem,
-  ServerToClientEvents,
+import {
+  type ClientToServerEvents,
+  DIAGRAM_SELECTION_TEXT_LIMIT,
+  type DiagramDeleteResponse,
+  type DiagramListItem,
+  type ServerToClientEvents,
 } from "@ark/shared";
 import type { CSSProperties, RefObject } from "react";
 import {
@@ -301,10 +302,14 @@ export function readDiagramSelectMessage(
   ) {
     return null;
   }
+  // 図自身のスクリプトも同じ port で送れるので、層が切った前提にせず、ここでも上限で切る
+  const over = message.text.length > DIAGRAM_SELECTION_TEXT_LIMIT;
   return {
     kind: "selection",
-    text: message.text,
-    truncated: message.truncated === true,
+    text: over
+      ? message.text.slice(0, DIAGRAM_SELECTION_TEXT_LIMIT)
+      : message.text,
+    truncated: over || message.truncated === true,
   };
 }
 
