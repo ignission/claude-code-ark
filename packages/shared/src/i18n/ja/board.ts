@@ -9,6 +9,18 @@ export const board = {
   selectFromList: "上の一覧から図を選択",
   disconnected: "ソケットが切断されています",
   deleteTimeout: "図の削除がタイムアウトしました",
+  /** 図の一部を囲んで、会話の入力欄へ引用する */
+  quote: {
+    start: "一部を選んで聞く",
+    startTitle: "図の一部を囲んで、会話の入力欄に引用する",
+    stop: "選ぶのをやめる",
+    hint: "聞きたい部分をドラッグで囲んでください",
+    empty: "囲んだ範囲に文字がありませんでした。文字のある部分を囲んでください",
+    /** 引用の1行目。このあとに囲んだ文字が引用として続く */
+    header: (name: string, relPath: string) =>
+      `ボード「${name}」(${relPath}) のこの部分について:`,
+    truncated: "(長いので、ここまでを引用)",
+  },
   /** 一覧の更新日時 */
   time: {
     today: (time: string) => `今日 ${time}`,

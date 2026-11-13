@@ -22,6 +22,7 @@ import {
   ArrowUp,
   ChevronLeft,
   ChevronRight,
+  SquareDashedMousePointer,
   Trash2,
   Workflow,
 } from "lucide-react";
@@ -63,6 +64,10 @@ interface DiagramSwitcherProps {
   isDeleting?: boolean;
   /** 削除の結果の知らせ (失敗の理由や、残ったファイルの警告)。一覧の中にも出す */
   notice?: string | null;
+  /** 図の一部を囲んで聞くモードの最中か */
+  selecting?: boolean;
+  /** 渡すと、図の画面のバーに「一部を選んで聞く」のボタンを出す */
+  onToggleSelecting?: () => void;
 }
 
 const COLUMNS: ReadonlyArray<{
@@ -149,6 +154,8 @@ export function DiagramSwitcher({
   isDeleting = false,
   notice = null,
   openKey,
+  selecting = false,
+  onToggleSelecting,
 }: DiagramSwitcherProps) {
   // 図をまだ選んでいないときは、一覧を開いた状態から始める
   const [open, setOpen] = useState(currentRelPath === undefined);
@@ -409,6 +416,18 @@ export function DiagramSwitcher({
               {currentLabel}
             </span>
           </>
+        )}
+        {!open && currentRelPath !== undefined && onToggleSelecting && (
+          <button
+            type="button"
+            aria-label={selecting ? m.board.quote.stop : m.board.quote.start}
+            aria-pressed={selecting}
+            title={selecting ? m.board.quote.stop : m.board.quote.startTitle}
+            className={cn(NAV_BUTTON, selecting && "bg-accent text-foreground")}
+            onClick={onToggleSelecting}
+          >
+            <SquareDashedMousePointer className="size-4" aria-hidden="true" />
+          </button>
         )}
         {listLoading && (
           <span className="shrink-0 text-[10px] text-muted-foreground">
