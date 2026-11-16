@@ -154,6 +154,9 @@ export const session: Messages["session"] = {
     screens: "Screens",
     manageScreens: "Manage screens...",
     openBridge: "Open Bridge in a new tab",
+    collapse: "Collapse sidebar",
+    expand: "Expand sidebar",
+    yourTurnCount: (count: number) => `Your turn: ${count}`,
   },
   update: {
     available: "A new version is available",

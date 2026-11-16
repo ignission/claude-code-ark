@@ -135,3 +135,40 @@ describe("SidebarMainLayout のサイドバー幅", () => {
     expect(onChange).toHaveBeenCalledWith(380);
   });
 });
+
+describe("SidebarMainLayout の畳み", () => {
+  function collapsible(collapsed: boolean): ReactElement {
+    return (
+      <SidebarMainLayout
+        sidebar={<div data-testid="sidebar">sidebar</div>}
+        main={<div>main</div>}
+        collapsed={collapsed}
+        rail={<div data-testid="rail">rail</div>}
+        initialSidebarWidth={320}
+      />
+    );
+  }
+
+  it("開いている間は帯を出さない", () => {
+    const container = mount(collapsible(false));
+
+    expect(container.querySelector("[data-testid='rail']")).toBeNull();
+    expect(
+      container.querySelector("div[style*='width']")?.className
+    ).not.toContain("hidden");
+  });
+
+  it("畳むと帯を出し、サイドバーは外さずに隠す", () => {
+    const container = mount(collapsible(true));
+
+    expect(container.querySelector("[data-testid='rail']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='sidebar']")).not.toBeNull();
+    expect(container.querySelector("div[style*='width']")?.className).toContain(
+      "hidden"
+    );
+  });
+
+  it("畳んでも幅は覚えている", () => {
+    expect(sidebarWidth(mount(collapsible(true)))).toBe(320);
+  });
+});

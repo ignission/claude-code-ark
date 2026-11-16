@@ -11,6 +11,10 @@
  *
  * ユーザーが選んだ幅（preferredWidthRef）は丸めた値とは別に覚えておき、
  * ウィンドウを広げ直したときは、丸める前の幅へ戻す。
+ *
+ * サイドバーは丸ごと畳める (`collapsed`)。畳んだ間は `rail` (開くボタンと「あなたの番」の
+ * 件数を載せた細い帯) を代わりに出す。サイドバーは外さずに隠すだけにして、一覧の中の状態
+ * (並びの保留、編集中の表示名、件数の通知) を保つ。幅は畳む前のまま覚えておく。
  */
 
 import {
@@ -29,6 +33,10 @@ import {
 interface SidebarMainLayoutProps {
   sidebar: ReactNode;
   main: ReactNode;
+  /** サイドバーを畳んで、代わりに rail を出す */
+  collapsed?: boolean;
+  /** 畳んだ間に出す細い帯 */
+  rail?: ReactNode;
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
 }
@@ -41,6 +49,8 @@ function viewportWidth(): number {
 export function SidebarMainLayout({
   sidebar,
   main,
+  collapsed = false,
+  rail,
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
 }: SidebarMainLayoutProps) {
@@ -123,8 +133,15 @@ export function SidebarMainLayout({
   return (
     <div className="app-wallpaper h-[100dvh] flex relative">
       {resizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
+      {collapsed && (
+        <div className="panel-glass w-12 shrink-0 border-r border-sidebar-border">
+          {rail}
+        </div>
+      )}
       <div
-        className="shrink-0 relative flex flex-col border-r border-sidebar-border"
+        className={`shrink-0 relative flex-col border-r border-sidebar-border ${
+          collapsed ? "hidden" : "flex"
+        }`}
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="panel-glass flex-1 min-h-0 overflow-hidden">
