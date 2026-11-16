@@ -14,38 +14,6 @@ export const board = {
     label: "画像の拡大表示",
     close: "閉じる",
   },
-  /** ボードの付箋と、Claudeへの受け渡し */
-  notes: {
-    add: "付箋を足す",
-    addTitle: "見えている範囲の中央に付箋を足す",
-    handOff: "Claudeに渡す",
-    handOffTitle: "付箋をClaudeに渡す。Claudeはボードを書き換えて返す",
-    handOffEmpty: "付箋を置くと渡せます",
-    handOffBusy: "Claudeの作業が終わると渡せます",
-    handOffChecking: "Claudeの状態を確認しています",
-    handOffStopped: "セッションが止まっています",
-    notStarted: "Claudeが動き出しませんでした。会話を見てください",
-    handOffDisconnected: "接続が切れています",
-    turn: "Claudeの番です。終わるとボードが書き換わります",
-    awaiting: "Claudeが確認を待っています。会話を見てください",
-    invalid:
-      "付箋のファイルを読めません (書き方が壊れています)。直前の付箋を表示しています。Claudeに「付箋のファイルを直して」と頼んでください",
-    limit: "付箋の数が上限に達しています",
-    failed: "付箋を保存できませんでした",
-    dropped: (count: number) =>
-      `形の合わない付箋や枠を${count}件読み飛ばしました`,
-    newBoard: "新しいボード",
-    newBoardTitle: "白紙のボードを作って、付箋から書き始める",
-    /** 白紙のボードの名前。month は 1 始まり */
-    blankName: (month: number, day: number, time: string) =>
-      `ホワイトボード ${month}/${day} ${time}`,
-    createFailed: "ボードを作れませんでした",
-    createTimeout:
-      "ボードを作る応答がありませんでした。作成は済んでいるかもしれません。一覧を確かめてから、もう一度押してください (続けて押すと同じボードが2枚できることがあります)",
-    /** 「Claudeに渡す」で送る定型文。人は書かない */
-    handOffMessage: (notesPath: string, diagramPath: string) =>
-      `ボードの付箋を渡します。\`${notesPath}\` を読み、付箋に応えて、同じファイルを書き換えてください (似たものを枠でまとめる、問いにはあなたの付箋で答える、抜けているものがあればあなたの付箋で足す)。付箋は図 \`${diagramPath}\` の上に置かれています。返事はボードに出るので、チャットには1行だけ書いてください。`,
-  },
   /** 一覧の更新日時 */
   time: {
     today: (time: string) => `今日 ${time}`,
@@ -88,9 +56,9 @@ export const board = {
     trackedAndUntracked: (tracked: number, untracked: number) =>
       `Git管理 ${tracked}件 / 未追跡 ${untracked}件`,
     deleteWarningTracked:
-      "図に置いた付箋も削除します。図は worktree に削除差分が残ります。必要なら Git で復元できます。ただし Git 未追跡のファイルは復元できません。この操作は取り消せません。",
+      "図と隣接するコメント sidecar も削除します。図は worktree に削除差分が残ります。必要なら Git で復元できます。ただし Git 未追跡のファイルは復元できません。この操作は取り消せません。",
     deleteWarningUntracked:
-      "図に置いた付箋も削除します。Git 未追跡のファイルは復元できません。この操作は取り消せません。",
+      "図と隣接するコメント sidecar も削除します。Git 未追跡のファイルは復元できません。この操作は取り消せません。",
     deleting: "削除中…",
     deletingProgress: (current: number, total: number) =>
       `削除中… ${current}/${total}`,

@@ -1200,7 +1200,6 @@ export function MobileSessionView({
               openKey={tabs.find(tab => tab.type === "diagram")?.id}
               relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
               onSelectDiagram={onSelectDiagram}
-              bridgeStatus={bridgeStatus}
             />
           </div>
           {/* 図モードの下部バーはセグメントと1タップの操作だけ。図の中に下端固定の UI が

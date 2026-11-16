@@ -12,7 +12,7 @@ export const DIAGRAM_IMAGE_LAYER_MARKER = "ark-diagram-image-layer";
  *   (図は外部の画像を読めないので、src は data URL)。`<svg>` は文書の CSS で色や線が
  *   決まっていることが多いので、見た目に効くプロパティを要素へ書き込んだ写しを送る
  * - 図が自分で押せるようにしているものには手を出さない。リンク・ボタンの中、
- *   カーソルが pointer のもの、小さいもの (アイコン)、付箋の層の中は対象外
+ *   カーソルが pointer のもの、小さいもの (アイコン) は対象外
  * - 文字を選んでいる間は送らない (リンク層と同じ)
  *
  * port の扱いはリンク層 (diagram-link-layer.ts) と同じ。
@@ -68,7 +68,7 @@ export const IMAGE_LAYER = `<script id="${DIAGRAM_IMAGE_LAYER_MARKER}">
     if(!port||event.defaultPrevented||event.button!==0)return;
     var origin=event.target;
     if(!origin||!origin.closest)return;
-    if(origin.closest("a[href],button,input,select,textarea,label,summary,[role=button],[onclick],[contenteditable],ark-notes"))return;
+    if(origin.closest("a[href],button,input,select,textarea,label,summary,[role=button],[onclick],[contenteditable]"))return;
     var target=origin.closest("img,svg");
     if(!target)return;
     // The outermost <svg> is the picture; nested ones are parts of it

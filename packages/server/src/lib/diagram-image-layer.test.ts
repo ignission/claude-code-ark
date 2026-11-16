@@ -88,13 +88,12 @@ describe("ボードの画像を押す", () => {
     expect(sent).toEqual([]);
   });
 
-  it("リンクやボタンの中、pointer のもの、付箋の層の中は送らない", () => {
+  it("リンクやボタンの中、pointer のものは送らない", () => {
     document.body.innerHTML = `
       <a href="x"><img id="a" src="${PNG}"></a>
       <button><img id="b" src="${PNG}"></button>
-      <img id="c" src="${PNG}" style="cursor:pointer">
-      <ark-notes><img id="d" src="${PNG}"></ark-notes>`;
-    for (const id of ["a", "b", "c", "d"]) click(`#${id}`);
+      <img id="c" src="${PNG}" style="cursor:pointer">`;
+    for (const id of ["a", "b", "c"]) click(`#${id}`);
     expect(sent).toEqual([]);
   });
 
