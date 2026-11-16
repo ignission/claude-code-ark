@@ -23,8 +23,11 @@ export const DIAGRAM_SKETCH_LAYER_MARKER = "ark-diagram-sketch-layer";
  * - 画像にするのは、見えている範囲を、線がすべて入るまで広げた範囲。図の全体を1枚に
  *   すると、長い図では文字が読めない大きさに縮む。線が無くても見せられる (触れる図に
  *   人が書き込んだ内容など、図そのものを見せたいことがある)
- * - 線はファイルに残さない。親が覚えておき、図が読み直されたら返してもらう
- *   (描いている途中で Claude が図を書き換えても、線を失わない)
+ * - 線はファイルに残さない。線と「描いている最中か」を親が覚えておき、図が読み直されたら
+ *   返してもらう (描いている途中で Claude が図を書き換えても、線も描くモードも失わない)
+ * - Apple Pencil はタッチとしても届く。手のひらを置いて書くと2点のタッチになり、ピンチの層が
+ *   拡大縮小と読む。描いている間は、ペンを含むタッチをピンチの層へ渡さない。手のひらの
+ *   動きでスクロールもしない
  *
  * 部品は Shadow DOM の中に置き、図の CSS の影響を受けないようにする。
  * port の扱いはリンク層 (diagram-link-layer.ts) と同じ。
@@ -107,7 +110,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
     paint();
   }
   function changed(){
-    if(port)port.postMessage({type:"ark:diagram-sketch-strokes",strokes:strokes});
+    if(port)port.postMessage({type:"ark:diagram-sketch-strokes",strokes:strokes,drawing:drawing});
   }
   function sync(){
     bar.textContent="";
@@ -137,6 +140,8 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
     erasing=false;
     canvas.style.pointerEvents=on?"auto":"none";
     sync();
+    // The parent keeps the mode too: a reloaded board must not drop out of drawing
+    changed();
   }
   function fit(){
     var r=ratio();
@@ -205,7 +210,8 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       var last=touches[event.pointerId];
       if(!last)return;
       // One finger scrolls the board. Two fingers are a pinch, which the pinch layer handles
-      if(countTouches()===1)window.scrollBy(last.x-event.clientX,last.y-event.clientY);
+      // A palm resting on the screen moves a little while the pen writes: no scrolling then
+      if(countTouches()===1&&!current&&!rubbing)window.scrollBy(last.x-event.clientX,last.y-event.clientY);
       touches[event.pointerId]={x:event.clientX,y:event.clientY};
       return;
     }
@@ -227,6 +233,21 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   }
   canvas.addEventListener("pointerup",release);
   canvas.addEventListener("pointercancel",release);
+  // Where the pen is a touch too (Apple Pencil), pen + resting palm arrive as two touches,
+  // which the pinch layer would read as a pinch and zoom the board. While drawing, touches
+  // that include the pen stop here, before the pinch layer's listeners on window
+  function guardPen(event){
+    if(!drawing)return;
+    var list=event.touches||[];
+    for(var i=0;i<list.length;i++){
+      if(list[i].touchType==="stylus"){
+        event.stopImmediatePropagation();
+        return;
+      }
+    }
+  }
+  window.addEventListener("touchstart",guardPen,true);
+  window.addEventListener("touchmove",guardPen,true);
   window.addEventListener("scroll",paint,{passive:true});
   window.addEventListener("resize",fit);
 
@@ -393,6 +414,13 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
         strokes=restored;
         history=[];
         paint();
+        // Asked back into drawing after a reload. Set without telling the parent again
+        if(typeof data.drawing==="boolean"&&data.drawing!==drawing){
+          drawing=data.drawing;
+          current=null;
+          erasing=false;
+          canvas.style.pointerEvents=drawing?"auto":"none";
+        }
         sync();
       }
     });

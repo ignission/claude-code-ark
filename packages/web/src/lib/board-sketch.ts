@@ -46,16 +46,24 @@ export function readDiagramSketchMessage(
 /** 手書きの線。文書の座標の点と太さの並び */
 export type SketchStroke = Array<{ x: number; y: number; w: number }>;
 
+/** 親が覚えておく手書きの状態。線と、描いている最中かどうか */
+export interface SketchState {
+  strokes: SketchStroke[];
+  drawing: boolean;
+}
+
+export const EMPTY_SKETCH: SketchState = { strokes: [], drawing: false };
+
 const MAX_STROKES = 500;
 const MAX_POINTS = 60_000;
 
 /**
- * 層が知らせてくる今の線を読む。親は線を覚えておき、図が読み直されたら層へ返す。
+ * 層が知らせてくる今の線と描くモードを読む。親は覚えておき、図が読み直されたら層へ返す。
  * 図の中身は信頼しないので、数だけを通し、量に上限を置く (超えたら覚えない)
  */
 export function readDiagramSketchStrokesMessage(
   data: unknown
-): SketchStroke[] | null {
+): SketchState | null {
   if (
     typeof data !== "object" ||
     data === null ||
@@ -63,8 +71,12 @@ export function readDiagramSketchStrokesMessage(
   ) {
     return null;
   }
-  const { strokes } = data as { strokes?: unknown };
-  if (!Array.isArray(strokes) || strokes.length > MAX_STROKES) return [];
+  const { strokes, drawing } = data as { strokes?: unknown; drawing?: unknown };
+  const state = (list: SketchStroke[]): SketchState => ({
+    strokes: list,
+    drawing: drawing === true,
+  });
+  if (!Array.isArray(strokes) || strokes.length > MAX_STROKES) return state([]);
   const result: SketchStroke[] = [];
   let points = 0;
   for (const stroke of strokes) {
@@ -84,10 +96,10 @@ export function readDiagramSketchStrokesMessage(
       }
     }
     points += clean.length;
-    if (points > MAX_POINTS) return [];
+    if (points > MAX_POINTS) return state([]);
     if (clean.length > 0) result.push(clean);
   }
-  return result;
+  return state(result);
 }
 
 /** 層のボタンに出す文言。図の中の層は言語を知らないので、親から渡す */

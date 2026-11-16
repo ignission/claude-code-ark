@@ -44,6 +44,17 @@ describe("手書きの層", () => {
     expect(source).toContain("strokes=history.pop()");
   });
 
+  it("描いている間は、ペンを含むタッチをピンチの層へ渡さず、手のひらでスクロールしない", () => {
+    expect(source).toContain('touchType==="stylus"');
+    expect(source).toContain("stopImmediatePropagation");
+    expect(source).toContain("countTouches()===1&&!current&&!rubbing");
+  });
+
+  it("描くモードも親に預け、読み直しのあとに戻す", () => {
+    expect(source).toContain("drawing:drawing");
+    expect(source).toContain('typeof data.drawing==="boolean"');
+  });
+
   it("線が無くても見せられる (送っている間だけ押せない)", () => {
     expect(source).toContain('key==="send"?sending:');
     expect(source).toContain("if(!port||sending)return;");

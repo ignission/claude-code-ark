@@ -24,9 +24,10 @@ import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import {
   buildSketchDraft,
+  EMPTY_SKETCH,
   readDiagramSketchMessage,
   readDiagramSketchStrokesMessage,
-  type SketchStroke,
+  type SketchState,
   sketchLabels,
   uploadSketch,
 } from "@/lib/board-sketch";
@@ -425,8 +426,9 @@ export function DiagramPane({
   const rootRef = useRef<HTMLDivElement>(null);
   // 図の文書のスクロール位置。同じ図の読み直しで、見ていた場所へ戻すために覚える
   const scrollPositionRef = useRef<DiagramScrollPosition | null>(null);
-  // 図の上の手書きの線。図が読み直されると層は線を失うので、ここで覚えておいて返す
-  const sketchStrokesRef = useRef<SketchStroke[]>([]);
+  // 図の上の手書きの線と、描いている最中かどうか。図が読み直されると層はどちらも失うので、
+  // ここで覚えておいて返す
+  const sketchRef = useRef<SketchState>(EMPTY_SKETCH);
   // port の受け口は iframe のロード時に作るので、いまの図と接続は ref で渡す
   const targetRef = useRef({ socket, sessionId, worktreePath, relPath });
   targetRef.current = { socket, sessionId, worktreePath, relPath };
@@ -483,7 +485,7 @@ export function DiagramPane({
     setZoom(resetDiagramZoom());
     setZoomedImage(null);
     scrollPositionRef.current = null;
-    sketchStrokesRef.current = [];
+    sketchRef.current = EMPTY_SKETCH;
     portGrantedForRef.current = null;
     if (!relPath) {
       abortControllerRef.current?.abort();
@@ -669,9 +671,9 @@ export function DiagramPane({
         }
         // 図の上の手書き。画像を保存して会話の入力欄へ添付する (送信は人が押す)。
         // 結果は層へ返す: 添付できたら層は線を消し、できなければ線を残す
-        const strokes = readDiagramSketchStrokesMessage(event.data);
-        if (strokes) {
-          sketchStrokesRef.current = strokes;
+        const sketchState = readDiagramSketchStrokesMessage(event.data);
+        if (sketchState) {
+          sketchRef.current = sketchState;
           return;
         }
         const sketch = readDiagramSketchMessage(event.data);
@@ -695,10 +697,10 @@ export function DiagramPane({
             // 送っている間に図が読み直されていても、添付した線を新しい層へ返さない。
             // 別の図へ移っていたら、その図の線には触らない
             if (targetRef.current.relPath === relPathAtSend) {
-              sketchStrokesRef.current = [];
+              sketchRef.current = EMPTY_SKETCH;
               portRef.current?.postMessage({
                 type: "ark:diagram-sketch-restore",
-                strokes: [],
+                ...EMPTY_SKETCH,
               });
             }
             reply(true);
@@ -731,10 +733,10 @@ export function DiagramPane({
         type: "ark:diagram-sketch-labels",
         labels: sketchLabels(),
       });
-      if (sketchStrokesRef.current.length > 0) {
+      if (sketchRef.current.strokes.length > 0 || sketchRef.current.drawing) {
         channel.port1.postMessage({
           type: "ark:diagram-sketch-restore",
-          strokes: sketchStrokesRef.current,
+          ...sketchRef.current,
         });
       }
       // 同じ図の読み直しなら、見ていた場所へ戻す

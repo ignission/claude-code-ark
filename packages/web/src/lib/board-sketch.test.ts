@@ -50,16 +50,17 @@ describe("readDiagramSketchStrokesMessage", () => {
           [null],
         ],
       })
-    ).toEqual([[{ x: 1, y: 2, w: 3 }]]);
+    ).toEqual({ strokes: [[{ x: 1, y: 2, w: 3 }]], drawing: false });
   });
 
-  it("線が無くなった知らせは空として読む (親が覚えた線を消すため)", () => {
+  it("線が無くなった知らせは空として読み、描いている最中かどうかも読む", () => {
     expect(
       readDiagramSketchStrokesMessage({
         type: "ark:diagram-sketch-strokes",
         strokes: [],
+        drawing: true,
       })
-    ).toEqual([]);
+    ).toEqual({ strokes: [], drawing: true });
   });
 
   it("多すぎる線は覚えない", () => {
@@ -73,13 +74,13 @@ describe("readDiagramSketchStrokesMessage", () => {
         type: "ark:diagram-sketch-strokes",
         strokes: Array.from({ length: 61 }, () => stroke),
       })
-    ).toEqual([]);
+    ).toEqual({ strokes: [], drawing: false });
     expect(
       readDiagramSketchStrokesMessage({
         type: "ark:diagram-sketch-strokes",
         strokes: Array.from({ length: 501 }, () => [{ x: 1, y: 1, w: 1 }]),
       })
-    ).toEqual([]);
+    ).toEqual({ strokes: [], drawing: false });
   });
 
   it("別の種類のメッセージは読まない", () => {
