@@ -16,10 +16,14 @@ export const DIAGRAM_SKETCH_LAYER_MARKER = "ark-diagram-sketch-layer";
  *   (長い図でも canvas を大きくしない)
  * - 画像は図の中で作る。文書の写しを SVG の foreignObject に入れて canvas に描き、
  *   その上に線を重ねる。親は sandbox の iframe の見た目を画像にできない
+ * - 写しの中の `<img>` を描かないエンジンがある (WebKit)。その場合は、図の中の画像と
+ *   canvas を、ページ上の位置に合わせて上から描き足す (重なりの順は再現しない)
  * - 写しは今の図と同じ幅で組む (横にはみ出す図でも、中央寄せや折り返しの位置を変えない)
- * - 画像にするのは線を囲む範囲と余白だけ (線が無ければ見えている範囲)。図の全体を
- *   1枚にすると、長い図では文字が読めない大きさに縮む
- * - 線はファイルに残さない。図が読み直されると消える
+ * - 画像にするのは、見えている範囲を、線がすべて入るまで広げた範囲。図の全体を1枚に
+ *   すると、長い図では文字が読めない大きさに縮む。線が無くても見せられる (触れる図に
+ *   人が書き込んだ内容など、図そのものを見せたいことがある)
+ * - 線はファイルに残さない。親が覚えておき、図が読み直されたら返してもらう
+ *   (描いている途中で Claude が図を書き換えても、線を失わない)
  *
  * 部品は Shadow DOM の中に置き、図の CSS の影響を受けないようにする。
  * port の扱いはリンク層 (diagram-link-layer.ts) と同じ。
@@ -30,6 +34,8 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   var port=null;
   var MARGIN=140;
   var MAX_EDGE=2000;
+  var MAX_DRAWS=6;
+  var REDRAW_WAIT=90;
   var INK="#e11d48";
   var labels={draw:"Draw",undo:"Undo",clear:"Clear",send:"Show Claude",sending:"Sending...",close:"Done"};
   var strokes=[];
@@ -58,18 +64,25 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   }
   var buttons={
     draw:button("draw",false,function(){setDrawing(true);}),
-    undo:button("undo",false,function(){strokes.pop();paint();sync();}),
-    clear:button("clear",false,function(){strokes=[];paint();sync();}),
+    undo:button("undo",false,function(){strokes.pop();paint();sync();changed();}),
+    clear:button("clear",false,function(){strokes=[];paint();sync();changed();}),
     send:button("send",true,send),
     close:button("close",false,function(){setDrawing(false);})
   };
+  // The parent keeps the strokes, and hands them back when the board is reloaded
+  // (Claude rewriting the board must not wipe a drawing in progress)
+  function changed(){
+    if(port)port.postMessage({type:"ark:diagram-sketch-strokes",strokes:strokes});
+  }
   function sync(){
     bar.textContent="";
     var keys=drawing?["undo","clear","send","close"]:["draw"];
     keys.forEach(function(key){
       var el=buttons[key];
       el.textContent=key==="send"&&sending?labels.sending:labels[key];
-      var off=(key==="undo"||key==="clear"||key==="send")&&(strokes.length===0||sending);
+      // "Show Claude" works without strokes too: the board itself may hold what the user
+      // wants to show (something typed or drawn in an interactive board)
+      var off=key==="send"?sending:(key==="undo"||key==="clear")&&(strokes.length===0||sending);
       el.disabled=off;
       el.style.opacity=off?"0.45":"1";
       bar.appendChild(el);
@@ -117,7 +130,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   }
   function pointOf(event){
     var pressure=event.pointerType==="pen"&&event.pressure>0?event.pressure:0.5;
-    return {x:event.clientX+window.scrollX,y:event.clientY+window.scrollY,w:1.5+3.5*pressure};
+    return {x:Math.round((event.clientX+window.scrollX)*10)/10,y:Math.round((event.clientY+window.scrollY)*10)/10,w:Math.round((1.5+3.5*pressure)*10)/10};
   }
   function countTouches(){return Object.keys(touches).length;}
   canvas.addEventListener("pointerdown",function(event){
@@ -154,6 +167,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   });
   function release(event){
     if(event.pointerType==="touch"){delete touches[event.pointerId];return;}
+    if(current)changed();
     current=null;
   }
   canvas.addEventListener("pointerup",release);
@@ -161,22 +175,55 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   window.addEventListener("scroll",paint,{passive:true});
   window.addEventListener("resize",fit);
 
+  // What goes into the picture: the part of the board on screen, widened to hold every stroke.
+  // The screen is included so that what the user is looking at (and anything they wrote in the
+  // board before drawing) is never cut off
   function cropRect(docWidth,docHeight){
-    var left=Infinity,top=Infinity,right=-Infinity,bottom=-Infinity;
+    var left=window.scrollX,top=window.scrollY,right=left+window.innerWidth,bottom=top+window.innerHeight;
     for(var s=0;s<strokes.length;s++)for(var i=0;i<strokes[s].length;i++){
       var p=strokes[s][i];
-      if(p.x<left)left=p.x;
-      if(p.y<top)top=p.y;
-      if(p.x>right)right=p.x;
-      if(p.y>bottom)bottom=p.y;
+      if(p.x-MARGIN<left)left=p.x-MARGIN;
+      if(p.y-MARGIN<top)top=p.y-MARGIN;
+      if(p.x+MARGIN>right)right=p.x+MARGIN;
+      if(p.y+MARGIN>bottom)bottom=p.y+MARGIN;
     }
-    if(left===Infinity){left=window.scrollX;top=window.scrollY;right=left+window.innerWidth;bottom=top+window.innerHeight;}
-    else{left-=MARGIN;top-=MARGIN;right+=MARGIN;bottom+=MARGIN;}
     left=Math.max(0,Math.floor(left));
     top=Math.max(0,Math.floor(top));
     right=Math.min(docWidth,Math.ceil(right));
     bottom=Math.min(docHeight,Math.ceil(bottom));
     return {x:left,y:top,w:Math.max(1,right-left),h:Math.max(1,bottom-top)};
+  }
+  // Some engines (WebKit) do not paint <img> inside the foreignObject of an SVG used as an image.
+  // Find out once with a red pixel; where it is missing, images and canvases are drawn over the
+  // picture at their place on the page instead
+  var paintsImages=null;
+  function probeImages(done){
+    if(paintsImages!==null){done();return;}
+    var probe=new Image();
+    probe.onerror=function(){paintsImages=false;done();};
+    probe.onload=function(){
+      try{
+        var k=document.createElement("canvas");
+        k.width=4;k.height=4;
+        var g=k.getContext("2d");
+        g.drawImage(probe,0,0);
+        var d=g.getImageData(1,1,1,1).data;
+        paintsImages=d[0]>200&&d[1]<60&&d[3]>200;
+      }catch(e){paintsImages=false;}
+      done();
+    };
+    probe.src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><foreignObject width="4" height="4"><img xmlns="http://www.w3.org/1999/xhtml" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC" width="4" height="4" style="display:block"/></foreignObject></svg>');
+  }
+  function drawPictures(c,scale,crop){
+    var list=document.querySelectorAll("img,canvas");
+    for(var i=0;i<list.length;i++){
+      var rect=list[i].getBoundingClientRect();
+      if(rect.width<1||rect.height<1)continue;
+      if(window.getComputedStyle(list[i]).visibility==="hidden")continue;
+      try{
+        c.drawImage(list[i],(rect.left+window.scrollX-crop.x)*scale,(rect.top+window.scrollY-crop.y)*scale,rect.width*scale,rect.height*scale);
+      }catch(e){}
+    }
   }
   function fail(){
     sending=false;
@@ -184,9 +231,12 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
     if(port)port.postMessage({type:"ark:diagram-sketch-error"});
   }
   function send(){
-    if(!port||sending||strokes.length===0)return;
+    if(!port||sending)return;
     sending=true;
     sync();
+    probeImages(capture);
+  }
+  function capture(){
     try{
       var page=document.documentElement;
       var docWidth=Math.ceil(Math.max(page.scrollWidth,window.innerWidth));
@@ -201,9 +251,10 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       for(var i=0;i<originals.length;i++){
         try{
           var picture=document.createElement("img");
+          // Keep id, class and style: the page CSS positions the canvas through them
+          var attrs=originals[i].attributes;
+          for(var a=0;a<attrs.length;a++)if(attrs[a].name!=="width"&&attrs[a].name!=="height")picture.setAttribute(attrs[a].name,attrs[a].value);
           picture.setAttribute("src",originals[i].toDataURL());
-          picture.setAttribute("style",originals[i].getAttribute("style")||"");
-          picture.setAttribute("class",originals[i].getAttribute("class")||"");
           picture.setAttribute("width",String(originals[i].clientWidth));
           picture.setAttribute("height",String(originals[i].clientHeight));
           copies[i].parentNode.replaceChild(picture,copies[i]);
@@ -217,7 +268,12 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       var scale=Math.min(2,MAX_EDGE/Math.max(crop.w,crop.h));
       var image=new Image();
       image.onerror=fail;
-      image.onload=function(){
+      // WebKit fires load before the pictures inside the copy are decoded, and a draw made
+      // right away leaves them out (drawing is what starts the decoding). So draw again after
+      // a short wait, until two draws in a row come out the same
+      var tries=0;
+      var previous=null;
+      var render=function(){
         try{
           var out=document.createElement("canvas");
           out.width=Math.round(crop.w*scale);
@@ -226,10 +282,19 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
           c.fillStyle="#fff";
           c.fillRect(0,0,out.width,out.height);
           c.drawImage(image,-crop.x*scale,-crop.y*scale,docWidth*scale,docHeight*scale);
+          if(!paintsImages)drawPictures(c,scale,crop);
+          var drawn=out.toDataURL("image/png");
+          if(drawn!==previous&&tries<MAX_DRAWS){
+            previous=drawn;
+            tries++;
+            setTimeout(render,REDRAW_WAIT);
+            return;
+          }
           drawStrokes(c,scale,crop.x,crop.y);
           port.postMessage({type:"ark:diagram-sketch",dataUrl:out.toDataURL("image/png")});
         }catch(e){fail();}
       };
+      image.onload=render;
       image.src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);
     }catch(e){fail();}
   }
@@ -253,6 +318,20 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
         sending=false;
         if(data.ok){strokes=[];paint();setDrawing(false);}
         else sync();
+      }else if(data.type==="ark:diagram-sketch-restore"&&Array.isArray(data.strokes)){
+        var restored=[];
+        for(var s=0;s<data.strokes.length;s++){
+          var from=data.strokes[s],to=[];
+          if(!Array.isArray(from))continue;
+          for(var i=0;i<from.length;i++){
+            var p=from[i];
+            if(p&&isFinite(p.x)&&isFinite(p.y)&&isFinite(p.w))to.push({x:+p.x,y:+p.y,w:+p.w});
+          }
+          if(to.length)restored.push(to);
+        }
+        strokes=restored;
+        paint();
+        sync();
       }
     });
     port.start();

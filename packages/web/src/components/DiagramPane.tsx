@@ -25,6 +25,8 @@ import { toast } from "sonner";
 import {
   buildSketchDraft,
   readDiagramSketchMessage,
+  readDiagramSketchStrokesMessage,
+  type SketchStroke,
   sketchLabels,
   uploadSketch,
 } from "@/lib/board-sketch";
@@ -423,6 +425,8 @@ export function DiagramPane({
   const rootRef = useRef<HTMLDivElement>(null);
   // 図の文書のスクロール位置。同じ図の読み直しで、見ていた場所へ戻すために覚える
   const scrollPositionRef = useRef<DiagramScrollPosition | null>(null);
+  // 図の上の手書きの線。図が読み直されると層は線を失うので、ここで覚えておいて返す
+  const sketchStrokesRef = useRef<SketchStroke[]>([]);
   // port の受け口は iframe のロード時に作るので、いまの図と接続は ref で渡す
   const targetRef = useRef({ socket, sessionId, worktreePath, relPath });
   targetRef.current = { socket, sessionId, worktreePath, relPath };
@@ -479,6 +483,7 @@ export function DiagramPane({
     setZoom(resetDiagramZoom());
     setZoomedImage(null);
     scrollPositionRef.current = null;
+    sketchStrokesRef.current = [];
     portGrantedForRef.current = null;
     if (!relPath) {
       abortControllerRef.current?.abort();
@@ -664,6 +669,11 @@ export function DiagramPane({
         }
         // 図の上の手書き。画像を保存して会話の入力欄へ添付する (送信は人が押す)。
         // 結果は層へ返す: 添付できたら層は線を消し、できなければ線を残す
+        const strokes = readDiagramSketchStrokesMessage(event.data);
+        if (strokes) {
+          sketchStrokesRef.current = strokes;
+          return;
+        }
         const sketch = readDiagramSketchMessage(event.data);
         if (!sketch) return;
         const reply = (ok: boolean) =>
@@ -682,6 +692,15 @@ export function DiagramPane({
               buildSketchDraft(imagePath, relPathAtSend)
             );
             toast.success(m.board.sketch.attached);
+            // 送っている間に図が読み直されていても、添付した線を新しい層へ返さない。
+            // 別の図へ移っていたら、その図の線には触らない
+            if (targetRef.current.relPath === relPathAtSend) {
+              sketchStrokesRef.current = [];
+              portRef.current?.postMessage({
+                type: "ark:diagram-sketch-restore",
+                strokes: [],
+              });
+            }
             reply(true);
           },
           (error: unknown) => {
@@ -712,6 +731,12 @@ export function DiagramPane({
         type: "ark:diagram-sketch-labels",
         labels: sketchLabels(),
       });
+      if (sketchStrokesRef.current.length > 0) {
+        channel.port1.postMessage({
+          type: "ark:diagram-sketch-restore",
+          strokes: sketchStrokesRef.current,
+        });
+      }
       // 同じ図の読み直しなら、見ていた場所へ戻す
       if (scrollPositionRef.current) {
         channel.port1.postMessage({

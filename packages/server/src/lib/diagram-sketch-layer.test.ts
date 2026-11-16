@@ -22,6 +22,8 @@ describe("手書きの層", () => {
       "ark:diagram-sketch-error",
       "ark:diagram-sketch-labels",
       "ark:diagram-sketch-result",
+      "ark:diagram-sketch-strokes",
+      "ark:diagram-sketch-restore",
     ]) {
       expect(source).toContain(`"${type}"`);
     }
@@ -34,6 +36,15 @@ describe("手書きの層", () => {
   it("写しは今の図の幅で組み、はみ出した分も描く", () => {
     expect(source).toContain("page.clientWidth");
     expect(source).toContain('style="overflow:visible"');
+  });
+
+  it("線が無くても見せられる (送っている間だけ押せない)", () => {
+    expect(source).toContain('key==="send"?sending:');
+    expect(source).toContain("if(!port||sending)return;");
+  });
+
+  it("画像が写るまで描き直す (WebKit は読み込み直後だと中の画像を落とす)", () => {
+    expect(source).toContain("drawn!==previous&&tries<MAX_DRAWS");
   });
 
   it("送っている間は線を足させない", () => {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildSketchDraft,
   readDiagramSketchMessage,
+  readDiagramSketchStrokesMessage,
   sketchLabels,
   uploadSketch,
 } from "./board-sketch";
@@ -31,6 +32,61 @@ describe("readDiagramSketchMessage", () => {
   it("別の種類のメッセージは読まない", () => {
     expect(readDiagramSketchMessage(null)).toBeNull();
     expect(readDiagramSketchMessage({ type: "ark:diagram-scroll" })).toBeNull();
+  });
+});
+
+describe("readDiagramSketchStrokesMessage", () => {
+  it("線の点と太さを読む。形の合わない点と空の線は落とす", () => {
+    expect(
+      readDiagramSketchStrokesMessage({
+        type: "ark:diagram-sketch-strokes",
+        strokes: [
+          [
+            { x: 1, y: 2, w: 3, extra: "x" },
+            { x: "1", y: 2, w: 3 },
+            { x: 4, y: Number.NaN, w: 3 },
+          ],
+          "線ではない",
+          [null],
+        ],
+      })
+    ).toEqual([[{ x: 1, y: 2, w: 3 }]]);
+  });
+
+  it("線が無くなった知らせは空として読む (親が覚えた線を消すため)", () => {
+    expect(
+      readDiagramSketchStrokesMessage({
+        type: "ark:diagram-sketch-strokes",
+        strokes: [],
+      })
+    ).toEqual([]);
+  });
+
+  it("多すぎる線は覚えない", () => {
+    const stroke = Array.from({ length: 1000 }, (_, i) => ({
+      x: i,
+      y: i,
+      w: 2,
+    }));
+    expect(
+      readDiagramSketchStrokesMessage({
+        type: "ark:diagram-sketch-strokes",
+        strokes: Array.from({ length: 61 }, () => stroke),
+      })
+    ).toEqual([]);
+    expect(
+      readDiagramSketchStrokesMessage({
+        type: "ark:diagram-sketch-strokes",
+        strokes: Array.from({ length: 501 }, () => [{ x: 1, y: 1, w: 1 }]),
+      })
+    ).toEqual([]);
+  });
+
+  it("別の種類のメッセージは読まない", () => {
+    expect(readDiagramSketchStrokesMessage(null)).toBeNull();
+    expect(
+      readDiagramSketchStrokesMessage({ type: "ark:diagram-sketch" })
+    ).toBeNull();
   });
 });
 
@@ -70,6 +126,7 @@ describe("uploadSketch", () => {
         for (const handler of handlers.get(event) ?? []) handler(data);
       },
       socket: {
+        connected: true,
         on: (event: string, handler: Handler) => {
           if (!handlers.has(event)) handlers.set(event, new Set());
           handlers.get(event)?.add(handler);
@@ -120,6 +177,16 @@ describe("uploadSketch", () => {
       message: "大きすぎます",
     });
     await expect(pending).rejects.toThrow("大きすぎます");
+    expect(io.count()).toBe(0);
+  });
+
+  it("切れている間は、待たせずにすぐ失敗する", async () => {
+    const io = fakeSocket();
+    io.socket.connected = false;
+    await expect(
+      uploadSketch(io.socket as unknown as SocketArg, "s1", "AAAA")
+    ).rejects.toThrow("ソケットが切断されています");
+    expect(io.emitted).toEqual([]);
     expect(io.count()).toBe(0);
   });
 

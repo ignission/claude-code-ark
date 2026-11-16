@@ -43,6 +43,53 @@ export function readDiagramSketchMessage(
   return { kind: "picture", base64 };
 }
 
+/** 手書きの線。文書の座標の点と太さの並び */
+export type SketchStroke = Array<{ x: number; y: number; w: number }>;
+
+const MAX_STROKES = 500;
+const MAX_POINTS = 60_000;
+
+/**
+ * 層が知らせてくる今の線を読む。親は線を覚えておき、図が読み直されたら層へ返す。
+ * 図の中身は信頼しないので、数だけを通し、量に上限を置く (超えたら覚えない)
+ */
+export function readDiagramSketchStrokesMessage(
+  data: unknown
+): SketchStroke[] | null {
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    (data as { type?: unknown }).type !== "ark:diagram-sketch-strokes"
+  ) {
+    return null;
+  }
+  const { strokes } = data as { strokes?: unknown };
+  if (!Array.isArray(strokes) || strokes.length > MAX_STROKES) return [];
+  const result: SketchStroke[] = [];
+  let points = 0;
+  for (const stroke of strokes) {
+    if (!Array.isArray(stroke)) continue;
+    const clean: SketchStroke = [];
+    for (const point of stroke) {
+      const { x, y, w } = (point ?? {}) as Record<string, unknown>;
+      if (
+        typeof x === "number" &&
+        typeof y === "number" &&
+        typeof w === "number" &&
+        Number.isFinite(x) &&
+        Number.isFinite(y) &&
+        Number.isFinite(w)
+      ) {
+        clean.push({ x, y, w });
+      }
+    }
+    points += clean.length;
+    if (points > MAX_POINTS) return [];
+    if (clean.length > 0) result.push(clean);
+  }
+  return result;
+}
+
 /** 層のボタンに出す文言。図の中の層は言語を知らないので、親から渡す */
 export function sketchLabels(): Record<string, string> {
   const { draw, undo, clear, send, sending, close } = m.board.sketch;
@@ -61,6 +108,11 @@ export function uploadSketch(
   base64: string
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    // 切れている間の emit は溜まるだけで、時間切れまで待たせることになる
+    if (!socket.connected) {
+      reject(new Error(m.session.socket.disconnected));
+      return;
+    }
     const requestId =
       typeof crypto !== "undefined" && crypto.randomUUID
         ? crypto.randomUUID()
