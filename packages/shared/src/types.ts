@@ -3,6 +3,17 @@
 /** 図ファイルを格納する worktree 相対の正準ディレクトリ */
 export const DIAGRAM_DIR = ".claude/diagrams";
 
+/** ボードの付箋の大きさ (px)。高さは文が短いときの値で、長い文では伸びる */
+export const DIAGRAM_NOTE_WIDTH = 160;
+export const DIAGRAM_NOTE_HEIGHT = 90;
+/** 1枚のボードに置ける付箋と枠の数、付箋と枠の名前の文字数の上限 */
+export const DIAGRAM_NOTES_MAX = 200;
+export const DIAGRAM_FRAMES_MAX = 50;
+export const DIAGRAM_NOTE_TEXT_MAX = 500;
+export const DIAGRAM_FRAME_LABEL_MAX = 80;
+/** 付箋と枠を置ける範囲 (px)。これより外の位置は端へ寄せる */
+export const DIAGRAM_NOTE_COORD_MAX = 20000;
+
 /**
  * Slash command 候補。チャットビュー入力欄の補完で使う。
  *  - `name`: `/foo` 形式 (先頭の `/` 含む)
@@ -323,6 +334,73 @@ export interface DiagramListItem {
   mtimeMs?: number;
 }
 
+/** ボードの付箋。位置は図の文書の左上からの px */
+export interface DiagramNote {
+  id: string;
+  /** 人が置いたものは human、Claude が置いたものは claude */
+  author: "human" | "claude";
+  text: string;
+  x: number;
+  y: number;
+}
+
+/** 付箋の後ろに描く、名前の付いた点線の枠。Claude が付箋をまとめるのに使う */
+export interface DiagramFrame {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface DiagramNotes {
+  notes: DiagramNote[];
+  frames: DiagramFrame[];
+}
+
+/**
+ * 人が付箋に加えた1つの操作。保存は付箋の一覧の丸ごとではなく操作の単位で行う
+ * (Claude の番の間に人が付箋を動かしても、Claude が書いた結果を古い一覧で潰さない)。
+ */
+export type DiagramNoteOp =
+  | { type: "add"; id: string; x: number; y: number }
+  | { type: "move"; id: string; x: number; y: number }
+  | { type: "text"; id: string; text: string }
+  | { type: "delete"; id: string };
+
+export interface DiagramNotesRequest {
+  worktreePath: string;
+  relPath: string;
+}
+
+export interface DiagramNoteOpRequest extends DiagramNotesRequest {
+  op: DiagramNoteOp;
+  /** 図の文書の幅 (px)。Claude が付箋を並べるときの目安として付箋のファイルに書く */
+  viewWidth?: number;
+}
+
+/**
+ * - `invalid`: 付箋のファイルが JSON として読めない (Claude の書き損じなど)。付箋は書き換えない
+ * - `limit`: 付箋の数が上限に達している
+ * - `forbidden`: 図のパスが不正、または付箋のファイルが通常のファイルでない
+ * - `io`: 読み書きに失敗した
+ */
+export type DiagramNotesErrorCode = "invalid" | "limit" | "forbidden" | "io";
+
+export type DiagramNotesResponse =
+  | {
+      ok: true;
+      notes: DiagramNotes;
+      /** 形が合わずに読み飛ばした付箋と枠の数 */
+      dropped: number;
+    }
+  | { ok: false; code: DiagramNotesErrorCode };
+
+export type DiagramCreateResponse =
+  | { ok: true; relPath: string }
+  | { ok: false; error: string };
+
 export type DiagramListResponse =
   | { ok: true; diagrams: DiagramListItem[] }
   | { ok: false; error: string };
@@ -398,6 +476,12 @@ export interface ServerToClientEvents {
 
   /** 監視中の図ファイルが更新された。クライアントは再読込する */
   "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
+
+  /** 監視中の図の付箋のファイルが変わった。クライアントは diagram:notes:get で読み直す */
+  "diagram:notes:updated": (data: {
+    worktreePath: string;
+    relPath: string;
+  }) => void;
 
   /** 管理対象の図ファイルが削除された。絶対 path は通知しない */
   "diagram:deleted": (data: { sessionId: string; relPath: string }) => void;
@@ -666,6 +750,24 @@ export interface ClientToServerEvents {
   "diagram:delete": (
     data: DiagramDeleteRequest,
     callback: (response: DiagramDeleteResponse) => void
+  ) => void;
+
+  /** 図の付箋を読む。付箋のファイルが無ければ空で返す */
+  "diagram:notes:get": (
+    data: DiagramNotesRequest,
+    callback: (response: DiagramNotesResponse) => void
+  ) => void;
+
+  /** 付箋に1つの操作を加えて保存し、保存後の付箋を返す */
+  "diagram:notes:op": (
+    data: DiagramNoteOpRequest,
+    callback: (response: DiagramNotesResponse) => void
+  ) => void;
+
+  /** 白紙のボードを作る。title は一覧に出す名前 */
+  "diagram:create": (
+    data: { worktreePath: string; title: string },
+    callback: (response: DiagramCreateResponse) => void
   ) => void;
 
   /** 図の購読開始（更新通知を受け取る）。1 セッション 1 図を想定 */

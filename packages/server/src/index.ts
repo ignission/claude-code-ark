@@ -55,6 +55,17 @@ import {
   isDiagramTracked,
 } from "./lib/diagram-delete.js";
 import { handleDiagramListRequest, listDiagrams } from "./lib/diagram-list.js";
+import {
+  applyDiagramNoteOp,
+  notesAbsPathOf,
+  readDiagramNotes,
+  removeDiagramNotes,
+} from "./lib/diagram-notes.js";
+import {
+  handleDiagramCreate,
+  handleDiagramNoteOp,
+  handleDiagramNotesGet,
+} from "./lib/diagram-notes-handler.js";
 import { resolveDiagramPath } from "./lib/diagram-path.js";
 import { readDiagram } from "./lib/diagram-reader.js";
 import { getErrorMessage } from "./lib/errors.js";
@@ -2006,7 +2017,12 @@ export async function startServer(
         getSession: sessionId => sessionOrchestrator.getSession(sessionId),
         resolveManagedWorktreePath,
         isDiagramTracked,
-        deleteDiagramFile,
+        deleteDiagramFile: async (worktreeReal, relPath) => {
+          const result = await deleteDiagramFile(worktreeReal, relPath);
+          // 図に付いていた付箋のファイルも消す (残すと、同じ名前で作り直した図に古い付箋が出る)
+          if (result.ok) await removeDiagramNotes(worktreeReal, relPath);
+          return result;
+        },
         clearSessionLastDiagramIfMatches: (sessionId, relPath) => {
           try {
             return db.clearSessionLastDiagramIfMatches(sessionId, relPath);
@@ -2027,6 +2043,32 @@ export async function startServer(
         },
       })
     );
+
+    const notesDeps = {
+      resolveManagedWorktreePath,
+      readNotes: readDiagramNotes,
+      applyOp: applyDiagramNoteOp,
+    };
+    // ACK callback はクライアント由来。throw を server process へ伝播させない
+    const replySafely = <T>(callback: unknown, response: Promise<T>) => {
+      if (typeof callback !== "function") return;
+      void response.then(value => {
+        try {
+          (callback as (value: T) => void)(value);
+        } catch {
+          // 上のとおり
+        }
+      });
+    };
+    socket.on("diagram:notes:get", (data: unknown, callback: unknown) => {
+      replySafely(callback, handleDiagramNotesGet(notesDeps, data));
+    });
+    socket.on("diagram:notes:op", (data: unknown, callback: unknown) => {
+      replySafely(callback, handleDiagramNoteOp(notesDeps, data));
+    });
+    socket.on("diagram:create", (data: unknown, callback: unknown) => {
+      replySafely(callback, handleDiagramCreate(notesDeps, data));
+    });
 
     socket.on("diagram:subscribe", (data: unknown) => {
       // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や
@@ -2072,7 +2114,17 @@ export async function startServer(
         // エラーも出さず無言で機能しなくなる。
         socket.emit("diagram:updated", { worktreePath, relPath });
       });
-      diagramUnsubs.set(key, offDiagram);
+      // 付箋のファイルも同じ購読で見る。Claude が書き換えたら、開いているボードへすぐ出す
+      const offNotes = fileWatcher.subscribe(
+        notesAbsPathOf(pathResolved.absPath),
+        () => {
+          socket.emit("diagram:notes:updated", { worktreePath, relPath });
+        }
+      );
+      diagramUnsubs.set(key, () => {
+        offDiagram();
+        offNotes();
+      });
     });
 
     socket.on("diagram:unsubscribe", (data: unknown) => {

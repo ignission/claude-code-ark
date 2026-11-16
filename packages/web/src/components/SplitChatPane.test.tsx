@@ -4,7 +4,12 @@ import type { ManagedSession, SlashCommandInfo } from "@ark/shared";
 import { act, type ComponentProps, createRef, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { requestChatDraft, takeChatDraft } from "@/lib/chat-draft-store";
+import {
+  requestChatDraft,
+  requestChatSend,
+  takeChatDraft,
+  takeChatSends,
+} from "@/lib/chat-draft-store";
 import { SplitChatPane, type SplitChatPaneHandle } from "./SplitChatPane";
 
 type ChatSocket = NonNullable<ComponentProps<typeof SplitChatPane>["socket"]>;
@@ -1209,5 +1214,23 @@ describe("SplitChatPane: 下書きの受け取り", () => {
     act(() => requestChatDraft("/worktrees/other", "よそ向け"));
     expect(textareaOf(container).value).toBe("");
     expect(takeChatDraft("/worktrees/other")).toBe("よそ向け");
+  });
+
+  it("入力欄を通さない送信は、そのまま送り、書きかけの下書きには触らない", () => {
+    const { container, onSendMessage } = renderChat();
+    typeInto(textareaOf(container), "書きかけ");
+    act(() => requestChatSend("/worktrees/s1", "ボードの付箋を渡します"));
+    expect(onSendMessage).toHaveBeenCalledTimes(1);
+    expect(onSendMessage).toHaveBeenCalledWith("ボードの付箋を渡します");
+    expect(textareaOf(container).value).toBe("書きかけ");
+    // 送信中の吹き出しを、入力欄から送ったときと同じように出す
+    expect(container.textContent).toContain("ボードの付箋を渡します");
+  });
+
+  it("別のworktree向けの送信は受け取らない", () => {
+    const { onSendMessage } = renderChat();
+    act(() => requestChatSend("/worktrees/other", "よそ向け"));
+    expect(onSendMessage).not.toHaveBeenCalled();
+    expect(takeChatSends("/worktrees/other")).toEqual(["よそ向け"]);
   });
 });

@@ -7,11 +7,15 @@
  * 外部送信の遮断は本文に注入された meta CSP が担う（サーバー側で注入済み）。
  */
 import type {
+  BridgeSessionStatus,
   ClientToServerEvents,
   DiagramDeleteResponse,
   DiagramListItem,
+  DiagramNotes,
+  DiagramNotesResponse,
   ServerToClientEvents,
 } from "@ark/shared";
+import { FilePlus, StickyNote } from "lucide-react";
 import type { CSSProperties, RefObject } from "react";
 import {
   useCallback,
@@ -21,6 +25,13 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
+import {
+  blankBoardName,
+  buildHandOffMessage,
+  isClaudeFree,
+  readDiagramNoteOpMessage,
+} from "@/lib/board-notes";
+import { requestChatSend } from "@/lib/chat-draft-store";
 import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -52,6 +63,50 @@ export interface DiagramPaneProps {
   ) => Promise<DiagramDeleteResponse>;
   /** 未接続時は null。null の間は診断購読をスキップする */
   socket: TypedSocket | null;
+  /** このセッションの Claude の状態。作業中や確認待ちの間は「Claudeに渡す」を押せなくする */
+  bridgeStatus?: BridgeSessionStatus;
+}
+
+/** 「Claudeに渡す」を押したあと、Claude が動き出さないときに表示を戻すまでの時間 */
+const HAND_OFF_START_TIMEOUT_MS = 20_000;
+
+const BAR_BUTTON =
+  "inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-40";
+
+/** 付箋の読み書きの結果から、ボードに出す知らせを作る。問題が無ければ null */
+export function describeNotesResponse(
+  response: DiagramNotesResponse
+): string | null {
+  if (response.ok) {
+    return response.dropped > 0
+      ? m.board.notes.dropped(response.dropped)
+      : null;
+  }
+  if (response.code === "invalid") return m.board.notes.invalid;
+  if (response.code === "limit") return m.board.notes.limit;
+  return m.board.notes.failed;
+}
+
+/** スクロールの層 (diagram-scroll-layer.ts) が知らせてくる、図の文書のスクロール位置 */
+export interface DiagramScrollPosition {
+  x: number;
+  y: number;
+}
+
+export function readDiagramScrollMessage(
+  data: unknown
+): DiagramScrollPosition | null {
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    (data as { type?: unknown }).type !== "ark:diagram-scroll"
+  ) {
+    return null;
+  }
+  const { x, y } = data as { x?: unknown; y?: unknown };
+  if (typeof x !== "number" || typeof y !== "number") return null;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
 }
 
 /** ピンチの層 (diagram-pinch-layer.ts) が port 経由で送ってくるピンチ */
@@ -361,6 +416,7 @@ export function DiagramPane({
   listDiagrams,
   deleteDiagram,
   onSelectDiagram,
+  bridgeStatus,
 }: DiagramPaneProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -381,6 +437,48 @@ export function DiagramPane({
   const portRef = useRef<MessagePort | null>(null);
   const portGrantedForRef = useRef<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // 図の文書のスクロール位置。同じ図の読み直しで、見ていた場所へ戻すために覚える
+  const scrollPositionRef = useRef<DiagramScrollPosition | null>(null);
+  // 最後に読めた付箋。読めなかったとき (Claude の書き損じなど) も、これを出し続ける
+  const [notes, setNotes] = useState<DiagramNotes | null>(null);
+  const notesRef = useRef<DiagramNotes | null>(null);
+  const [notesNotice, setNotesNotice] = useState<string | null>(null);
+  // 「Claudeに渡す」を押してから、Claude の番が終わるまで
+  const [handedOff, setHandedOff] = useState(false);
+  const sawClaudeBusyRef = useRef(false);
+  const [creating, setCreating] = useState(false);
+  // port の受け口は iframe のロード時に作るので、いまの図と接続は ref で渡す
+  const targetRef = useRef({ socket, worktreePath, relPath });
+  targetRef.current = { socket, worktreePath, relPath };
+
+  // 付箋の読み書きの結果を画面へ反映する。別の図へ移ったあとに届いた結果は捨てる
+  const applyNotesResponse = useCallback(
+    (
+      target: { worktreePath: string; relPath?: string },
+      response: DiagramNotesResponse
+    ) => {
+      const current = targetRef.current;
+      if (
+        current.worktreePath !== target.worktreePath ||
+        current.relPath !== target.relPath
+      ) {
+        return;
+      }
+      setNotesNotice(describeNotesResponse(response));
+      if (response.ok) setNotes(response.notes);
+    },
+    []
+  );
+
+  const fetchNotes = useCallback(() => {
+    const target = targetRef.current;
+    if (!target.socket || !target.relPath) return;
+    target.socket.emit(
+      "diagram:notes:get",
+      { worktreePath: target.worktreePath, relPath: target.relPath },
+      response => applyNotesResponse(target, response)
+    );
+  }, [applyNotesResponse]);
 
   const load = useCallback(async () => {
     if (!relPath) return;
@@ -432,6 +530,7 @@ export function DiagramPane({
     setHtml(null);
     setError(null);
     setZoom(resetDiagramZoom());
+    scrollPositionRef.current = null;
     portGrantedForRef.current = null;
     if (!relPath) {
       abortControllerRef.current?.abort();
@@ -480,6 +579,93 @@ export function DiagramPane({
       }
     };
   }, [worktreePath, isConnected, relPath, listDiagrams, listRefreshKey]);
+
+  // 付箋を読む。図を替えたとき、つなぎ直したとき、付箋のファイルが変わったときに読み直す
+  // (付箋のファイルの監視は、下の diagram:subscribe がサーバーで一緒に張る)
+  // biome-ignore lint/correctness/useExhaustiveDependencies(worktreePath, relPath): 図を替えたら読み直すための意図的な依存
+  useEffect(() => {
+    setNotes(null);
+    setNotesNotice(null);
+    setHandedOff(false);
+    if (!socket || !isConnected || !relPath) return;
+    fetchNotes();
+    const onNotesUpdated = (data: {
+      worktreePath: string;
+      relPath: string;
+    }) => {
+      if (data.worktreePath === worktreePath && data.relPath === relPath) {
+        fetchNotes();
+      }
+    };
+    socket.on("diagram:notes:updated", onNotesUpdated);
+    return () => {
+      socket.off("diagram:notes:updated", onNotesUpdated);
+    };
+  }, [socket, isConnected, worktreePath, relPath, fetchNotes]);
+
+  // 読めた付箋を図の中の層へ渡す。図が読み直されて層が作り直されたときは、
+  // handleIframeLoad が port を張り直した直後にもう一度渡す
+  useEffect(() => {
+    notesRef.current = notes;
+    if (notes) {
+      portRef.current?.postMessage({ type: "ark:diagram-notes", ...notes });
+    }
+  }, [notes]);
+
+  // Claude の番の表示を戻す。渡したあと Claude が動き出し、また手すきになったら終わり。
+  // 動き出さないまま (送信に失敗した、など) なら、しばらく待って戻す
+  const claudeFree = isClaudeFree(bridgeStatus);
+  useEffect(() => {
+    if (!handedOff) {
+      sawClaudeBusyRef.current = false;
+      return;
+    }
+    if (!claudeFree) {
+      sawClaudeBusyRef.current = true;
+      return;
+    }
+    if (sawClaudeBusyRef.current) {
+      setHandedOff(false);
+      return;
+    }
+    const timer = setTimeout(
+      () => setHandedOff(false),
+      HAND_OFF_START_TIMEOUT_MS
+    );
+    return () => clearTimeout(timer);
+  }, [handedOff, claudeFree]);
+
+  const handleAddNote = useCallback(() => {
+    portRef.current?.postMessage({ type: "ark:diagram-note-add" });
+  }, []);
+
+  // 付箋を Claude に渡す。人は文章を書かず、定型文を会話の送信と同じ経路で送る。
+  // Claude は付箋のファイルを書き換えて返し、その変化がボードに出る
+  const handleHandOff = useCallback(() => {
+    if (!relPath) return;
+    requestChatSend(worktreePath, buildHandOffMessage(relPath));
+    setHandedOff(true);
+  }, [worktreePath, relPath]);
+
+  // 白紙のボードを作って開く。Claude に頼まなくても、付箋から書き始められる
+  const handleCreateBoard = useCallback(() => {
+    if (!socket || creating) return;
+    setCreating(true);
+    setDeleteMessage(null);
+    socket.emit(
+      "diagram:create",
+      { worktreePath, title: blankBoardName(new Date()) },
+      response => {
+        setCreating(false);
+        if (!response.ok) {
+          setDeleteMessage(`${m.board.notes.createFailed}: ${response.error}`);
+          return;
+        }
+        setListRefreshKey(key => key + 1);
+        onSelectDiagram(response.relPath, worktreePath);
+      }
+    );
+  }, [socket, creating, worktreePath, onSelectDiagram]);
 
   // 図ファイルの更新監視。worktreePath / relPath が変わるたびに
   // 古い購読を解除してから新しい購読を張る。アンマウント時も同様に解除する。
@@ -605,6 +791,25 @@ export function DiagramPane({
         ) {
           return;
         }
+        const scroll = readDiagramScrollMessage(event.data);
+        if (scroll) {
+          scrollPositionRef.current = scroll;
+          return;
+        }
+        // 人が付箋に加えた操作を保存する。保存後の付箋が返るので、そのまま画面へ反映する
+        const noteOp = readDiagramNoteOpMessage(event.data);
+        if (!noteOp) return;
+        const target = targetRef.current;
+        if (!target.socket || !target.relPath) return;
+        target.socket.emit(
+          "diagram:notes:op",
+          {
+            worktreePath: target.worktreePath,
+            relPath: target.relPath,
+            ...noteOp,
+          },
+          response => applyNotesResponse(target, response)
+        );
       };
 
       // targetOrigin に "*" を使う理由:
@@ -619,9 +824,37 @@ export function DiagramPane({
       iframeWindow.postMessage({ type: "ark:diagram-init" }, "*", [
         channel.port2,
       ]);
+      // 層は init を受けてから port を読み始めるので、init のあとに送ったものは順に届く。
+      // 同じ図の読み直しなら見ていた場所へ戻し、付箋を描き直させる
+      if (scrollPositionRef.current) {
+        channel.port1.postMessage({
+          type: "ark:diagram-restore-scroll",
+          ...scrollPositionRef.current,
+        });
+      }
+      if (notesRef.current) {
+        channel.port1.postMessage({
+          type: "ark:diagram-notes",
+          ...notesRef.current,
+        });
+      }
     },
-    [html]
+    [html, applyNotesResponse]
   );
+
+  const noteCount = notes?.notes.length ?? 0;
+  const handOffBlocked = !isConnected
+    ? m.board.notes.handOffDisconnected
+    : noteCount === 0
+      ? m.board.notes.handOffEmpty
+      : handedOff || !claudeFree
+        ? m.board.notes.handOffBusy
+        : null;
+  const boardNotice = handedOff
+    ? bridgeStatus === "AWAITING"
+      ? m.board.notes.awaiting
+      : m.board.notes.turn
+    : notesNotice;
 
   return (
     <div ref={rootRef} className="relative flex h-full flex-col">
@@ -639,7 +872,54 @@ export function DiagramPane({
         isConnected={isConnected}
         isDeleting={isDeleting}
         notice={deleteMessage}
+        listActions={
+          <button
+            type="button"
+            title={m.board.notes.newBoardTitle}
+            disabled={!isConnected || creating}
+            className={cn(BAR_BUTTON, "hover:bg-accent")}
+            onClick={handleCreateBoard}
+          >
+            <FilePlus className="size-3.5" aria-hidden="true" />
+            {m.board.notes.newBoard}
+          </button>
+        }
+        diagramActions={
+          <>
+            <button
+              type="button"
+              title={m.board.notes.addTitle}
+              disabled={!isConnected || html === null}
+              className={cn(BAR_BUTTON, "hover:bg-accent")}
+              onClick={handleAddNote}
+            >
+              <StickyNote className="size-3.5" aria-hidden="true" />
+              {m.board.notes.add}
+            </button>
+            <button
+              type="button"
+              title={handOffBlocked ?? m.board.notes.handOffTitle}
+              disabled={handOffBlocked !== null}
+              className={cn(
+                BAR_BUTTON,
+                "bg-primary text-primary-foreground hover:bg-primary/90"
+              )}
+              onClick={handleHandOff}
+            >
+              {m.board.notes.handOff}
+            </button>
+          </>
+        }
       />
+      {relPath && boardNotice && (
+        <div
+          data-board-notice=""
+          className="shrink-0 border-b border-border bg-well px-3 py-1.5 text-xs text-muted-foreground"
+          role="status"
+        >
+          {boardNotice}
+        </div>
+      )}
       {deleteMessage && (
         <div
           className="shrink-0 whitespace-pre-line border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"

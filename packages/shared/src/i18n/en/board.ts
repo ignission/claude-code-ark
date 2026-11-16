@@ -29,6 +29,31 @@ export const board: Messages["board"] = {
   selectFromList: "Select a board from the list above",
   disconnected: "Socket is disconnected",
   deleteTimeout: "Deleting the board timed out",
+  notes: {
+    add: "Add a note",
+    addTitle: "Add a sticky note at the centre of the visible area",
+    handOff: "Hand to Claude",
+    handOffTitle:
+      "Hand the notes to Claude. Claude answers by rewriting the board",
+    handOffEmpty: "Add a note to hand the board over",
+    handOffBusy: "You can hand it over when Claude finishes",
+    handOffDisconnected: "Disconnected",
+    turn: "Claude's turn. The board changes when it is done",
+    awaiting: "Claude is waiting for your confirmation. Check the chat",
+    invalid:
+      "The notes file cannot be read (it is malformed). Showing the last notes that could be read. Ask Claude to fix the notes file",
+    limit: "The board has reached the maximum number of notes",
+    failed: "Failed to save the note",
+    dropped: (count: number) =>
+      `Skipped ${count} malformed ${plural(count, "note or frame", "notes or frames")}`,
+    newBoard: "New board",
+    newBoardTitle: "Create a blank board and start with sticky notes",
+    blankName: (month: number, day: number, time: string) =>
+      `Whiteboard ${MONTHS[month - 1]} ${day} ${time}`,
+    createFailed: "Failed to create the board",
+    handOffMessage: (notesPath: string, diagramPath: string) =>
+      `Here are the sticky notes on the board. Read \`${notesPath}\`, respond to the notes, and rewrite the same file (group similar notes in frames, answer questions with notes of your own, and add a note for anything missing). The notes sit on top of the board \`${diagramPath}\`. Your answer shows on the board, so write only one line in the chat.`,
+  },
   time: {
     today: (time: string) => `Today ${time}`,
     yesterday: (time: string) => `Yesterday ${time}`,
@@ -69,9 +94,9 @@ export const board: Messages["board"] = {
     trackedAndUntracked: (tracked: number, untracked: number) =>
       `${tracked} tracked by Git / ${untracked} untracked`,
     deleteWarningTracked:
-      "This also deletes the board's adjacent comment sidecar. The deletion shows up as a change in the worktree, and you can restore the board with Git if needed. Files not tracked by Git can't be restored. This can't be undone.",
+      "This also deletes the sticky notes on the board. The deletion shows up as a change in the worktree, and you can restore the board with Git if needed. Files not tracked by Git can't be restored. This can't be undone.",
     deleteWarningUntracked:
-      "This also deletes the board's adjacent comment sidecar. Files not tracked by Git can't be restored. This can't be undone.",
+      "This also deletes the sticky notes on the board. Files not tracked by Git can't be restored. This can't be undone.",
     deleting: "Deleting…",
     deletingProgress: (current: number, total: number) =>
       `Deleting… ${current}/${total}`,
