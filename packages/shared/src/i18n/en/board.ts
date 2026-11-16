@@ -29,6 +29,20 @@ export const board: Messages["board"] = {
   selectFromList: "Select a board from the list above",
   disconnected: "Socket is disconnected",
   deleteTimeout: "Deleting the board timed out",
+  sketch: {
+    draw: "Draw",
+    eraser: "Eraser",
+    undo: "Undo",
+    clear: "Clear all",
+    send: "Show Claude",
+    sending: "Making the picture...",
+    close: "Done",
+    draft: (diagramPath: string) =>
+      `I drew on the board \`${diagramPath}\`. The red lines in the picture are my marks.`,
+    attached: "Your drawing is attached to the chat input. Send it when ready",
+    failed: "Could not turn the drawing into a picture",
+    uploadFailed: (reason: string) => `Could not attach the drawing: ${reason}`,
+  },
   imageZoom: {
     label: "Enlarged image",
     close: "Close",

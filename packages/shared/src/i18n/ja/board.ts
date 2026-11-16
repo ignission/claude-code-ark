@@ -9,6 +9,22 @@ export const board = {
   selectFromList: "上の一覧から図を選択",
   disconnected: "ソケットが切断されています",
   deleteTimeout: "図の削除がタイムアウトしました",
+  /** ボードの図の上に手で描いて、Claudeに見せる */
+  sketch: {
+    draw: "描く",
+    eraser: "消しゴム",
+    undo: "戻す",
+    clear: "全部消す",
+    send: "Claudeに見せる",
+    sending: "画像にしています...",
+    close: "終わる",
+    /** 会話の入力欄に入れる文。画像のパスの後ろに続ける */
+    draft: (diagramPath: string) =>
+      `ボード \`${diagramPath}\` に手書きで書き込みました。画像の赤い線が書き込みです。`,
+    attached: "手書きを会話の入力欄に添付しました。送信してください",
+    failed: "手書きを画像にできませんでした",
+    uploadFailed: (reason: string) => `手書きを添付できませんでした: ${reason}`,
+  },
   /** ボードの中の画像を押したときの拡大表示 */
   imageZoom: {
     label: "画像の拡大表示",
