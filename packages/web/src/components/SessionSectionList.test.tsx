@@ -242,6 +242,18 @@ describe("SessionSectionListの並べ方", () => {
     expect(container.querySelector('[data-section="resting"]')).toBeNull();
   });
 
+  it("「あなたの番」の件数を、見出しと同じ値で外へ知らせる", () => {
+    const onYourTurnCountChange = vi.fn();
+    mountList(
+      listProps({
+        sessionStatuses: statusesOf("IDLE", "TOOL", "AWAITING"),
+        onYourTurnCountChange,
+      })
+    );
+
+    expect(onYourTurnCountChange).toHaveBeenLastCalledWith(2);
+  });
+
   it("あなたの番は会話の最終更新が新しい順に並べる", () => {
     const { container } = mountList(
       listProps({

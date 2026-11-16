@@ -11,6 +11,8 @@ const testDoubles = vi.hoisted(() => ({
   setSetting: vi.fn(),
   splitChatPane: vi.fn(),
   sessionSidebar: vi.fn(),
+  sidebarLayout: vi.fn(),
+  sidebarRail: vi.fn(),
   aboutDialog: vi.fn(),
   hostMetricsEnabled: vi.fn(),
   mobileLayout: vi.fn(),
@@ -118,15 +120,23 @@ vi.mock("@/components/SidebarMainLayout", () => ({
   SidebarMainLayout: ({
     sidebar,
     main,
+    rail,
+    collapsed,
   }: {
     sidebar: ReactNode;
     main: ReactNode;
-  }) => (
-    <>
-      {sidebar}
-      {main}
-    </>
-  ),
+    rail?: ReactNode;
+    collapsed?: boolean;
+  }) => {
+    testDoubles.sidebarLayout({ collapsed });
+    return (
+      <>
+        {sidebar}
+        {rail}
+        {main}
+      </>
+    );
+  },
 }));
 
 vi.mock("@/components/AboutDialog", () => ({
@@ -164,6 +174,10 @@ vi.mock("@/components/RepoSelectDialog", () => ({
 vi.mock("@/components/SessionSidebar", () => ({
   SessionSidebar: (props: Record<string, unknown>) => {
     testDoubles.sessionSidebar(props);
+    return null;
+  },
+  SessionSidebarRail: (props: Record<string, unknown>) => {
+    testDoubles.sidebarRail(props);
     return null;
   },
 }));
@@ -518,6 +532,50 @@ describe("Dashboardのサイドバー配線", () => {
 
     expect(latestProps(testDoubles.aboutDialog)).toMatchObject({ open: true });
     expect(testDoubles.hostMetricsEnabled).toHaveBeenLastCalledWith(true);
+  });
+});
+
+describe("Dashboardのサイドバーの畳み", () => {
+  it("畳むと設定に保存し、帯から開くと戻す", () => {
+    mount(<Dashboard />);
+    expect(latestProps(testDoubles.sidebarLayout).collapsed).toBe(false);
+
+    act(() =>
+      (latestProps(testDoubles.sessionSidebar).onCollapse as () => void)()
+    );
+    expect(testDoubles.setSetting).toHaveBeenLastCalledWith(
+      "ark-sidebar-collapsed",
+      true
+    );
+
+    act(() => (latestProps(testDoubles.sidebarRail).onExpand as () => void)());
+    expect(testDoubles.setSetting).toHaveBeenLastCalledWith(
+      "ark-sidebar-collapsed",
+      false
+    );
+  });
+
+  it("保存済みの畳んだ状態で開き、一覧が知らせた件数を帯へ渡す", () => {
+    testDoubles.getSetting.mockImplementation(
+      (key: string, fallback: unknown) =>
+        key === "ark-sidebar-collapsed"
+          ? true
+          : key === "selectedSessionId"
+            ? "dashboard-session"
+            : fallback
+    );
+    mount(<Dashboard />);
+    expect(latestProps(testDoubles.sidebarLayout).collapsed).toBe(true);
+
+    act(() =>
+      (
+        latestProps(testDoubles.sessionSidebar).onYourTurnCountChange as (
+          count: number
+        ) => void
+      )(2)
+    );
+
+    expect(latestProps(testDoubles.sidebarRail).yourTurnCount).toBe(2);
   });
 });
 

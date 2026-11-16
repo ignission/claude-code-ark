@@ -8,7 +8,7 @@ import {
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SessionSidebar } from "./SessionSidebar";
+import { SessionSidebar, SessionSidebarRail } from "./SessionSidebar";
 
 const testDoubles = vi.hoisted(() => ({
   sectionList: vi.fn(),
@@ -211,5 +211,59 @@ describe("SessionSidebar", () => {
   it("onOpenScreenManager が無ければ画面メニューを出さない", () => {
     const container = mount(<SessionSidebar {...sidebarProps()} />);
     expect(container.querySelector('button[aria-label="画面"]')).toBeNull();
+  });
+
+  it("畳むボタンは onCollapse を渡したときだけ出し、押すと呼ぶ", () => {
+    expect(
+      mount(<SessionSidebar {...sidebarProps()} />).querySelector(
+        'button[aria-label="サイドバーを畳む"]'
+      )
+    ).toBeNull();
+
+    const onCollapse = vi.fn();
+    const container = mount(
+      <SessionSidebar {...sidebarProps()} onCollapse={onCollapse} />
+    );
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="サイドバーを畳む"]'
+        )
+        ?.click()
+    );
+
+    expect(onCollapse).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SessionSidebarRail", () => {
+  it("開くボタンと「あなたの番」の件数を出し、どちらを押しても開く", () => {
+    const onExpand = vi.fn();
+    const container = mount(
+      <SessionSidebarRail yourTurnCount={3} onExpand={onExpand} />
+    );
+
+    const count = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="あなたの番: 3件"]'
+    );
+    expect(count?.textContent).toBe("3");
+    act(() => count?.click());
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="サイドバーを開く"]'
+        )
+        ?.click()
+    );
+
+    expect(onExpand).toHaveBeenCalledTimes(2);
+  });
+
+  it("「あなたの番」が0件なら件数を出さない", () => {
+    const container = mount(
+      <SessionSidebarRail yourTurnCount={0} onExpand={vi.fn()} />
+    );
+
+    expect(container.querySelectorAll("button")).toHaveLength(1);
   });
 });
