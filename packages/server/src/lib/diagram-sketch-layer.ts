@@ -233,6 +233,10 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   function send(){
     if(!port||sending)return;
     sending=true;
+    // End a stroke still being drawn (the button can be pressed with another finger):
+    // what is added after the picture is taken would be cleared without being in it
+    if(current)changed();
+    current=null;
     sync();
     probeImages(capture);
   }

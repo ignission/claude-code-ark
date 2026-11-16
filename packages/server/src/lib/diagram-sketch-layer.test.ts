@@ -49,6 +49,8 @@ describe("手書きの層", () => {
 
   it("送っている間は線を足させない", () => {
     expect(source).toContain("event.button!==0||sending");
+    // 描いている途中の線も、送り始めたところで終える
+    expect(source).toMatch(/sending=true;[^}]*current=null;/);
   });
 
   it("</body> の直前へ1回だけ入れる", () => {
