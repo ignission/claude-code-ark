@@ -9,6 +9,11 @@ export const board = {
   selectFromList: "上の一覧から図を選択",
   disconnected: "ソケットが切断されています",
   deleteTimeout: "図の削除がタイムアウトしました",
+  /** ボードの中の画像を押したときの拡大表示 */
+  imageZoom: {
+    label: "画像の拡大表示",
+    close: "閉じる",
+  },
   /** 一覧の更新日時 */
   time: {
     today: (time: string) => `今日 ${time}`,

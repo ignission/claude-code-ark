@@ -4,6 +4,7 @@ import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DIAGRAM_CSP } from "./diagram-file.js";
+import { DIAGRAM_IMAGE_LAYER_MARKER } from "./diagram-image-layer.js";
 import { DIAGRAM_LINK_LAYER_MARKER } from "./diagram-link-layer.js";
 import { DIAGRAM_PINCH_LAYER_MARKER } from "./diagram-pinch-layer.js";
 import { readDiagram, readDiagramTitle } from "./diagram-reader.js";
@@ -46,6 +47,7 @@ describe("readDiagram", () => {
       expect(result.html).toContain(DIAGRAM_CSP);
       expect(result.html).toContain(DIAGRAM_LINK_LAYER_MARKER);
       expect(result.html).toContain(DIAGRAM_PINCH_LAYER_MARKER);
+      expect(result.html).toContain(DIAGRAM_IMAGE_LAYER_MARKER);
       expect(result.html).toContain("<div>図</div><script>draw()</script>");
     }
   });

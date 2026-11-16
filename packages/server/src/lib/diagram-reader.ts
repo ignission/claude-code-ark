@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { extractTitle, injectCsp } from "./diagram-file.js";
+import { injectDiagramImageLayer } from "./diagram-image-layer.js";
 import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { injectDiagramPinchLayer } from "./diagram-pinch-layer.js";
@@ -109,7 +110,7 @@ async function readRawVerified(
 
 /**
  * 配信用に読む。書かれた HTML はそのまま見せ、Ark が足すのは meta CSP と、
- * リンクを親で開く層とピンチを親へ渡す層だけ。
+ * リンクを親で開く層、ピンチを親へ渡す層、押された画像を親へ渡す層だけ。
  */
 export async function readDiagram(
   worktreeReal: string,
@@ -120,7 +121,9 @@ export async function readDiagram(
   return {
     ok: true,
     absPath: read.absPath,
-    html: injectDiagramPinchLayer(injectDiagramLinkLayer(injectCsp(read.raw))),
+    html: injectDiagramImageLayer(
+      injectDiagramPinchLayer(injectDiagramLinkLayer(injectCsp(read.raw)))
+    ),
   };
 }
 

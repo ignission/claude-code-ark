@@ -29,6 +29,11 @@ import {
   joinDeleteMessages,
   shouldRefreshDiagramList,
 } from "../lib/diagram-delete-state";
+import {
+  DiagramImageZoom,
+  type DiagramZoomedImage,
+  readDiagramImageMessage,
+} from "./DiagramImageZoom";
 import { DiagramSwitcher } from "./DiagramSwitcher";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -371,6 +376,11 @@ export function DiagramPane({
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const [zoom, setZoom] = useState(DIAGRAM_ZOOM_DEFAULT);
+  // 図の中で押されて、画面いっぱいに見せている画像
+  const [zoomedImage, setZoomedImage] = useState<DiagramZoomedImage | null>(
+    null
+  );
+  const closeZoomedImage = useCallback(() => setZoomedImage(null), []);
   const zoomAnchorRef = useRef<DiagramZoomPoint | null>(null);
   const activeListRequestRef = useRef<object | null>(null);
   const deleteInFlightRef = useRef(false);
@@ -432,6 +442,7 @@ export function DiagramPane({
     setHtml(null);
     setError(null);
     setZoom(resetDiagramZoom());
+    setZoomedImage(null);
     portGrantedForRef.current = null;
     if (!relPath) {
       abortControllerRef.current?.abort();
@@ -605,6 +616,8 @@ export function DiagramPane({
         ) {
           return;
         }
+        const image = readDiagramImageMessage(event.data);
+        if (image) setZoomedImage(image);
       };
 
       // targetOrigin に "*" を使う理由:
@@ -625,6 +638,9 @@ export function DiagramPane({
 
   return (
     <div ref={rootRef} className="relative flex h-full flex-col">
+      {zoomedImage && (
+        <DiagramImageZoom image={zoomedImage} onClose={closeZoomedImage} />
+      )}
       <DiagramSwitcher
         diagrams={diagrams}
         currentRelPath={relPath}
