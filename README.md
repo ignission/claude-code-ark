@@ -55,6 +55,8 @@ Ark does not reimplement the agent. Each session is the interactive `claude` CLI
 
 Claude draws diagrams, screen mockups, and clickable prototypes as free-form HTML on a board next to the conversation, whenever a picture says it better than text. Links in a diagram open the code beside it.
 
+You can put sticky notes on a board. Write your thoughts down with "Add a note", then press "Hand to Claude": Claude answers on the board, grouping your notes in frames and adding notes of its own. You do not have to type a request. "New board" in the board list starts from a blank one.
+
 Press an image on a board (`<img>` or `<svg>`) to enlarge it to nearly the whole screen. Press anywhere to close it.
 
 ### You can review without leaving

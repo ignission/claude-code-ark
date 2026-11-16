@@ -847,6 +847,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                       openKey={diagramTab?.id}
                       relPath={diagramTab?.relPath}
                       onSelectDiagram={props.onSelectDiagram}
+                      bridgeStatus={props.bridgeStatus}
                     />
                   )}
                 </div>

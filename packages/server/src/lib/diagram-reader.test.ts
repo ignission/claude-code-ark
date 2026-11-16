@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DIAGRAM_CSP } from "./diagram-file.js";
 import { DIAGRAM_IMAGE_LAYER_MARKER } from "./diagram-image-layer.js";
 import { DIAGRAM_LINK_LAYER_MARKER } from "./diagram-link-layer.js";
+import { DIAGRAM_NOTES_LAYER_MARKER } from "./diagram-notes-layer.js";
 import { DIAGRAM_PINCH_LAYER_MARKER } from "./diagram-pinch-layer.js";
 import { readDiagram, readDiagramTitle } from "./diagram-reader.js";
+import { DIAGRAM_SCROLL_LAYER_MARKER } from "./diagram-scroll-layer.js";
 
 let wt: string;
 let dir: string;
@@ -37,7 +39,7 @@ function write(name: string, body: string, head = "") {
 }
 
 describe("readDiagram", () => {
-  it("書いた HTML に meta CSP とリンク・キーの層だけを足して返す", async () => {
+  it("書いた HTML に meta CSP と親とやり取りする層だけを足して返す", async () => {
     write("a.diagram.html", "<div>図</div><script>draw()</script>");
 
     const result = await readDiagram(wt, "a.diagram.html");
@@ -47,6 +49,8 @@ describe("readDiagram", () => {
       expect(result.html).toContain(DIAGRAM_CSP);
       expect(result.html).toContain(DIAGRAM_LINK_LAYER_MARKER);
       expect(result.html).toContain(DIAGRAM_PINCH_LAYER_MARKER);
+      expect(result.html).toContain(DIAGRAM_SCROLL_LAYER_MARKER);
+      expect(result.html).toContain(DIAGRAM_NOTES_LAYER_MARKER);
       expect(result.html).toContain(DIAGRAM_IMAGE_LAYER_MARKER);
       expect(result.html).toContain("<div>図</div><script>draw()</script>");
     }

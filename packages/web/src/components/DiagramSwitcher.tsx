@@ -25,7 +25,7 @@ import {
   Trash2,
   Workflow,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   browseDiagrams,
   type DiagramSort,
@@ -63,6 +63,10 @@ interface DiagramSwitcherProps {
   isDeleting?: boolean;
   /** 削除の結果の知らせ (失敗の理由や、残ったファイルの警告)。一覧の中にも出す */
   notice?: string | null;
+  /** 一覧の画面のバーの右に置く操作 (新しいボードなど) */
+  listActions?: ReactNode;
+  /** 図の画面のバーの右に置く操作 (付箋を足す、Claudeに渡すなど) */
+  diagramActions?: ReactNode;
 }
 
 const COLUMNS: ReadonlyArray<{
@@ -149,6 +153,8 @@ export function DiagramSwitcher({
   isDeleting = false,
   notice = null,
   openKey,
+  listActions,
+  diagramActions,
 }: DiagramSwitcherProps) {
   // 図をまだ選んでいないときは、一覧を開いた状態から始める
   const [open, setOpen] = useState(currentRelPath === undefined);
@@ -410,6 +416,7 @@ export function DiagramSwitcher({
             </span>
           </>
         )}
+        {open ? listActions : currentRelPath !== undefined && diagramActions}
         {listLoading && (
           <span className="shrink-0 text-[10px] text-muted-foreground">
             {m.board.switcher.refreshing}

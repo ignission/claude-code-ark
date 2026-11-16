@@ -22,6 +22,8 @@ export const serverFiles = {
       `図ファイルの読み込みに失敗しました (${code}): ${reason}`,
     listFailed: (code: string, reason: string) =>
       `図一覧の取得に失敗しました (${code}): ${reason}`,
+    createFailed: (code: string, reason: string) =>
+      `白紙のボードを作れませんでした (${code}): ${reason}`,
     worktreePathTooLong: "worktree のパスが長すぎます",
     symlinkUnverifiable:
       "この環境では symlink を安全に検証できないため図ファイルを削除できません",

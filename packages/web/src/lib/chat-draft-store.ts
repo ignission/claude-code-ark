@@ -20,7 +20,26 @@ export function takeChatDraft(worktreePath: string): string | null {
   return text;
 }
 
-/** 下書きが置かれたときの通知を購読する。戻り値は解除関数 */
+/**
+ * 入力欄を通さずに送る文の置き場 (ボードの「Claudeに渡す」の定型文など)。
+ * 会話の画面が受け取って、入力欄から送ったときと同じ経路で送る (送信中の吹き出しも出す)。
+ * 書きかけの下書きには触らない。
+ */
+const sends = new Map<string, string[]>();
+
+export function requestChatSend(worktreePath: string, text: string): void {
+  sends.set(worktreePath, [...(sends.get(worktreePath) ?? []), text]);
+  for (const listener of [...listeners]) listener();
+}
+
+/** 送る文を受け取って消す。無ければ空 */
+export function takeChatSends(worktreePath: string): string[] {
+  const texts = sends.get(worktreePath) ?? [];
+  sends.delete(worktreePath);
+  return texts;
+}
+
+/** 下書きや送る文が置かれたときの通知を購読する。戻り値は解除関数 */
 export function subscribeChatDraft(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
