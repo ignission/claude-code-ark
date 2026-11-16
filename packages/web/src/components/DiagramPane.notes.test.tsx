@@ -277,6 +277,43 @@ describe("図の中の層とのやり取り", () => {
     first.port.close();
   });
 
+  it("図が読み直されたら、付箋を描かせてから見ていた場所へ戻させる", async () => {
+    await render();
+    await answerNotes({ ok: true, notes: NOTES, dropped: 0 });
+    const first = await connectLayer();
+    first.port.postMessage({ type: "ark:diagram-scroll", x: 0, y: 900 });
+    await first.settle();
+
+    // 図の本文が変わると iframe が作り直され、新しい層へ送り直す
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      text: async () => "<!doctype html><html><body>図2</body></html>",
+    } as Response);
+    const before = channels.length;
+    await act(async () => {
+      io.fire("diagram:updated", { worktreePath: WT, relPath: REL });
+    });
+    await first.settle();
+    // jsdom は srcDoc を差し替えても読み込み直さないので、読み込みの完了を代わりに起こす
+    if (channels.length === before) {
+      await act(async () => {
+        document.querySelector("iframe")?.dispatchEvent(new Event("load"));
+      });
+    }
+    const second = await connectLayer();
+    await second.settle();
+    expect(channels.length).toBeGreaterThan(before);
+
+    // 付箋は文書の高さを広げるので、戻すのはそのあと
+    const types = second.received.map(m => (m as { type: string }).type);
+    expect(types.indexOf("ark:diagram-notes")).toBeGreaterThanOrEqual(0);
+    expect(types.indexOf("ark:diagram-restore-scroll")).toBeGreaterThan(
+      types.indexOf("ark:diagram-notes")
+    );
+    first.port.close();
+    second.port.close();
+  });
+
   it("層から届いた付箋の操作を保存し、返ってきた付箋を画面に反映する", async () => {
     await render();
     await answerNotes({

@@ -841,17 +841,19 @@ export function DiagramPane({
         channel.port2,
       ]);
       // 層は init を受けてから port を読み始めるので、init のあとに送ったものは順に届く。
-      // 同じ図の読み直しなら見ていた場所へ戻し、付箋を描き直させる
-      if (scrollPositionRef.current) {
-        channel.port1.postMessage({
-          type: "ark:diagram-restore-scroll",
-          ...scrollPositionRef.current,
-        });
-      }
+      // 同じ図の読み直しなら付箋を描き直させ、見ていた場所へ戻す。
+      // 付箋を先に送る: 付箋は図の下へ文書の高さを広げるので、描く前に戻すと、
+      // 図より下を見ていた位置が短い文書の高さで切り詰められる (層は届いたその場で描く)
       if (notesRef.current) {
         channel.port1.postMessage({
           type: "ark:diagram-notes",
           ...notesRef.current,
+        });
+      }
+      if (scrollPositionRef.current) {
+        channel.port1.postMessage({
+          type: "ark:diagram-restore-scroll",
+          ...scrollPositionRef.current,
         });
       }
     },
