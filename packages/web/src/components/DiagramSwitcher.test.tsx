@@ -570,11 +570,11 @@ describe("DiagramSwitcher", () => {
     const tracked = getDiagramDeleteWarning(diagrams[0]);
     const untracked = getDiagramDeleteWarning(diagrams[1]);
 
-    expect(tracked).toContain("図に置いた付箋も削除");
+    expect(tracked).toContain("コメント sidecar も削除");
     expect(tracked).toContain("worktree に削除差分が残ります");
     expect(tracked).toContain("Git で復元");
     expect(tracked).toContain("Git 未追跡のファイルは復元できません");
-    expect(untracked).toContain("図に置いた付箋も削除");
+    expect(untracked).toContain("コメント sidecar も削除");
     expect(untracked).toContain("Git 未追跡のファイルは復元できません");
     expect(untracked).toContain("取り消せません");
   });

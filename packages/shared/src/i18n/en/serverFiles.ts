@@ -22,8 +22,6 @@ export const serverFiles: Messages["serverFiles"] = {
       `Failed to read the board file (${code}): ${reason}`,
     listFailed: (code: string, reason: string) =>
       `Failed to list boards (${code}): ${reason}`,
-    createFailed: (code: string, reason: string) =>
-      `Failed to create a blank board (${code}): ${reason}`,
     worktreePathTooLong: "The worktree path is too long",
     symlinkUnverifiable:
       "Cannot delete the board file because symlinks cannot be verified safely in this environment",

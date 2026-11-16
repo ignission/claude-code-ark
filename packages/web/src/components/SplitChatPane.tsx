@@ -86,11 +86,7 @@ import {
   hasResolvedAuqSince,
   parseAuqInput,
 } from "@/lib/ask-user-question-state";
-import {
-  subscribeChatDraft,
-  takeChatDraft,
-  takeChatSends,
-} from "@/lib/chat-draft-store";
+import { subscribeChatDraft, takeChatDraft } from "@/lib/chat-draft-store";
 import {
   buildChatQuickActionMessage,
   CHAT_QUICK_ACTION_LABEL,
@@ -1502,18 +1498,11 @@ export function SplitChatPane({
   // 入力欄。会話エリアのクリックでここにフォーカスを移す
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // 入力欄の外から頼まれた送信 (下の effect) が、いまの送信の関数を呼ぶための取っ手
-  const dispatchTextRef = useRef<(value: string) => void>(() => {});
-
   // 分岐TODOなどから置かれた下書きを、自分のworktreeの分だけ受け取る (マウント時と通知時)。
   // 空なら置き換え、書きかけがあれば空行を挟んで後ろに足す。送信はしない
   const draftWorktreePath = session.worktreePath;
   useEffect(() => {
     const receive = () => {
-      // ボードの「Claudeに渡す」などの定型文。入力欄の書きかけには触らずに送る
-      for (const text of takeChatSends(draftWorktreePath)) {
-        dispatchTextRef.current(text);
-      }
       const draft = takeChatDraft(draftWorktreePath);
       if (draft === null) return;
       setInputValue(prev => (prev === "" ? draft : `${prev}\n\n${draft}`));
@@ -1655,8 +1644,7 @@ export function SplitChatPane({
     submitText(buildChatQuickActionMessage(action, inputValue));
   };
 
-  /** 文を送り、送信中の吹き出しを出す。入力欄には触らない */
-  const dispatchText = (value: string) => {
+  const submitText = (value: string) => {
     if (!value) return;
     lastSubmittedRef.current = value;
     onSendMessage(value);
@@ -1676,12 +1664,6 @@ export function SplitChatPane({
         },
       ]);
     }
-  };
-  dispatchTextRef.current = dispatchText;
-
-  const submitText = (value: string) => {
-    if (!value) return;
-    dispatchText(value);
     setInputValue("");
   };
 

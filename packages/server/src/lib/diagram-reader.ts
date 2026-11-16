@@ -14,7 +14,6 @@ import path from "node:path";
 import { extractTitle, injectCsp } from "./diagram-file.js";
 import { injectDiagramImageLayer } from "./diagram-image-layer.js";
 import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
-import { injectDiagramNotesLayer } from "./diagram-notes-layer.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { injectDiagramPinchLayer } from "./diagram-pinch-layer.js";
 import { injectDiagramScrollLayer } from "./diagram-scroll-layer.js";
@@ -110,17 +109,9 @@ async function readRawVerified(
   }
 }
 
-const LAYERS: ReadonlyArray<(html: string) => string> = [
-  injectDiagramLinkLayer,
-  injectDiagramPinchLayer,
-  injectDiagramScrollLayer,
-  injectDiagramNotesLayer,
-  injectDiagramImageLayer,
-];
-
 /**
  * 配信用に読む。書かれた HTML はそのまま見せ、Ark が足すのは meta CSP と、
- * 親とやり取りする層 (リンク、ピンチ、スクロール位置、付箋、画像の拡大) だけ。
+ * リンクを親で開く層、ピンチを親へ渡す層、スクロール位置を保つ層、押された画像を親へ渡す層だけ。
  */
 export async function readDiagram(
   worktreeReal: string,
@@ -131,7 +122,12 @@ export async function readDiagram(
   return {
     ok: true,
     absPath: read.absPath,
-    html: LAYERS.reduce((html, inject) => inject(html), injectCsp(read.raw)),
+    html: [
+      injectDiagramLinkLayer,
+      injectDiagramPinchLayer,
+      injectDiagramScrollLayer,
+      injectDiagramImageLayer,
+    ].reduce((html, inject) => inject(html), injectCsp(read.raw)),
   };
 }
 

@@ -6,10 +6,6 @@ describe("BOARD_SESSION_CONTEXT のボード", () => {
     expect(BOARD_SESSION_CONTEXT).toContain("board_open");
     expect(BOARD_SESSION_CONTEXT).toContain("draw freely");
     expect(BOARD_SESSION_CONTEXT).toContain(".diagram.html");
-    // 開いている図は同じファイルを直す。付箋にはボードの上で返す
-    expect(BOARD_SESSION_CONTEXT).toContain("edit the same file");
-    expect(BOARD_SESSION_CONTEXT).toContain(".notes.json");
-    expect(BOARD_SESSION_CONTEXT).toContain("answer on the board");
   });
 
   it("撤去した規約 (デッキ・doc・コメント・作図規約) と、頼まれずに描かせる文言を残さない", () => {
