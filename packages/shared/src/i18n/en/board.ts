@@ -29,6 +29,10 @@ export const board: Messages["board"] = {
   selectFromList: "Select a board from the list above",
   disconnected: "Socket is disconnected",
   deleteTimeout: "Deleting the board timed out",
+  imageZoom: {
+    label: "Enlarged image",
+    close: "Close",
+  },
   time: {
     today: (time: string) => `Today ${time}`,
     yesterday: (time: string) => `Yesterday ${time}`,
