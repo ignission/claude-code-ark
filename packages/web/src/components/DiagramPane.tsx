@@ -28,7 +28,7 @@ import type { Socket } from "socket.io-client";
 import {
   blankBoardName,
   buildHandOffMessage,
-  isClaudeFree,
+  isClaudeBusy,
   readDiagramNoteOpMessage,
 } from "@/lib/board-notes";
 import { requestChatSend } from "@/lib/chat-draft-store";
@@ -612,15 +612,16 @@ export function DiagramPane({
     }
   }, [notes]);
 
-  // Claude の番の表示を戻す。渡したあと Claude が動き出し、また手すきになったら終わり。
-  // 動き出さないまま (送信に失敗した、など) なら、しばらく待って戻す
-  const claudeFree = isClaudeFree(bridgeStatus);
+  // Claude の番の表示を戻す。渡したあと Claude が動き出し、作業を終えたら (手すきでも、
+  // エラーで止まっても) 終わり。動き出さないまま (送信に失敗した、など) なら、しばらく
+  // 待って戻し、動き出さなかったことを知らせる
+  const claudeBusy = isClaudeBusy(bridgeStatus);
   useEffect(() => {
     if (!handedOff) {
       sawClaudeBusyRef.current = false;
       return;
     }
-    if (!claudeFree) {
+    if (claudeBusy) {
       sawClaudeBusyRef.current = true;
       return;
     }
@@ -628,12 +629,12 @@ export function DiagramPane({
       setHandedOff(false);
       return;
     }
-    const timer = setTimeout(
-      () => setHandedOff(false),
-      HAND_OFF_START_TIMEOUT_MS
-    );
+    const timer = setTimeout(() => {
+      setHandedOff(false);
+      setNotesNotice(m.board.notes.notStarted);
+    }, HAND_OFF_START_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [handedOff, claudeFree]);
+  }, [handedOff, claudeBusy]);
 
   const handleAddNote = useCallback(() => {
     portRef.current?.postMessage({ type: "ark:diagram-note-add" });
@@ -847,9 +848,11 @@ export function DiagramPane({
     ? m.board.notes.handOffDisconnected
     : noteCount === 0
       ? m.board.notes.handOffEmpty
-      : handedOff || !claudeFree
-        ? m.board.notes.handOffBusy
-        : null;
+      : bridgeStatus === "STOP"
+        ? m.board.notes.handOffStopped
+        : handedOff || claudeBusy
+          ? m.board.notes.handOffBusy
+          : null;
   const boardNotice = handedOff
     ? bridgeStatus === "AWAITING"
       ? m.board.notes.awaiting

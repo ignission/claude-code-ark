@@ -50,11 +50,12 @@ export function buildHandOffMessage(diagramRelPath: string): string {
 }
 
 /**
- * Claude が手すきか。作業中や確認待ちの間は渡さない。
+ * Claude が作業中か、確認待ちか。この間は渡さない。
  * 送信は tmux へ文と Enter を打ち込むので、確認待ちの間に送ると Enter が選択肢に当たる。
+ * エラーで止まった (ERR) あとは入力を受けるので、作業中には数えない。
  */
-export function isClaudeFree(status: BridgeSessionStatus | undefined): boolean {
-  return status === undefined || status === "IDLE" || status === "READY";
+export function isClaudeBusy(status: BridgeSessionStatus | undefined): boolean {
+  return status === "THINK" || status === "TOOL" || status === "AWAITING";
 }
 
 /** 白紙のボードの名前。作った日時を入れて、一覧で見分けられるようにする */

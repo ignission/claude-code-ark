@@ -172,16 +172,34 @@ describe("ボードの付箋", () => {
     expect(button("Claudeに渡す")?.disabled).toBe(false);
   });
 
-  it("渡したのに Claude が動き出さなければ、しばらくして表示を戻す", async () => {
+  it("Claude の番がエラーで終わっても、番の表示を戻して、また渡せる", async () => {
+    await render({ bridgeStatus: "IDLE" });
+    await answerNotes({ ok: true, notes: NOTES, dropped: 0 });
+    await act(async () => button("Claudeに渡す")?.click());
+    await render({ bridgeStatus: "TOOL" });
+    await render({ bridgeStatus: "ERR" });
+    expect(notice()).toBeNull();
+    expect(button("Claudeに渡す")?.disabled).toBe(false);
+  });
+
+  it("セッションが止まっている間は渡せない", async () => {
+    await render({ bridgeStatus: "STOP" });
+    await answerNotes({ ok: true, notes: NOTES, dropped: 0 });
+    expect(button("Claudeに渡す")?.disabled).toBe(true);
+    expect(button("Claudeに渡す")?.title).toBe("セッションが止まっています");
+  });
+
+  it("渡したのに Claude が動き出さなければ、しばらくして、動き出さなかったと知らせる", async () => {
     vi.useFakeTimers();
     await render({ bridgeStatus: "IDLE" });
     await answerNotes({ ok: true, notes: NOTES, dropped: 0 });
     await act(async () => button("Claudeに渡す")?.click());
-    expect(notice()).not.toBeNull();
+    expect(notice()).toBe("Claudeの番です。終わるとボードが書き換わります");
     await act(async () => {
       vi.advanceTimersByTime(20_000);
     });
-    expect(notice()).toBeNull();
+    expect(notice()).toBe("Claudeが動き出しませんでした。会話を見てください");
+    expect(button("Claudeに渡す")?.disabled).toBe(false);
   });
 
   it("付箋のファイルが読めなくても、最後に読めた付箋を保ち、知らせを出す", async () => {

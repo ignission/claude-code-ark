@@ -37,6 +37,8 @@ export const board: Messages["board"] = {
       "Hand the notes to Claude. Claude answers by rewriting the board",
     handOffEmpty: "Add a note to hand the board over",
     handOffBusy: "You can hand it over when Claude finishes",
+    handOffStopped: "The session is stopped",
+    notStarted: "Claude did not start. Check the chat",
     handOffDisconnected: "Disconnected",
     turn: "Claude's turn. The board changes when it is done",
     awaiting: "Claude is waiting for your confirmation. Check the chat",

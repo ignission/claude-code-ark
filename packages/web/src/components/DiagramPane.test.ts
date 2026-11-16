@@ -11,6 +11,7 @@ import {
   handleDiagramOpenLinkMessage,
   handleDiagramPinchMessage,
   parseDiagramLinkHref,
+  readDiagramScrollMessage,
   resetDiagramZoom,
 } from "./DiagramPane";
 
@@ -298,5 +299,21 @@ describe("handleDiagramOpenLinkMessage", () => {
       )
     ).toBe(true);
     expect(posted).toEqual([]);
+  });
+});
+
+describe("スクロールの層からのメッセージ", () => {
+  it("位置を読む。数でない位置と別の種類は読まない", () => {
+    expect(
+      readDiagramScrollMessage({ type: "ark:diagram-scroll", x: 0, y: 320 })
+    ).toEqual({ x: 0, y: 320 });
+    expect(
+      readDiagramScrollMessage({ type: "ark:diagram-scroll", x: "0", y: 1 })
+    ).toBeNull();
+    expect(
+      readDiagramScrollMessage({ type: "ark:diagram-scroll", x: 0, y: NaN })
+    ).toBeNull();
+    expect(readDiagramScrollMessage({ type: "ark:diagram-pinch" })).toBeNull();
+    expect(readDiagramScrollMessage(null)).toBeNull();
   });
 });

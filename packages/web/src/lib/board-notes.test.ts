@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   blankBoardName,
   buildHandOffMessage,
-  isClaudeFree,
+  isClaudeBusy,
   notesPathOf,
   readDiagramNoteOpMessage,
 } from "./board-notes";
@@ -52,18 +52,12 @@ describe("Claudeに渡す", () => {
     expect(message).not.toContain("\n");
   });
 
-  it("渡せるのは Claude が手すきのときだけ", () => {
-    expect(isClaudeFree(undefined)).toBe(true);
-    expect(isClaudeFree("IDLE")).toBe(true);
-    expect(isClaudeFree("READY")).toBe(true);
-    for (const status of [
-      "THINK",
-      "TOOL",
-      "AWAITING",
-      "ERR",
-      "STOP",
-    ] as const) {
-      expect(isClaudeFree(status)).toBe(false);
+  it("作業中と確認待ちの間は渡せない。エラーで止まったあとは渡せる", () => {
+    for (const status of [undefined, "IDLE", "READY", "ERR", "STOP"] as const) {
+      expect(isClaudeBusy(status)).toBe(false);
+    }
+    for (const status of ["THINK", "TOOL", "AWAITING"] as const) {
+      expect(isClaudeBusy(status)).toBe(true);
     }
   });
 
