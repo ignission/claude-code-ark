@@ -9,6 +9,11 @@ export const board = {
   selectFromList: "上の一覧から図を選択",
   disconnected: "ソケットが切断されています",
   deleteTimeout: "図の削除がタイムアウトしました",
+  /** ボードの中の画像を押したときの拡大表示 */
+  imageZoom: {
+    label: "画像の拡大表示",
+    close: "閉じる",
+  },
   /** ボードの付箋と、Claudeへの受け渡し */
   notes: {
     add: "付箋を足す",

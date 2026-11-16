@@ -57,6 +57,8 @@ Claude draws diagrams, screen mockups, and clickable prototypes as free-form HTM
 
 You can put sticky notes on a board. Write your thoughts down with "Add a note", then press "Hand to Claude": Claude answers on the board, grouping your notes in frames and adding notes of its own. You do not have to type a request. "New board" in the board list starts from a blank one.
 
+Press an image on a board (`<img>` or `<svg>`) to enlarge it to nearly the whole screen. Press anywhere to close it.
+
 ### You can review without leaving
 
 <p align="center">

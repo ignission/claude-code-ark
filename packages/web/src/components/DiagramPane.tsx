@@ -40,6 +40,11 @@ import {
   joinDeleteMessages,
   shouldRefreshDiagramList,
 } from "../lib/diagram-delete-state";
+import {
+  DiagramImageZoom,
+  type DiagramZoomedImage,
+  readDiagramImageMessage,
+} from "./DiagramImageZoom";
 import { DiagramSwitcher } from "./DiagramSwitcher";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -447,6 +452,11 @@ export function DiagramPane({
   const [handedOff, setHandedOff] = useState(false);
   const sawClaudeBusyRef = useRef(false);
   const [creating, setCreating] = useState(false);
+  // 図の中で押されて、画面いっぱいに見せている画像
+  const [zoomedImage, setZoomedImage] = useState<DiagramZoomedImage | null>(
+    null
+  );
+  const closeZoomedImage = useCallback(() => setZoomedImage(null), []);
   // port の受け口は iframe のロード時に作るので、いまの図と接続は ref で渡す
   const targetRef = useRef({ socket, worktreePath, relPath });
   targetRef.current = { socket, worktreePath, relPath };
@@ -530,6 +540,7 @@ export function DiagramPane({
     setHtml(null);
     setError(null);
     setZoom(resetDiagramZoom());
+    setZoomedImage(null);
     scrollPositionRef.current = null;
     portGrantedForRef.current = null;
     if (!relPath) {
@@ -803,6 +814,11 @@ export function DiagramPane({
           scrollPositionRef.current = scroll;
           return;
         }
+        const image = readDiagramImageMessage(event.data);
+        if (image) {
+          setZoomedImage(image);
+          return;
+        }
         // 人が付箋に加えた操作を保存する。保存後の付箋が返るので、そのまま画面へ反映する
         const noteOp = readDiagramNoteOpMessage(event.data);
         if (!noteOp) return;
@@ -881,6 +897,9 @@ export function DiagramPane({
 
   return (
     <div ref={rootRef} className="relative flex h-full flex-col">
+      {zoomedImage && (
+        <DiagramImageZoom image={zoomedImage} onClose={closeZoomedImage} />
+      )}
       <DiagramSwitcher
         diagrams={diagrams}
         currentRelPath={relPath}

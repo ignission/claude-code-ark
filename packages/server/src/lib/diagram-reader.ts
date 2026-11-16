@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { extractTitle, injectCsp } from "./diagram-file.js";
+import { injectDiagramImageLayer } from "./diagram-image-layer.js";
 import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
 import { injectDiagramNotesLayer } from "./diagram-notes-layer.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
@@ -114,11 +115,12 @@ const LAYERS: ReadonlyArray<(html: string) => string> = [
   injectDiagramPinchLayer,
   injectDiagramScrollLayer,
   injectDiagramNotesLayer,
+  injectDiagramImageLayer,
 ];
 
 /**
  * 配信用に読む。書かれた HTML はそのまま見せ、Ark が足すのは meta CSP と、
- * 親とやり取りする層 (リンク、ピンチ、スクロール位置、付箋) だけ。
+ * 親とやり取りする層 (リンク、ピンチ、スクロール位置、付箋、画像の拡大) だけ。
  */
 export async function readDiagram(
   worktreeReal: string,
