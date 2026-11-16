@@ -40,6 +40,8 @@ export const board = {
     blankName: (month: number, day: number, time: string) =>
       `ホワイトボード ${month}/${day} ${time}`,
     createFailed: "ボードを作れませんでした",
+    createTimeout:
+      "ボードを作る応答がありませんでした。作成は済んでいるかもしれません。一覧を確かめてから、もう一度押してください (続けて押すと同じボードが2枚できることがあります)",
     /** 「Claudeに渡す」で送る定型文。人は書かない */
     handOffMessage: (notesPath: string, diagramPath: string) =>
       `ボードの付箋を渡します。\`${notesPath}\` を読み、付箋に応えて、同じファイルを書き換えてください (似たものを枠でまとめる、問いにはあなたの付箋で答える、抜けているものがあればあなたの付箋で足す)。付箋は図 \`${diagramPath}\` の上に置かれています。返事はボードに出るので、チャットには1行だけ書いてください。`,

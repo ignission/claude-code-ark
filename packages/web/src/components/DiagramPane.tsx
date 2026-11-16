@@ -72,6 +72,8 @@ export interface DiagramPaneProps {
   bridgeStatus?: BridgeSessionStatus;
 }
 
+/** 「新しいボード」の応答を待つ上限 */
+const CREATE_BOARD_ACK_TIMEOUT_MS = 10_000;
 /** 「Claudeに渡す」を押したあと、Claude が動き出さないときに表示を戻すまでの時間 */
 const HAND_OFF_START_TIMEOUT_MS = 20_000;
 
@@ -665,25 +667,51 @@ export function DiagramPane({
     setHandedOff(true);
   }, [worktreePath, relPath]);
 
-  // 白紙のボードを作って開く。Claude に頼まなくても、付箋から書き始められる
+  // 白紙のボードを作って開く。Claude に頼まなくても、付箋から書き始められる。
+  // 要求には番号を振る。応答が来ないまま切れても作成中のままにならないよう待つ時間に
+  // 上限を置き、時間切れのあとや別の worktree へ移ったあとに届いた応答では図を選び直さない
+  const createRequestRef = useRef(0);
   const handleCreateBoard = useCallback(() => {
     if (!socket || creating) return;
+    const requestId = ++createRequestRef.current;
+    const requestedWorktree = worktreePath;
     setCreating(true);
     setDeleteMessage(null);
+    const timer = setTimeout(() => {
+      if (createRequestRef.current !== requestId) return;
+      createRequestRef.current += 1;
+      setCreating(false);
+      setDeleteMessage(m.board.notes.createTimeout);
+    }, CREATE_BOARD_ACK_TIMEOUT_MS);
     socket.emit(
       "diagram:create",
       { worktreePath, title: blankBoardName(new Date()) },
       response => {
-        setCreating(false);
+        clearTimeout(timer);
+        const current = createRequestRef.current === requestId;
+        if (current) setCreating(false);
+        if (targetRef.current.worktreePath !== requestedWorktree) return;
         if (!response.ok) {
-          setDeleteMessage(`${m.board.notes.createFailed}: ${response.error}`);
+          if (current) {
+            setDeleteMessage(
+              `${m.board.notes.createFailed}: ${response.error}`
+            );
+          }
           return;
         }
+        // 時間切れのあとに届いた成功は、一覧にだけ出す (人は別の操作に移っている)
         setListRefreshKey(key => key + 1);
-        onSelectDiagram(response.relPath, worktreePath);
+        if (current) onSelectDiagram(response.relPath, requestedWorktree);
       }
     );
   }, [socket, creating, worktreePath, onSelectDiagram]);
+
+  // 別の worktree へ移ったら、前の worktree への作成要求を待たない
+  // biome-ignore lint/correctness/useExhaustiveDependencies: worktreePath が変わったときにだけ走らせる
+  useEffect(() => {
+    createRequestRef.current += 1;
+    setCreating(false);
+  }, [worktreePath]);
 
   // 図ファイルの更新監視。worktreePath / relPath が変わるたびに
   // 古い購読を解除してから新しい購読を張る。アンマウント時も同様に解除する。

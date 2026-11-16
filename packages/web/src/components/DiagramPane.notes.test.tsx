@@ -417,4 +417,39 @@ describe("新しいボード", () => {
     );
     expect(onSelectDiagram).not.toHaveBeenCalled();
   });
+
+  it("応答が無いまま時間が過ぎたら、作成中を解いて知らせる。あとから届いた応答では図を選ばない", async () => {
+    await render({ relPath: undefined });
+    vi.useFakeTimers();
+    await act(async () => button("新しいボード")?.click());
+    expect(button("新しいボード")?.disabled).toBe(true);
+    const request = io.last("diagram:create");
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(button("新しいボード")?.disabled).toBe(false);
+    expect(document.body.textContent).toContain(
+      "ボードを作る応答がありませんでした"
+    );
+
+    await act(async () => {
+      request?.ack?.({ ok: true, relPath: "late.diagram.html" });
+    });
+    expect(onSelectDiagram).not.toHaveBeenCalled();
+  });
+
+  it("別の worktree へ移ったあとに届いた応答では、図を選ばない", async () => {
+    await render({ relPath: undefined });
+    await act(async () => button("新しいボード")?.click());
+    const request = io.last("diagram:create");
+
+    await render({ relPath: undefined, worktreePath: "/other" });
+    expect(button("新しいボード")?.disabled).toBe(false);
+    await act(async () => {
+      request?.ack?.({ ok: true, relPath: "a.diagram.html" });
+    });
+
+    expect(onSelectDiagram).not.toHaveBeenCalled();
+  });
 });

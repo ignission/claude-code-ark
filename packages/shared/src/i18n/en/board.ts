@@ -58,6 +58,8 @@ export const board: Messages["board"] = {
     blankName: (month: number, day: number, time: string) =>
       `Whiteboard ${MONTHS[month - 1]} ${day} ${time}`,
     createFailed: "Failed to create the board",
+    createTimeout:
+      "No response when creating the board. It may have been created anyway: check the list before pressing again, or you may end up with two boards.",
     handOffMessage: (notesPath: string, diagramPath: string) =>
       `Here are the sticky notes on the board. Read \`${notesPath}\`, respond to the notes, and rewrite the same file (group similar notes in frames, answer questions with notes of your own, and add a note for anything missing). The notes sit on top of the board \`${diagramPath}\`. Your answer shows on the board, so write only one line in the chat.`,
   },
