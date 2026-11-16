@@ -12,8 +12,9 @@ export const board = {
   /** ボードの図の上に手で描いて、Claudeに見せる */
   sketch: {
     draw: "描く",
+    eraser: "消しゴム",
     undo: "戻す",
-    clear: "消す",
+    clear: "全部消す",
     send: "Claudeに見せる",
     sending: "画像にしています...",
     close: "終わる",

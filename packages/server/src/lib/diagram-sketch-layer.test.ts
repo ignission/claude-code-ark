@@ -38,6 +38,12 @@ describe("手書きの層", () => {
     expect(source).toContain('style="overflow:visible"');
   });
 
+  it("消しゴムと、1手ずつ戻す履歴を持つ", () => {
+    expect(source).toContain('"eraser","undo","clear","send","close"');
+    expect(source).toContain("function eraseAt(");
+    expect(source).toContain("strokes=history.pop()");
+  });
+
   it("線が無くても見せられる (送っている間だけ押せない)", () => {
     expect(source).toContain('key==="send"?sending:');
     expect(source).toContain("if(!port||sending)return;");
@@ -48,7 +54,7 @@ describe("手書きの層", () => {
   });
 
   it("送っている間は線を足させない", () => {
-    expect(source).toContain("event.button!==0||sending");
+    expect(source).toContain("(event.button!==0&&event.button!==5)||sending");
     // 描いている途中の線も、送り始めたところで終える
     expect(source).toMatch(/sending=true;[^}]*current=null;/);
   });

@@ -92,8 +92,8 @@ export function readDiagramSketchStrokesMessage(
 
 /** 層のボタンに出す文言。図の中の層は言語を知らないので、親から渡す */
 export function sketchLabels(): Record<string, string> {
-  const { draw, undo, clear, send, sending, close } = m.board.sketch;
-  return { draw, undo, clear, send, sending, close };
+  const { draw, eraser, undo, clear, send, sending, close } = m.board.sketch;
+  return { draw, eraser, undo, clear, send, sending, close };
 }
 
 /** 入力欄に入れる文。画像を `@パス` で指し、どの図への書き込みかを添える */

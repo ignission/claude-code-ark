@@ -12,6 +12,7 @@ export const DIAGRAM_SKETCH_LAYER_MARKER = "ark-diagram-sketch-layer";
  * - 右下の「描く」を押している間だけ描ける。描くのはペンとマウスで、指はスクロールに使う。
  *   ペンと指をブラウザに任せて分けることはできないので、描いている間は touch-action を
  *   none にし、指の動きはこの層が自分でスクロールへ変える (2本指はピンチの層に任せる)
+ * - 消しゴムは、触れた線を1本まるごと消す。「戻す」は線を足す・消すの1手ずつを戻す
  * - 線は文書の座標で覚え、画面と同じ大きさの canvas へ、スクロールのたびに描き直す
  *   (長い図でも canvas を大きくしない)
  * - 画像は図の中で作る。文書の写しを SVG の foreignObject に入れて canvas に描き、
@@ -37,9 +38,17 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   var MAX_DRAWS=6;
   var REDRAW_WAIT=90;
   var INK="#e11d48";
-  var labels={draw:"Draw",undo:"Undo",clear:"Clear",send:"Show Claude",sending:"Sending...",close:"Done"};
+  var ERASE_RADIUS=12;
+  var MAX_HISTORY=50;
+  var labels={draw:"Draw",eraser:"Eraser",undo:"Undo",clear:"Clear all",send:"Show Claude",sending:"Sending...",close:"Done"};
   var strokes=[];
+  // Earlier states of strokes, for "Undo". A finished stroke is never changed, so each
+  // state is a shallow copy of the list
+  var history=[];
   var current=null;
+  var erasing=false;
+  var rubbing=false;
+  var rubbed=false;
   var drawing=false;
   var sending=false;
   var touches={};
@@ -49,7 +58,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   var canvas=document.createElement("canvas");
   canvas.setAttribute("style","position:fixed;inset:0;width:100%;height:100%;pointer-events:none;touch-action:none;");
   var bar=document.createElement("div");
-  bar.setAttribute("style","position:fixed;right:12px;bottom:12px;display:flex;gap:6px;pointer-events:auto;font:600 13px/1 system-ui,sans-serif;");
+  bar.setAttribute("style","position:fixed;right:12px;bottom:12px;max-width:calc(100% - 24px);display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;pointer-events:auto;font:600 13px/1 system-ui,sans-serif;");
   root.appendChild(canvas);
   root.appendChild(bar);
   var ctx=canvas.getContext("2d");
@@ -64,35 +73,69 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   }
   var buttons={
     draw:button("draw",false,function(){setDrawing(true);}),
-    undo:button("undo",false,function(){strokes.pop();paint();sync();changed();}),
-    clear:button("clear",false,function(){strokes=[];paint();sync();changed();}),
+    eraser:button("eraser",false,function(){erasing=!erasing;current=null;sync();}),
+    undo:button("undo",false,function(){if(history.length){strokes=history.pop();paint();sync();changed();}}),
+    clear:button("clear",false,function(){remember();strokes=[];paint();sync();changed();}),
     send:button("send",true,send),
     close:button("close",false,function(){setDrawing(false);})
   };
   // The parent keeps the strokes, and hands them back when the board is reloaded
   // (Claude rewriting the board must not wipe a drawing in progress)
+  function remember(){
+    history.push(strokes.slice());
+    if(history.length>MAX_HISTORY)history.shift();
+  }
+  function distance(px,py,a,b){
+    var dx=b.x-a.x,dy=b.y-a.y;
+    var len=dx*dx+dy*dy;
+    var t=len?Math.max(0,Math.min(1,((px-a.x)*dx+(py-a.y)*dy)/len)):0;
+    return Math.hypot(px-(a.x+t*dx),py-(a.y+t*dy));
+  }
+  // The eraser takes away whole strokes: every stroke it touches
+  function eraseAt(x,y){
+    var kept=[];
+    for(var s=0;s<strokes.length;s++){
+      var stroke=strokes[s],hit=false;
+      for(var i=0;i<stroke.length&&!hit;i++){
+        hit=distance(x,y,stroke[i>0?i-1:0],stroke[i])<=ERASE_RADIUS+stroke[i].w/2;
+      }
+      if(!hit)kept.push(stroke);
+    }
+    if(kept.length===strokes.length)return;
+    if(!rubbed){remember();rubbed=true;}
+    strokes=kept;
+    paint();
+  }
   function changed(){
     if(port)port.postMessage({type:"ark:diagram-sketch-strokes",strokes:strokes});
   }
   function sync(){
     bar.textContent="";
-    var keys=drawing?["undo","clear","send","close"]:["draw"];
+    // With nothing left to erase, go back to the pen
+    if(strokes.length===0)erasing=false;
+    canvas.style.cursor=drawing?(erasing?"cell":"crosshair"):"";
+    var keys=drawing?["eraser","undo","clear","send","close"]:["draw"];
     keys.forEach(function(key){
       var el=buttons[key];
       el.textContent=key==="send"&&sending?labels.sending:labels[key];
       // "Show Claude" works without strokes too: the board itself may hold what the user
       // wants to show (something typed or drawn in an interactive board)
-      var off=key==="send"?sending:(key==="undo"||key==="clear")&&(strokes.length===0||sending);
+      var off=key==="send"?sending:key==="undo"?history.length===0||sending:(key==="clear"||key==="eraser")&&(strokes.length===0||sending);
       el.disabled=off;
       el.style.opacity=off?"0.45":"1";
+      if(key==="eraser"){
+        el.style.background=erasing?"#27272a":"#fff";
+        el.style.color=erasing?"#fff":"#27272a";
+        el.setAttribute("aria-pressed",erasing?"true":"false");
+      }
       bar.appendChild(el);
     });
   }
   function setDrawing(on){
     drawing=on;
     current=null;
+    erasing=false;
     canvas.style.pointerEvents=on?"auto":"none";
-    canvas.style.cursor=on?"crosshair":"";
     sync();
   }
   function fit(){
@@ -140,9 +183,17 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       return;
     }
     // A stroke added while the picture is on its way would be cleared without being in it
-    if(event.button!==0||sending)return;
+    if((event.button!==0&&event.button!==5)||sending)return;
     event.preventDefault();
     try{canvas.setPointerCapture(event.pointerId);}catch(e){}
+    // The eraser end of a pen reports button 5 (bit 32), where the pen has one
+    if(erasing||(event.buttons&32)){
+      rubbing=true;
+      rubbed=false;
+      eraseAt(event.clientX+window.scrollX,event.clientY+window.scrollY);
+      return;
+    }
+    remember();
     current=[pointOf(event)];
     strokes.push(current);
     paint();
@@ -158,17 +209,21 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       touches[event.pointerId]={x:event.clientX,y:event.clientY};
       return;
     }
-    if(!current)return;
+    if(!current&&!rubbing)return;
     event.preventDefault();
     var events=event.getCoalescedEvents?event.getCoalescedEvents():[];
     if(!events.length)events=[event];
-    for(var i=0;i<events.length;i++)current.push(pointOf(events[i]));
-    paint();
+    for(var i=0;i<events.length;i++){
+      if(rubbing)eraseAt(events[i].clientX+window.scrollX,events[i].clientY+window.scrollY);
+      else current.push(pointOf(events[i]));
+    }
+    if(!rubbing)paint();
   });
   function release(event){
     if(event.pointerType==="touch"){delete touches[event.pointerId];return;}
-    if(current)changed();
+    if(current||rubbed)changed();
     current=null;
+    if(rubbing){rubbing=false;rubbed=false;sync();}
   }
   canvas.addEventListener("pointerup",release);
   canvas.addEventListener("pointercancel",release);
@@ -235,8 +290,10 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
     sending=true;
     // End a stroke still being drawn (the button can be pressed with another finger):
     // what is added after the picture is taken would be cleared without being in it
-    if(current)changed();
+    if(current||rubbed)changed();
     current=null;
+    rubbing=false;
+    rubbed=false;
     sync();
     probeImages(capture);
   }
@@ -320,7 +377,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       }else if(data.type==="ark:diagram-sketch-result"){
         // The parent attached the picture to the chat input: the strokes have done their job
         sending=false;
-        if(data.ok){strokes=[];paint();setDrawing(false);}
+        if(data.ok){strokes=[];history=[];paint();setDrawing(false);}
         else sync();
       }else if(data.type==="ark:diagram-sketch-restore"&&Array.isArray(data.strokes)){
         var restored=[];
@@ -334,6 +391,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
           if(to.length)restored.push(to);
         }
         strokes=restored;
+        history=[];
         paint();
         sync();
       }

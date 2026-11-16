@@ -105,8 +105,9 @@ describe("入力欄に入れる文と、層へ渡す文言", () => {
   it("層のボタンの文言を渡す", () => {
     expect(sketchLabels()).toEqual({
       draw: "描く",
+      eraser: "消しゴム",
       undo: "戻す",
-      clear: "消す",
+      clear: "全部消す",
       send: "Claudeに見せる",
       sending: "画像にしています...",
       close: "終わる",

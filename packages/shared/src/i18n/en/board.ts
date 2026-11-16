@@ -31,8 +31,9 @@ export const board: Messages["board"] = {
   deleteTimeout: "Deleting the board timed out",
   sketch: {
     draw: "Draw",
+    eraser: "Eraser",
     undo: "Undo",
-    clear: "Clear",
+    clear: "Clear all",
     send: "Show Claude",
     sending: "Making the picture...",
     close: "Done",
