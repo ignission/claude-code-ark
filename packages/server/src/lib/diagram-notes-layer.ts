@@ -17,6 +17,8 @@ export const DIAGRAM_NOTES_LAYER_MARKER = "ark-diagram-notes-layer";
  * - **文は打つたびに少し待って送る。** Claude が図を書き直すと文書ごと作り直されるので、
  *   フォーカスが外れるまで待つと、書きかけが消える
  * - **Enter には何も割り当てない。** 日本語の変換の確定と取り合わない。付箋の中の改行になる
+ * - **保存できなかった付箋を、置いたままにしない。** 足した付箋は、保存の結果を待たずに描く。
+ *   サーバーが断ったら (上限、壊れたファイルなど)、親が `ark:diagram-note-drop` で知らせ、消す
  * - 付箋を足す位置は、いま見えている範囲の中央。親のボタンから `ark:diagram-note-add` で
  *   頼まれる (図の上のダブルクリックは、タッチで使えず、図の文字の選択とも取り合う)
  *
@@ -220,6 +222,8 @@ export const NOTES_LAYER = `<script id="${DIAGRAM_NOTES_LAYER_MARKER}">
       if(!data)return;
       if(data.type==="ark:diagram-notes")render(data);
       else if(data.type==="ark:diagram-note-add")add();
+      // The server refused to save a note the user just added. Take it off the board
+      else if(data.type==="ark:diagram-note-drop"&&typeof data.id==="string"&&elements[data.id]&&elements[data.id].pending)remove(data.id);
     });
     port.start();
   });

@@ -16,9 +16,9 @@
  * - **人の操作は、一覧の丸ごとではなく操作の単位で保存する。** Claude の番の間に人が付箋を
  *   動かしても、古い一覧で Claude の結果を潰さない。保存は、いまのファイルを読み、操作を
  *   1つ当て、一時ファイルから rename で置き換える。同じファイルへの保存は直列にする
- * - **Claude の書き損じで付箋を失わない。** JSON として読めないファイルには書かず、
- *   `invalid` を返す (画面は最後に読めた付箋を出し続け、知らせを出す)。形の合わない付箋と枠は
- *   読み飛ばし、その数を返す
+ * - **Claude の書き損じで付箋を失わない。** JSON として読めないファイルと、形の合わない付箋や
+ *   枠を含むファイルには書かず、`invalid` を返す (画面は最後に読めた付箋を出し続け、知らせを
+ *   出す)。形の合わない付箋と枠は、表示では読み飛ばし、その数を返す
  * - **付箋のファイルのパスは、検証済みの図のパスから作る。** クライアントからは受け取らない
  */
 
@@ -291,8 +291,22 @@ async function locate(
 
 type RawRead =
   | { kind: "missing" }
-  | { kind: "raw"; raw: string }
+  | { kind: "raw"; raw: string; signature: string }
   | { kind: "error"; code: "forbidden" | "io" };
+
+/** ファイルが読んだときのままかを見分ける値。無いファイルは空文字 */
+function signatureOf(stat: { mtimeMs: number; size: number; ino: number }) {
+  return `${stat.mtimeMs}:${stat.size}:${stat.ino}`;
+}
+
+async function currentSignature(absPath: string): Promise<string> {
+  try {
+    return signatureOf(await lstat(absPath));
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return "";
+    throw error;
+  }
+}
 
 /** シンボリックリンクをたどらずに読む。通常のファイルでなければ読まない */
 async function readRaw(absPath: string): Promise<RawRead> {
@@ -306,7 +320,11 @@ async function readRaw(absPath: string): Promise<RawRead> {
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
       return { kind: "error", code: "forbidden" };
     }
-    return { kind: "raw", raw: await handle.readFile("utf-8") };
+    return {
+      kind: "raw",
+      raw: await handle.readFile("utf-8"),
+      signature: signatureOf(stat),
+    };
   } catch (error) {
     const code = errnoCode(error);
     if (code === "ENOENT") return { kind: "missing" };
@@ -334,15 +352,23 @@ export async function readDiagramNotes(
       ? { ok: true, notes: EMPTY, dropped: 0 }
       : { ok: false, code: located.code };
   }
-  const read = await readRaw(located.absPath);
-  if (read.kind === "missing") return { ok: true, notes: EMPTY, dropped: 0 };
-  if (read.kind === "error") return { ok: false, code: read.code };
-  const parsed = parseNotes(read.raw);
-  if (!parsed) return { ok: false, code: "invalid" };
-  return { ok: true, notes: parsed.notes, dropped: parsed.dropped };
+  // 保存と同じ列に並べる。保存の途中で読み始めた古い内容が、保存の結果より後に届くと、
+  // 画面が古い付箋に戻る
+  return serialize(located.absPath, async () => {
+    const read = await readRaw(located.absPath);
+    if (read.kind === "missing") return { ok: true, notes: EMPTY, dropped: 0 };
+    if (read.kind === "error") return { ok: false, code: read.code };
+    const parsed = parseNotes(read.raw);
+    if (!parsed) return { ok: false, code: "invalid" };
+    return { ok: true, notes: parsed.notes, dropped: parsed.dropped };
+  });
 }
 
-/** 同じファイルへの保存を直列にする (読む、当てる、置き換える、の間に別の保存を挟ませない) */
+/**
+ * 同じファイルの読み書きを直列にする (読む、当てる、置き換える、の間に、Ark の別の読み書きを
+ * 挟ませない)。Claude は別のプロセスから書くので、これでは防げない。そちらは置き換えの
+ * 直前にファイルが読んだときのままかを確かめる (applyDiagramNoteOp)
+ */
 const writeQueues = new Map<string, Promise<unknown>>();
 
 function serialize<T>(key: string, task: () => Promise<T>): Promise<T> {
@@ -357,12 +383,24 @@ function serialize<T>(key: string, task: () => Promise<T>): Promise<T> {
   return next;
 }
 
-/** 付箋に操作を1つ当てて保存し、保存後の付箋を返す */
+const MAX_SAVE_ATTEMPTS = 3;
+
+/**
+ * 付箋に操作を1つ当てて保存し、保存後の付箋を返す。
+ *
+ * - 読んでから置き換えるまでの間に Claude がファイルを書き換えていたら、置き換えずに
+ *   読み直して当て直す。何度やっても変わり続けるなら `io` を返し、上書きしない
+ * - 読み飛ばした付箋や枠があるファイルには書かない (`invalid`)。書くと、読み飛ばしたものが
+ *   ファイルから消える
+ *
+ * `beforeReplace` はテスト用で、置き換えの直前に別の書き手を挟む。
+ */
 export async function applyDiagramNoteOp(
   worktreeReal: string,
   diagramRelPath: string,
   op: DiagramNoteOp,
-  viewWidth?: number
+  viewWidth?: number,
+  beforeReplace?: () => void
 ): Promise<NotesResult> {
   const located = await locate(worktreeReal, diagramRelPath);
   if (!located.ok) {
@@ -371,7 +409,7 @@ export async function applyDiagramNoteOp(
       code: located.code === "missing" ? "io" : located.code,
     };
   }
-  return serialize(located.absPath, async () => {
+  const attempt = async (): Promise<NotesResult | "changed"> => {
     const read = await readRaw(located.absPath);
     if (read.kind === "error") return { ok: false, code: read.code };
     let current = { notes: EMPTY, dropped: 0, viewWidth: DEFAULT_VIEW_WIDTH };
@@ -385,6 +423,7 @@ export async function applyDiagramNoteOp(
     if (next === current.notes) {
       return { ok: true, notes: next, dropped: current.dropped };
     }
+    if (current.dropped > 0) return { ok: false, code: "invalid" };
     const width = coord(viewWidth) || current.viewWidth;
     const tmp = path.join(
       path.dirname(located.absPath),
@@ -396,13 +435,27 @@ export async function applyDiagramNoteOp(
         serializeNotes(next, located.diagramFileName, width),
         { flag: "wx", mode: 0o644 }
       );
+      beforeReplace?.();
+      // 確かめてから rename までのごく短い隙間は残る
+      const before = read.kind === "raw" ? read.signature : "";
+      if ((await currentSignature(located.absPath)) !== before) {
+        await rm(tmp, { force: true }).catch(() => {});
+        return "changed";
+      }
       // rename は、置き換え先がシンボリックリンクでもリンクそのものを置き換える
       await rename(tmp, located.absPath);
     } catch {
       await rm(tmp, { force: true }).catch(() => {});
       return { ok: false, code: "io" };
     }
-    return { ok: true, notes: next, dropped: current.dropped };
+    return { ok: true, notes: next, dropped: 0 };
+  };
+  return serialize(located.absPath, async () => {
+    for (let count = 0; count < MAX_SAVE_ATTEMPTS; count++) {
+      const result = await attempt();
+      if (result !== "changed") return result;
+    }
+    return { ok: false, code: "io" };
   });
 }
 

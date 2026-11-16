@@ -59,6 +59,7 @@ function render(overrides: Partial<DiagramPaneProps> = {}) {
     deleteDiagram: vi.fn(),
     onSelectDiagram,
     socket: io.socket as unknown as DiagramPaneProps["socket"],
+    bridgeStatus: "IDLE",
     ...overrides,
   };
   return act(async () => {
@@ -140,6 +141,23 @@ describe("ボードの付箋", () => {
     expect(button("Claudeに渡す")?.disabled).toBe(true);
     expect(button("Claudeに渡す")?.title).toBe("付箋を置くと渡せます");
     await answerNotes({ ok: true, notes: NOTES, dropped: 0 });
+    expect(button("Claudeに渡す")?.disabled).toBe(false);
+  });
+
+  it("Claude の状態が届く前は渡せない", async () => {
+    await render({ bridgeStatus: undefined });
+    await answerNotes({ ok: true, notes: NOTES, dropped: 0 });
+    expect(button("Claudeに渡す")?.disabled).toBe(true);
+    expect(button("Claudeに渡す")?.title).toBe("Claudeの状態を確認しています");
+  });
+
+  it("つなぎ直したあとの読み取りが失敗しても、最後に読めた付箋を保つ", async () => {
+    await render();
+    await answerNotes({ ok: true, notes: NOTES, dropped: 0 });
+    await render({ isConnected: false });
+    await render({ isConnected: true });
+    await answerNotes({ ok: false, code: "invalid" });
+    expect(notice()).toContain("付箋のファイルを読めません");
     expect(button("Claudeに渡す")?.disabled).toBe(false);
   });
 
@@ -285,6 +303,27 @@ describe("図の中の層とのやり取り", () => {
       request?.ack?.({ ok: true, notes: NOTES, dropped: 0 });
     });
     expect(button("Claudeに渡す")?.disabled).toBe(false);
+    layer.port.close();
+  });
+
+  it("足した付箋を保存できなかったら、層に消させて、知らせを出す", async () => {
+    await render();
+    await answerNotes({ ok: true, notes: NOTES, dropped: 0 });
+    const layer = await connectLayer();
+    layer.port.postMessage({
+      type: "ark:diagram-note-op",
+      op: { type: "add", id: "n9", x: 10, y: 20 },
+    });
+    await layer.settle();
+    await act(async () => {
+      io.last("diagram:notes:op")?.ack?.({ ok: false, code: "limit" });
+    });
+    await layer.settle();
+    expect(layer.received).toContainEqual({
+      type: "ark:diagram-note-drop",
+      id: "n9",
+    });
+    expect(notice()).toBe("付箋の数が上限に達しています");
     layer.port.close();
   });
 

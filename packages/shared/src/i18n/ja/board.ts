@@ -17,6 +17,7 @@ export const board = {
     handOffTitle: "付箋をClaudeに渡す。Claudeはボードを書き換えて返す",
     handOffEmpty: "付箋を置くと渡せます",
     handOffBusy: "Claudeの作業が終わると渡せます",
+    handOffChecking: "Claudeの状態を確認しています",
     handOffStopped: "セッションが止まっています",
     notStarted: "Claudeが動き出しませんでした。会話を見てください",
     handOffDisconnected: "接続が切れています",

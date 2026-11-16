@@ -580,13 +580,19 @@ export function DiagramPane({
     };
   }, [worktreePath, isConnected, relPath, listDiagrams, listRefreshKey]);
 
-  // 付箋を読む。図を替えたとき、つなぎ直したとき、付箋のファイルが変わったときに読み直す
-  // (付箋のファイルの監視は、下の diagram:subscribe がサーバーで一緒に張る)
-  // biome-ignore lint/correctness/useExhaustiveDependencies(worktreePath, relPath): 図を替えたら読み直すための意図的な依存
+  // 図を替えたら、前の図の付箋と知らせを消す。つなぎ直しでは消さない (つなぎ直したあとの
+  // 読み取りが失敗しても、最後に読めた付箋を出し続ける)
+  // biome-ignore lint/correctness/useExhaustiveDependencies(worktreePath): 図を替えたときに消すための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(relPath): 同上
   useEffect(() => {
     setNotes(null);
     setNotesNotice(null);
     setHandedOff(false);
+  }, [worktreePath, relPath]);
+
+  // 付箋を読む。図を替えたとき、つなぎ直したとき、付箋のファイルが変わったときに読み直す
+  // (付箋のファイルの監視は、下の diagram:subscribe がサーバーで一緒に張る)
+  useEffect(() => {
     if (!socket || !isConnected || !relPath) return;
     fetchNotes();
     const onNotesUpdated = (data: {
@@ -809,7 +815,16 @@ export function DiagramPane({
             relPath: target.relPath,
             ...noteOp,
           },
-          response => applyNotesResponse(target, response)
+          response => {
+            applyNotesResponse(target, response);
+            // 足した付箋を保存できなかったら、層が先に描いていた付箋を消させる
+            if (!response.ok && noteOp.op.type === "add") {
+              channel.port1.postMessage({
+                type: "ark:diagram-note-drop",
+                id: noteOp.op.id,
+              });
+            }
+          }
         );
       };
 
@@ -848,11 +863,14 @@ export function DiagramPane({
     ? m.board.notes.handOffDisconnected
     : noteCount === 0
       ? m.board.notes.handOffEmpty
-      : bridgeStatus === "STOP"
-        ? m.board.notes.handOffStopped
-        : handedOff || claudeBusy
-          ? m.board.notes.handOffBusy
-          : null;
+      : bridgeStatus === undefined
+        ? // 状態が届く前は、確認待ちかどうかが分からない
+          m.board.notes.handOffChecking
+        : bridgeStatus === "STOP"
+          ? m.board.notes.handOffStopped
+          : handedOff || claudeBusy
+            ? m.board.notes.handOffBusy
+            : null;
   const boardNotice = handedOff
     ? bridgeStatus === "AWAITING"
       ? m.board.notes.awaiting

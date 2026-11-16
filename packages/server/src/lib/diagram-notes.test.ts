@@ -207,6 +207,89 @@ describe("読み書き", () => {
     });
   });
 
+  it("読んでから置き換えるまでの間に Claude が書いた内容を、上書きしない", async () => {
+    await applyDiagramNoteOp(wt, REL, { type: "add", id: "n1", x: 0, y: 0 });
+    let wrote = false;
+    const result = await applyDiagramNoteOp(
+      wt,
+      REL,
+      { type: "move", id: "n1", x: 50, y: 50 },
+      undefined,
+      () => {
+        if (wrote) return;
+        wrote = true;
+        const file = JSON.parse(fs.readFileSync(notesFile(), "utf8"));
+        file.notes.push({
+          id: "c1",
+          author: "claude",
+          text: "答え",
+          x: 300,
+          y: 0,
+        });
+        fs.writeFileSync(notesFile(), JSON.stringify(file, null, 2));
+      }
+    );
+    // 読み直して当て直すので、Claude の付箋も、人の移動も残る
+    expect(result).toMatchObject({
+      ok: true,
+      notes: { notes: [{ id: "n1", x: 50, y: 50 }, { id: "c1" }] },
+    });
+    await expect(readDiagramNotes(wt, REL)).resolves.toEqual(result);
+  });
+
+  it("置き換えのたびにファイルが変わり続けるなら、上書きせずに io を返す", async () => {
+    await applyDiagramNoteOp(wt, REL, { type: "add", id: "n1", x: 0, y: 0 });
+    let count = 0;
+    const result = await applyDiagramNoteOp(
+      wt,
+      REL,
+      { type: "move", id: "n1", x: 50, y: 50 },
+      undefined,
+      () => {
+        const file = JSON.parse(fs.readFileSync(notesFile(), "utf8"));
+        file.notes.push({
+          id: `c${count++}`,
+          author: "claude",
+          text: "",
+          x: 0,
+          y: 0,
+        });
+        fs.writeFileSync(notesFile(), JSON.stringify(file, null, 2));
+      }
+    );
+    expect(result).toEqual({ ok: false, code: "io" });
+    const file = JSON.parse(fs.readFileSync(notesFile(), "utf8"));
+    expect(file.notes.map((note: { id: string }) => note.id)).toEqual([
+      "n1",
+      "c0",
+      "c1",
+      "c2",
+    ]);
+    expect(file.notes[0]).toMatchObject({ x: 0, y: 0 });
+    // 一時ファイルを残さない
+    expect(
+      fs.readdirSync(dir).filter(name => name.includes("ark-tmp"))
+    ).toEqual([]);
+  });
+
+  it("読み飛ばした付箋があるファイルには書かない (書くと、読み飛ばしたものが消える)", async () => {
+    const broken = JSON.stringify({
+      notes: [
+        { id: "n1", author: "human", text: "人", x: 0, y: 0 },
+        { id: 7, author: "claude", text: "idが数", x: 200, y: 0 },
+      ],
+    });
+    fs.writeFileSync(notesFile(), broken);
+    await expect(readDiagramNotes(wt, REL)).resolves.toMatchObject({
+      ok: true,
+      dropped: 1,
+    });
+    await expect(
+      applyDiagramNoteOp(wt, REL, { type: "move", id: "n1", x: 9, y: 9 })
+    ).resolves.toEqual({ ok: false, code: "invalid" });
+    expect(fs.readFileSync(notesFile(), "utf8")).toBe(broken);
+  });
+
   it("続けて来た操作を、どれも落とさずに順に当てる", async () => {
     await Promise.all(
       Array.from({ length: 12 }, (_, i) =>
