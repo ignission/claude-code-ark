@@ -16,6 +16,7 @@ export const DIAGRAM_SKETCH_LAYER_MARKER = "ark-diagram-sketch-layer";
  *   (長い図でも canvas を大きくしない)
  * - 画像は図の中で作る。文書の写しを SVG の foreignObject に入れて canvas に描き、
  *   その上に線を重ねる。親は sandbox の iframe の見た目を画像にできない
+ * - 写しは今の図と同じ幅で組む (横にはみ出す図でも、中央寄せや折り返しの位置を変えない)
  * - 画像にするのは線を囲む範囲と余白だけ (線が無ければ見えている範囲)。図の全体を
  *   1枚にすると、長い図では文字が読めない大きさに縮む
  * - 線はファイルに残さない。図が読み直されると消える
@@ -125,7 +126,8 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       touches[event.pointerId]={x:event.clientX,y:event.clientY};
       return;
     }
-    if(event.button!==0)return;
+    // A stroke added while the picture is on its way would be cleared without being in it
+    if(event.button!==0||sending)return;
     event.preventDefault();
     try{canvas.setPointerCapture(event.pointerId);}catch(e){}
     current=[pointOf(event)];
@@ -189,6 +191,9 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       var page=document.documentElement;
       var docWidth=Math.ceil(Math.max(page.scrollWidth,window.innerWidth));
       var docHeight=Math.ceil(Math.max(page.scrollHeight,window.innerHeight));
+      // Lay the copy out at the width the board is laid out at now. A wider box would move
+      // centred or wrapped content away from the strokes. What overflows it is still painted
+      var layoutWidth=Math.max(1,page.clientWidth||window.innerWidth);
       var originals=page.querySelectorAll("canvas");
       var clone=page.cloneNode(true);
       // A cloned <canvas> is blank, so carry its pixels over as an image
@@ -207,7 +212,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       var drop=clone.querySelectorAll("script,ark-sketch,meta[http-equiv]");
       for(var d=0;d<drop.length;d++)if(drop[d].parentNode)drop[d].parentNode.removeChild(drop[d]);
       var xhtml=new XMLSerializer().serializeToString(clone);
-      var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+docWidth+'" height="'+docHeight+'"><foreignObject x="0" y="0" width="100%" height="100%">'+xhtml+"</foreignObject></svg>";
+      var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+docWidth+'" height="'+docHeight+'"><foreignObject x="0" y="0" width="'+layoutWidth+'" height="'+docHeight+'" style="overflow:visible">'+xhtml+"</foreignObject></svg>";
       var crop=cropRect(docWidth,docHeight);
       var scale=Math.min(2,MAX_EDGE/Math.max(crop.w,crop.h));
       var image=new Image();

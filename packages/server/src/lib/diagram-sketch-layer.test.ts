@@ -31,6 +31,15 @@ describe("手書きの層", () => {
     expect(source).toContain('"script,ark-sketch,meta[http-equiv]"');
   });
 
+  it("写しは今の図の幅で組み、はみ出した分も描く", () => {
+    expect(source).toContain("page.clientWidth");
+    expect(source).toContain('style="overflow:visible"');
+  });
+
+  it("送っている間は線を足させない", () => {
+    expect(source).toContain("event.button!==0||sending");
+  });
+
   it("</body> の直前へ1回だけ入れる", () => {
     const once = injectDiagramSketchLayer(
       "<html><body><p>図</p></body></html>"
