@@ -5,6 +5,10 @@
  * 注意の順に並べたセッション一覧 (SessionSectionList) と、
  * 下部に常に出すCPU/MEM/DISK (押すとBridgeを別タブで開く) を出す。
  * About と言語の切り替えはワードマークのメニューにある。
+ *
+ * 左上のボタンでサイドバーを丸ごと畳む。畳んだ間は SessionSidebarRail が代わりに出る。
+ * 畳むボタンと開くボタンは同じ位置に置き、続けて押せるようにする。
+ * 帯には「あなたの番」の件数だけを残す (畳んでいても呼ばれたことに気づけるように)。
  */
 
 import type { HostMetrics, Screen } from "@ark/shared";
@@ -15,6 +19,8 @@ import {
   Info,
   ListPlus,
   Monitor,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings,
 } from "lucide-react";
@@ -41,6 +47,8 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   onNewTask: () => void;
   /** Aboutダイアログを開く */
   onOpenAbout: () => void;
+  /** サイドバーを畳む。無ければボタンを出さない */
+  onCollapse?: () => void;
   /** 下部に出すCPU/MEM/DISK (未着はnull) */
   metrics: HostMetrics | null;
   notificationControl?: ReactNode;
@@ -55,6 +63,7 @@ export function SessionSidebar({
   onNewSession,
   onNewTask,
   onOpenAbout,
+  onCollapse,
   metrics,
   notificationControl,
   screens = [],
@@ -66,6 +75,18 @@ export function SessionSidebar({
   return (
     <div className="h-full flex flex-col">
       <div className="flex h-12 shrink-0 items-center gap-1 pl-2 pr-2">
+        {onCollapse && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={onCollapse}
+            aria-label={m.session.sidebar.collapse}
+            title={m.session.sidebar.collapse}
+          >
+            <PanelLeftClose className="size-5" />
+          </Button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -171,6 +192,41 @@ export function SessionSidebar({
       <div className="shrink-0 border-t border-sidebar-border px-2 py-1.5">
         <SystemStatusBar metrics={metrics} compact />
       </div>
+    </div>
+  );
+}
+
+/** 畳んだサイドバーの代わりに出す細い帯。開くボタンと「あなたの番」の件数 */
+export function SessionSidebarRail({
+  yourTurnCount,
+  onExpand,
+}: {
+  yourTurnCount: number;
+  onExpand: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center gap-2 pt-2">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+        onClick={onExpand}
+        aria-label={m.session.sidebar.expand}
+        title={m.session.sidebar.expand}
+      >
+        <PanelLeftOpen className="size-5" />
+      </Button>
+      {yourTurnCount > 0 && (
+        <button
+          type="button"
+          onClick={onExpand}
+          aria-label={m.session.sidebar.yourTurnCount(yourTurnCount)}
+          title={m.session.sidebar.yourTurnCount(yourTurnCount)}
+          className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-status-awaiting/15 px-1.5 text-xs font-semibold tabular-nums text-status-awaiting"
+        >
+          {yourTurnCount}
+        </button>
+      )}
     </div>
   );
 }

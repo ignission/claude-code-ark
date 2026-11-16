@@ -41,7 +41,7 @@ import {
   sortSessionEntries,
   toListRows,
 } from "@/lib/session-sections";
-import { SECTION_LABELS, TONE_CLASSES } from "@/lib/status-tone";
+import { presentStatus, SECTION_LABELS, TONE_CLASSES } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { getBaseName } from "@/utils/pathUtils";
 import { resolveSessionRowProfile, SessionListRow } from "./SessionListRow";
@@ -112,6 +112,8 @@ export interface SessionSectionListProps {
     profileId: string | null
   ) => void;
   onOpenProfileManager?: () => void;
+  /** 「あなたの番」の件数が変わるたびに呼ぶ (畳んだサイドバーの帯に出す) */
+  onYourTurnCountChange?: (count: number) => void;
 }
 
 type DeleteTarget =
@@ -175,6 +177,7 @@ export function SessionSectionList({
   onSetRepoProfile,
   onSetWorktreeProfile,
   onOpenProfileManager,
+  onYourTurnCountChange,
 }: SessionSectionListProps) {
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
@@ -190,6 +193,16 @@ export function SessionSectionList({
     [groupedItems, sessionStatuses, sessionLastUpdatedAt]
   );
   const rows = useMemo(() => toListRows(sectionize(entries)), [entries]);
+  // 見出しの件数と同じ値を外へ知らせる。並びを保留していても件数は最新にする
+  const yourTurnCount = useMemo(
+    () =>
+      entries.filter(e => presentStatus(e.statusKey).section === "your-turn")
+        .length,
+    [entries]
+  );
+  useEffect(() => {
+    onYourTurnCountChange?.(yourTurnCount);
+  }, [yourTurnCount, onYourTurnCountChange]);
   // 親子の表示: 親の行に出す子の数と、子の行から親をたどるための worktree のパス → 行
   const childCounts = useMemo(() => countChildren(entries), [entries]);
   const entryByPath = useMemo(() => {

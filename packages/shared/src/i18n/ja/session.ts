@@ -163,6 +163,9 @@ export const session = {
     screens: "画面",
     manageScreens: "画面の管理...",
     openBridge: "Bridgeを別タブで開く",
+    collapse: "サイドバーを畳む",
+    expand: "サイドバーを開く",
+    yourTurnCount: (count: number) => `あなたの番: ${count}件`,
   },
   /** 新しい版の知らせ (バナーと、読み込み直しのトースト) */
   update: {

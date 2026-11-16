@@ -27,7 +27,10 @@ import {
   revealSelectedSessionRow,
   type SplitTaskTarget,
 } from "@/components/SessionSectionList";
-import { SessionSidebar } from "@/components/SessionSidebar";
+import {
+  SessionSidebar,
+  SessionSidebarRail,
+} from "@/components/SessionSidebar";
 import { SessionTabBar, type SessionTabItem } from "@/components/SessionTabBar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { SplitViewPane } from "@/components/SplitViewPane";
@@ -109,6 +112,16 @@ export default function Dashboard() {
   const savedRepoList = getSetting<string[]>("repoList", []);
   const savedRepoPath = getSetting<string | null>("selectedRepoPath", null);
   const savedScanBasePath = getSetting<string>("scanBasePath", "");
+
+  // PCのサイドバーを畳んでいるか。設定に持ち、再読み込みのあとも同じ状態で開く
+  const sidebarCollapsed =
+    getSetting<unknown>("ark-sidebar-collapsed", false) === true;
+  const changeSidebarCollapsed = useCallback(
+    (collapsed: boolean) => setSetting("ark-sidebar-collapsed", collapsed),
+    [setSetting]
+  );
+  // 畳んだ帯に出す「あなたの番」の件数 (一覧が数えて知らせる)
+  const [yourTurnCount, setYourTurnCount] = useState(0);
 
   // 新しいタスクのダイアログ。null の間は閉じている。分岐TODOから開くときは
   // 名前・プロンプト・ベース・親の worktree を初期値に入れる
@@ -1161,6 +1174,8 @@ export default function Dashboard() {
               onNewTask={handleNewTask}
               onSplitTask={handleSplitTask}
               onOpenAbout={() => setShowAboutDialog(true)}
+              onCollapse={() => changeSidebarCollapsed(true)}
+              onYourTurnCountChange={setYourTurnCount}
               metrics={hostMetrics}
               notificationControl={notificationControl}
               screens={screens}
@@ -1401,6 +1416,13 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
+          }
+          collapsed={sidebarCollapsed}
+          rail={
+            <SessionSidebarRail
+              yourTurnCount={yourTurnCount}
+              onExpand={() => changeSidebarCollapsed(false)}
+            />
           }
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 300)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
