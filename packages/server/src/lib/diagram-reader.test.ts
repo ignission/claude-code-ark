@@ -9,6 +9,7 @@ import { DIAGRAM_LINK_LAYER_MARKER } from "./diagram-link-layer.js";
 import { DIAGRAM_PINCH_LAYER_MARKER } from "./diagram-pinch-layer.js";
 import { readDiagram, readDiagramTitle } from "./diagram-reader.js";
 import { DIAGRAM_SCROLL_LAYER_MARKER } from "./diagram-scroll-layer.js";
+import { DIAGRAM_SKETCH_LAYER_MARKER } from "./diagram-sketch-layer.js";
 
 let wt: string;
 let dir: string;
@@ -49,6 +50,7 @@ describe("readDiagram", () => {
       expect(result.html).toContain(DIAGRAM_LINK_LAYER_MARKER);
       expect(result.html).toContain(DIAGRAM_PINCH_LAYER_MARKER);
       expect(result.html).toContain(DIAGRAM_SCROLL_LAYER_MARKER);
+      expect(result.html).toContain(DIAGRAM_SKETCH_LAYER_MARKER);
       expect(result.html).toContain(DIAGRAM_IMAGE_LAYER_MARKER);
       expect(result.html).toContain("<div>図</div><script>draw()</script>");
     }

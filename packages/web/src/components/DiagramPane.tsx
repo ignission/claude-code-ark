@@ -21,6 +21,14 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
+import { toast } from "sonner";
+import {
+  buildSketchDraft,
+  readDiagramSketchMessage,
+  sketchLabels,
+  uploadSketch,
+} from "@/lib/board-sketch";
+import { requestChatDraft } from "@/lib/chat-draft-store";
 import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -415,6 +423,9 @@ export function DiagramPane({
   const rootRef = useRef<HTMLDivElement>(null);
   // 図の文書のスクロール位置。同じ図の読み直しで、見ていた場所へ戻すために覚える
   const scrollPositionRef = useRef<DiagramScrollPosition | null>(null);
+  // port の受け口は iframe のロード時に作るので、いまの図と接続は ref で渡す
+  const targetRef = useRef({ socket, sessionId, worktreePath, relPath });
+  targetRef.current = { socket, sessionId, worktreePath, relPath };
 
   const load = useCallback(async () => {
     if (!relPath) return;
@@ -647,7 +658,41 @@ export function DiagramPane({
           return;
         }
         const image = readDiagramImageMessage(event.data);
-        if (image) setZoomedImage(image);
+        if (image) {
+          setZoomedImage(image);
+          return;
+        }
+        // 図の上の手書き。画像を保存して会話の入力欄へ添付する (送信は人が押す)。
+        // 結果は層へ返す: 添付できたら層は線を消し、できなければ線を残す
+        const sketch = readDiagramSketchMessage(event.data);
+        if (!sketch) return;
+        const reply = (ok: boolean) =>
+          channel.port1.postMessage({ type: "ark:diagram-sketch-result", ok });
+        const target = targetRef.current;
+        if (sketch.kind === "error" || !target.socket || !target.relPath) {
+          toast.error(m.board.sketch.failed);
+          reply(false);
+          return;
+        }
+        const relPathAtSend = target.relPath;
+        uploadSketch(target.socket, target.sessionId, sketch.base64).then(
+          imagePath => {
+            requestChatDraft(
+              target.worktreePath,
+              buildSketchDraft(imagePath, relPathAtSend)
+            );
+            toast.success(m.board.sketch.attached);
+            reply(true);
+          },
+          (error: unknown) => {
+            toast.error(
+              m.board.sketch.uploadFailed(
+                error instanceof Error ? error.message : String(error)
+              )
+            );
+            reply(false);
+          }
+        );
       };
 
       // targetOrigin に "*" を使う理由:
@@ -663,6 +708,10 @@ export function DiagramPane({
         channel.port2,
       ]);
       // 層は init を受けてから port を読み始めるので、init のあとに送ったものは順に届く。
+      channel.port1.postMessage({
+        type: "ark:diagram-sketch-labels",
+        labels: sketchLabels(),
+      });
       // 同じ図の読み直しなら、見ていた場所へ戻す
       if (scrollPositionRef.current) {
         channel.port1.postMessage({

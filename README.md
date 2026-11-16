@@ -57,6 +57,8 @@ Claude draws diagrams, screen mockups, and clickable prototypes as free-form HTM
 
 Press an image on a board (`<img>` or `<svg>`) to enlarge it to nearly the whole screen. Press anywhere to close it.
 
+You can draw on a board by hand. Press "Draw" at the bottom right, then circle things or draw arrows over the diagram with an Apple Pencil or a mouse (fingers still scroll). "Show Claude" turns the area you drew on, diagram included, into one picture and attaches it to the chat input.
+
 ### You can review without leaving
 
 <p align="center">
