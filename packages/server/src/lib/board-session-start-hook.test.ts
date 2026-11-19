@@ -39,3 +39,25 @@ describe("BOARD_SESSION_CONTEXT の分岐TODO", () => {
     expect(BOARD_SESSION_CONTEXT).toContain("When the user says");
   });
 });
+
+describe("BOARD_SESSION_CONTEXT の次の一手", () => {
+  it("作業の終わりに next_actions で選択肢を出すよう伝える", () => {
+    expect(BOARD_SESSION_CONTEXT).toContain("next_actions");
+    expect(BOARD_SESSION_CONTEXT).toContain("Every time you finish");
+    expect(BOARD_SESSION_CONTEXT).toContain(
+      "before you write your final reply"
+    );
+  });
+
+  it("遅延読み込みの道具でも呼べるよう、ToolSearch で読み込むことを伝える", () => {
+    expect(BOARD_SESSION_CONTEXT).toContain("ToolSearch");
+  });
+
+  it("返答では選択肢に触れさせない", () => {
+    expect(BOARD_SESSION_CONTEXT).toContain("do not mention the buttons");
+  });
+
+  it("次の一手が無いときと、質問をしているときは出さなくてよいと伝える", () => {
+    expect(BOARD_SESSION_CONTEXT).toContain("Skip it only when");
+  });
+});

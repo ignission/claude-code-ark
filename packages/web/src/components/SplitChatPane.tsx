@@ -106,6 +106,7 @@ import { m } from "@/lib/i18n";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
 import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
+import { type NextAction, pendingNextActions } from "@/lib/next-actions";
 import { reconcileEscape } from "@/lib/reconcile-escape";
 import {
   type LocalSlashCommand,
@@ -264,6 +265,49 @@ function WorkingIndicator({
       <span aria-hidden="true">{label}</span>
       <span className="sr-only">{m.chat.messages.claudeWorking}</span>
     </div>
+  );
+}
+
+/**
+ * Claude が next_actions で出した「次の一手」。入力欄の上に並べ、押すとその文を送る。
+ * どれを出すかは next-actions.ts が JSONL から決める
+ */
+function NextActionsBar({
+  actions,
+  onPick,
+  surfaceClassName,
+}: {
+  actions: NextAction[];
+  onPick: (action: NextAction) => void;
+  surfaceClassName: string;
+}) {
+  return (
+    <fieldset
+      data-testid="next-actions"
+      aria-label={m.chat.nextActions.label}
+      className="flex min-w-0 shrink-0 flex-wrap gap-2"
+    >
+      {actions.map((action, index) => (
+        <button
+          // 並びは1回の呼び出しの中で変わらない。同じラベルが重なっても区別できるよう番号も使う
+          // biome-ignore lint/suspicious/noArrayIndexKey: 上のとおり
+          key={`${index}:${action.label}`}
+          type="button"
+          onClick={() => onPick(action)}
+          title={action.prompt}
+          className={`flex min-w-0 max-w-full flex-1 basis-[180px] flex-col items-start gap-0.5 rounded-xl border border-border px-3 py-2 text-left transition-colors hover:border-primary/60 hover:bg-primary/8 ${surfaceClassName}`}
+        >
+          <span className="max-w-full truncate text-[14px] font-medium text-foreground">
+            {action.label}
+          </span>
+          {action.reason && (
+            <span className="line-clamp-2 text-[12px] leading-[1.4] text-muted-foreground">
+              {action.reason}
+            </span>
+          )}
+        </button>
+      ))}
+    </fieldset>
   );
 }
 
@@ -1644,7 +1688,18 @@ export function SplitChatPane({
     submitText(buildChatQuickActionMessage(action, inputValue));
   };
 
-  const submitText = (value: string) => {
+  // 次の一手。押したら JSONL に発言が出る前でも消す (同じものを二度送らせない)
+  const nextActions = useMemo(() => pendingNextActions(events), [events]);
+  const [pickedNextActionsId, setPickedNextActionsId] = useState<string | null>(
+    null
+  );
+  const pickNextAction = (toolUseId: string, action: NextAction) => {
+    setPickedNextActionsId(toolUseId);
+    // 入力欄に書きかけの文があれば残す
+    submitText(action.prompt, { keepDraft: true });
+  };
+
+  const submitText = (value: string, options?: { keepDraft?: boolean }) => {
     if (!value) return;
     lastSubmittedRef.current = value;
     onSendMessage(value);
@@ -1664,7 +1719,7 @@ export function SplitChatPane({
         },
       ]);
     }
-    setInputValue("");
+    if (!options?.keepDraft) setInputValue("");
   };
 
   // ===== ファイルアップロード =====
@@ -2010,6 +2065,25 @@ export function SplitChatPane({
     />
   ) : null;
 
+  // 次の一手は Claude が止まっているときだけ出す。動いている間 (最後の返答を書いている
+  // 途中を含む)、確認待ち、質問への回答待ち、送った文が届く前は出さない
+  const showNextActions =
+    nextActions !== null &&
+    nextActions.toolUseId !== pickedNextActionsId &&
+    pending.length === 0 &&
+    !activeAuq &&
+    bridgeStatus !== "TOOL" &&
+    bridgeStatus !== "THINK" &&
+    bridgeStatus !== "AWAITING";
+  const nextActionsBar =
+    showNextActions && nextActions ? (
+      <NextActionsBar
+        actions={nextActions.actions}
+        onPick={action => pickNextAction(nextActions.toolUseId, action)}
+        surfaceClassName={isMobile ? "bg-card" : "bg-background"}
+      />
+    ) : null;
+
   return (
     <div className="relative flex h-full flex-col">
       {/* JSONL イベントリスト (上段、flex-1)。
@@ -2072,6 +2146,7 @@ export function SplitChatPane({
               {dockedCard}
             </div>
           )}
+          {nextActionsBar}
           {onOpenTerminal && (
             <TerminalStrip
               liveTail={liveTail}
@@ -2100,6 +2175,7 @@ export function SplitChatPane({
           )}
           <div className="shrink-0 px-4 pt-2 pb-3.5">
             <div className="mx-auto flex w-full max-w-[792px] flex-col gap-2">
+              {nextActionsBar}
               {onOpenTerminal && (
                 <TerminalStrip liveTail={liveTail} onOpen={onOpenTerminal} />
               )}

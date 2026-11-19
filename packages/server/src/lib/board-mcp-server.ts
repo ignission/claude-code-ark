@@ -5,6 +5,10 @@
  * 公開する **Streamable HTTP MCP server** を 127.0.0.1 に公開する。
  * 分岐TODOの todo_add / todo_list も同じサーバーで公開する（完了・削除のツールは持たない）。
  * 子タスクを別の worktree に起こす task_start も同じサーバーで公開する（実装は task-start.ts）。
+ * 次の一手の next_actions も同じサーバーで公開する。サーバーは入力を検証して受け取るだけで、
+ * 何も保持も配信もしない。画面は JSONL に残った tool_use の入力から選択肢を出す
+ * (web の next-actions.ts)。会話の情報源を JSONL だけにしておけば、リロード、Ark の再起動、
+ * 端末から返事をした場合のどれでも、表示が会話と食い違わない。
  * 旧 board_write（Excalidraw scene への直接書き込み）は撤去済み（B-1）。
  *
  * ArkMcpServer（司令塔ツール群）との違い:
@@ -20,7 +24,7 @@
 
 import { createServer, type Server as HttpServer } from "node:http";
 import type { Todo } from "@ark/shared";
-import { DIAGRAM_DIR } from "@ark/shared";
+import { DIAGRAM_DIR, NEXT_ACTIONS_LIMITS } from "@ark/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
@@ -290,6 +294,51 @@ export function createBoardMcpServer(
           : JSON.stringify(result)
       );
     }
+  );
+
+  server.registerTool(
+    "next_actions",
+    {
+      description:
+        "Show the user up to three next actions as buttons above Ark's chat input. Tapping one sends its prompt to you as the user's next message, so the user can continue without typing. " +
+        "Call it once at the end of your work, just before you write your final reply, when there are concrete next steps the user is likely to take (e.g. commit and open a PR, run the remaining tests, fix the issue you found). Do not mention the buttons or repeat the steps in your reply. " +
+        "Do not call it when there is no obvious next step, and do not use it to ask a question that needs an answer before you can continue (use AskUserQuestion for that). The buttons disappear when the user sends any message.",
+      inputSchema: {
+        actions: z
+          .array(
+            z.object({
+              label: z
+                .string()
+                .trim()
+                .min(1)
+                .max(NEXT_ACTIONS_LIMITS.label)
+                .describe(
+                  `Button text for the human (up to ${NEXT_ACTIONS_LIMITS.label} characters), in the language of the conversation`
+                ),
+              prompt: z
+                .string()
+                .trim()
+                .min(1)
+                .max(NEXT_ACTIONS_LIMITS.prompt)
+                .describe(
+                  `The message sent to you when the button is tapped (up to ${NEXT_ACTIONS_LIMITS.prompt} characters). Write it as the user's instruction, specific enough to act on without a follow-up question`
+                ),
+              reason: z
+                .string()
+                .trim()
+                .max(NEXT_ACTIONS_LIMITS.reason)
+                .optional()
+                .describe(
+                  `Why this is a good next step (up to ${NEXT_ACTIONS_LIMITS.reason} characters). Shown under the button text`
+                ),
+            })
+          )
+          .min(1)
+          .max(NEXT_ACTIONS_LIMITS.maxActions)
+          .describe("One to three actions, the most recommended first"),
+      },
+    },
+    async args => textResult(JSON.stringify({ shown: args.actions.length }))
   );
 
   return server;

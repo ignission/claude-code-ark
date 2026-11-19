@@ -90,6 +90,7 @@ The mobile UI has its own session list, chat view, terminal with quick keys, and
 - Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser. Ark connects with `ssh -o BatchMode=yes` as the user running the server, so that user needs a key without a passphrase (or one loaded in ssh-agent) and the host already in `known_hosts`.
 - Use a different Claude account per repository (Linux only).
 - Use Ark in English or Japanese. It follows your browser's language, and you can switch it from the Ark menu at the top of the session list. The macOS app's own dialogs follow the system language.
+- When Claude finishes a piece of work, up to three next actions appear as buttons above the chat input. Tap one and its instruction is sent as is. See [Next actions](#next-actions).
 - Keep topics set aside mid-conversation in the TODO tab. Press the TODO button to the left of the chat input and Claude writes the topics it set aside down as TODOs. Only you can complete or delete one. See [Branch TODOs](#branch-todos).
 - Start a session in a new worktree from just a name and a prompt: without a parent from the list header, or as a child task split off a session row. See [New tasks](#new-tasks).
 
@@ -183,6 +184,14 @@ TODOs show in the right pane's TODO tab, as counts in the sidebar, and in the mo
 From a TODO row you can start a conversation on that topic in the original session or in a new worktree. In the original session, the TODO text goes into the chat input as a draft and you press send yourself. In a new worktree, the [New task](#new-tasks) dialog opens with the task name set to the short English name Claude gave when adding the TODO (or `todo-<first 6 chars of id>`); starting it sends the TODO text as the first message, with the original worktree as the parent. The TODO row shows where you started it.
 
 Existing sessions do not get branch TODOs until `claude` is restarted, because `claude` reads the MCP tool list at startup.
+
+## Next actions
+
+When Claude finishes a piece of work, it offers one to three next steps with the MCP tool `next_actions`. They appear as buttons above the chat input, each with a label and a reason. Tap one and the instruction Claude prepared is sent as is, so you can move on without typing. A draft in the input box is left untouched.
+
+The buttons disappear once you reply (from the chat input, the terminal, or another device). They are hidden while Claude is working and while it waits for a confirmation or an answer. Claude does not offer buttons when there is no next step, or when it only answered a question.
+
+Ark tells sessions to offer the buttons through its SessionStart hook. Existing sessions do not get next actions until `claude` is restarted, because `claude` reads the MCP tool list and the hook text at startup.
 
 ## New tasks
 

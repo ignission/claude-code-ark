@@ -3,9 +3,10 @@
  * HTTP transport 配線は ark-mcp-server.ts と同構造のため、ここでは純ロジックのみ検証する。
  */
 
-import { DIAGRAM_DIR, type Todo } from "@ark/shared";
+import { DIAGRAM_DIR, NEXT_ACTIONS_LIMITS, type Todo } from "@ark/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { z } from "zod";
 import {
   BoardSessionRegistry,
   createBoardMcpServer,
@@ -59,7 +60,7 @@ describe("handleBoardOpen", () => {
 });
 
 describe("createBoardMcpServer", () => {
-  it("board_open / todo_add / todo_list / task_start の 4 ツールを登録する", () => {
+  it("board_open / todo_add / todo_list / task_start / next_actions の 5 ツールを登録する", () => {
     const registerTool = vi.spyOn(McpServer.prototype, "registerTool");
 
     createBoardMcpServer(
@@ -77,6 +78,7 @@ describe("createBoardMcpServer", () => {
       "todo_add",
       "todo_list",
       "task_start",
+      "next_actions",
     ]);
     const [, config] = registerTool.mock.calls[0] ?? [];
     const metadata = config as
@@ -87,6 +89,60 @@ describe("createBoardMcpServer", () => {
       | undefined;
     expect(metadata?.description).toContain(DIAGRAM_DIR);
     expect(metadata?.inputSchema?.path?.description).toContain(DIAGRAM_DIR);
+  });
+});
+
+describe("next_actions", () => {
+  const actionsSchema = () => {
+    const registerTool = vi.spyOn(McpServer.prototype, "registerTool");
+    createBoardMcpServer(
+      {
+        openDiagram: vi.fn(async () => ({ ok: true })),
+        addTodo: vi.fn(),
+        listTodos: vi.fn(async () => []),
+        startTask: vi.fn(),
+      },
+      "/wt"
+    );
+    const call = registerTool.mock.calls.find(c => c[0] === "next_actions");
+    const config = call?.[1] as { inputSchema: { actions: z.ZodTypeAny } };
+    return config.inputSchema.actions;
+  };
+  const action = (over: Record<string, unknown> = {}) => ({
+    label: "PRを作る",
+    prompt: "コミットしてPRを作って。",
+    ...over,
+  });
+
+  it("1〜3個の選択肢を受け取る", () => {
+    const schema = actionsSchema();
+    expect(schema.safeParse([action()]).success).toBe(true);
+    expect(schema.safeParse([action(), action(), action()]).success).toBe(true);
+    expect(schema.safeParse([]).success).toBe(false);
+    expect(
+      schema.safeParse([action(), action(), action(), action()]).success
+    ).toBe(false);
+  });
+
+  it("空の文と、上限を超える長さを拒む", () => {
+    const schema = actionsSchema();
+    expect(schema.safeParse([action({ label: "  " })]).success).toBe(false);
+    expect(schema.safeParse([action({ prompt: "" })]).success).toBe(false);
+    expect(
+      schema.safeParse([
+        action({ label: "あ".repeat(NEXT_ACTIONS_LIMITS.label + 1) }),
+      ]).success
+    ).toBe(false);
+    expect(
+      schema.safeParse([
+        action({ prompt: "あ".repeat(NEXT_ACTIONS_LIMITS.prompt + 1) }),
+      ]).success
+    ).toBe(false);
+    expect(
+      schema.safeParse([
+        action({ reason: "あ".repeat(NEXT_ACTIONS_LIMITS.reason + 1) }),
+      ]).success
+    ).toBe(false);
   });
 });
 
