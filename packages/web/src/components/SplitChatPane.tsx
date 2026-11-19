@@ -1403,7 +1403,18 @@ export function SplitChatPane({
     if (shouldOpen) setSlashIndex(0);
   }, [inputValue]);
 
+  // 次の一手。答えたら JSONL に発言が出る前でも消す (同じものを二度送らせない)。
+  // built-in のスラッシュコマンドは JSONL に発言として残らないので、送った時点で
+  // そのとき出ていた選択肢を答え済みにする。あとから届く別の next_actions はまた出る
+  const nextActions = useMemo(() => pendingNextActions(events), [events]);
+  const [answeredNextActionsId, setAnsweredNextActionsId] = useState<
+    string | null
+  >(null);
+  const nextActionsIdRef = useRef<string | null>(null);
+  nextActionsIdRef.current = nextActions?.toolUseId ?? null;
+
   const appendLocalSlashCommand = useCallback((name: string, args?: string) => {
+    setAnsweredNextActionsId(nextActionsIdRef.current);
     setLocalSlashCommands(prev => [
       ...prev,
       {
@@ -1688,13 +1699,8 @@ export function SplitChatPane({
     submitText(buildChatQuickActionMessage(action, inputValue));
   };
 
-  // 次の一手。押したら JSONL に発言が出る前でも消す (同じものを二度送らせない)
-  const nextActions = useMemo(() => pendingNextActions(events), [events]);
-  const [pickedNextActionsId, setPickedNextActionsId] = useState<string | null>(
-    null
-  );
   const pickNextAction = (toolUseId: string, action: NextAction) => {
-    setPickedNextActionsId(toolUseId);
+    setAnsweredNextActionsId(toolUseId);
     // 入力欄に書きかけの文があれば残す
     submitText(action.prompt, { keepDraft: true });
   };
@@ -2069,9 +2075,11 @@ export function SplitChatPane({
   // 途中を含む)、確認待ち、質問への回答待ち、送った文が届く前は出さない
   const showNextActions =
     nextActions !== null &&
-    nextActions.toolUseId !== pickedNextActionsId &&
+    nextActions.toolUseId !== answeredNextActionsId &&
     pending.length === 0 &&
     !activeAuq &&
+    // 状態がまだ届いていない間は、止まっているとみなさない
+    bridgeStatus !== undefined &&
     bridgeStatus !== "TOOL" &&
     bridgeStatus !== "THINK" &&
     bridgeStatus !== "AWAITING";
