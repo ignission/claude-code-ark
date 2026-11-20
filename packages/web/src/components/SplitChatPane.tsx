@@ -284,7 +284,9 @@ function NextActionsBar({
     <fieldset
       data-testid="next-actions"
       aria-label={m.chat.nextActions.label}
-      className="flex min-w-0 shrink-0 flex-wrap gap-2"
+      // モバイルでは入力欄と同じ高さの上限 (70%) の中に積まれる。狭い幅で3段に折り返しても
+      // 入力欄が画面の外へ押し出されないよう、ここだけ縮めてスクロールさせる
+      className="flex min-h-0 min-w-0 shrink flex-wrap gap-2 overflow-y-auto"
     >
       {actions.map((action, index) => (
         <button
