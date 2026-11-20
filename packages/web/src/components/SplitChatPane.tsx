@@ -48,6 +48,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleQuestionMark,
+  CornerDownRight,
   Download,
   ImageOff,
   Loader2,
@@ -275,11 +276,9 @@ function WorkingIndicator({
 function NextActionsBar({
   actions,
   onPick,
-  surfaceClassName,
 }: {
   actions: NextAction[];
   onPick: (action: NextAction) => void;
-  surfaceClassName: string;
 }) {
   return (
     <fieldset
@@ -295,10 +294,12 @@ function NextActionsBar({
           type="button"
           onClick={() => onPick(action)}
           title={action.prompt}
-          className={`flex min-w-0 max-w-full flex-1 basis-[180px] flex-col items-start gap-0.5 rounded-xl border border-border px-3 py-2 text-left transition-colors hover:border-primary/60 hover:bg-primary/8 ${surfaceClassName}`}
+          // 入力欄の周りの灰色の部品に埋もれないよう、枠と地と文字に強調色を使う
+          className="flex min-w-0 max-w-full flex-1 basis-[180px] flex-col items-start gap-0.5 rounded-xl border border-primary/50 bg-primary/10 px-3 py-2 text-left transition-colors hover:border-primary hover:bg-primary/20"
         >
-          <span className="max-w-full truncate text-[14px] font-medium text-foreground">
-            {action.label}
+          <span className="flex max-w-full items-center gap-1.5 text-[14px] font-semibold text-primary">
+            <CornerDownRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="truncate">{action.label}</span>
           </span>
           {action.reason && (
             <span className="line-clamp-2 text-[12px] leading-[1.4] text-muted-foreground">
@@ -2088,7 +2089,6 @@ export function SplitChatPane({
       <NextActionsBar
         actions={nextActions.actions}
         onPick={action => pickNextAction(nextActions.toolUseId, action)}
-        surfaceClassName={isMobile ? "bg-card" : "bg-background"}
       />
     ) : null;
 
