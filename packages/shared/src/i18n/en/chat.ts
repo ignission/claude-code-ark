@@ -112,6 +112,9 @@ export const chat: Messages["chat"] = {
     none: "No shortcuts",
     manage: "Manage shortcuts",
   },
+  nextActions: {
+    label: "Next actions",
+  },
   quickActions: {
     label: {
       diagram: "Diagram on the board",

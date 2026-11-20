@@ -4,6 +4,20 @@
 export const DIAGRAM_DIR = ".claude/diagrams";
 
 /**
+ * 次の一手 (next_actions) の上限。サーバーのツールの入力検証と、画面が JSONL から
+ * 読むときの検証で同じ値を使う。prompt はそのまま会話へ送るので短く保つ
+ */
+export const NEXT_ACTIONS_LIMITS = {
+  maxActions: 3,
+  label: 30,
+  prompt: 500,
+  reason: 100,
+} as const;
+
+/** JSONL の tool_use に出る next_actions の名前 (`mcp__<サーバー名>__<ツール名>`) */
+export const NEXT_ACTIONS_TOOL_USE_NAME = "mcp__ark-board__next_actions";
+
+/**
  * Slash command 候補。チャットビュー入力欄の補完で使う。
  *  - `name`: `/foo` 形式 (先頭の `/` 含む)
  *  - `description`: 1 行説明 (frontmatter `description:` または組み込み定義)

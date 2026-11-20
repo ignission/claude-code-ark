@@ -108,6 +108,9 @@ export const chat = {
   },
   // 入力欄の左の「図解」「TODO」のボタン。prompt は押したときにClaudeへ送る文で、
   // 利用者の言語で話しかける
+  nextActions: {
+    label: "次の一手",
+  },
   quickActions: {
     label: {
       diagram: "ボードに図解させる",

@@ -48,6 +48,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleQuestionMark,
+  CornerDownRight,
   Download,
   ImageOff,
   Loader2,
@@ -106,6 +107,7 @@ import { m } from "@/lib/i18n";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
 import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
+import { type NextAction, pendingNextActions } from "@/lib/next-actions";
 import { reconcileEscape } from "@/lib/reconcile-escape";
 import {
   type LocalSlashCommand,
@@ -264,6 +266,54 @@ function WorkingIndicator({
       <span aria-hidden="true">{label}</span>
       <span className="sr-only">{m.chat.messages.claudeWorking}</span>
     </div>
+  );
+}
+
+/**
+ * Claude が next_actions で出した「次の一手」。入力欄の上に並べ、押すとその文を送る。
+ * どれを出すかは next-actions.ts が JSONL から決める
+ */
+function NextActionsBar({
+  actions,
+  onPick,
+}: {
+  actions: NextAction[];
+  onPick: (action: NextAction) => void;
+}) {
+  return (
+    <fieldset
+      data-testid="next-actions"
+      aria-label={m.chat.nextActions.label}
+      // モバイルでは入力欄と同じ高さの上限 (70%) の中に積まれる。狭い幅で3段に折り返しても
+      // 入力欄が画面の外へ押し出されないよう、ここだけ縮めてスクロールさせる
+      className="flex min-h-0 min-w-0 shrink flex-wrap gap-2 overflow-y-auto"
+    >
+      {actions.map((action, index) => (
+        <button
+          // 並びは1回の呼び出しの中で変わらない。同じラベルが重なっても区別できるよう番号も使う
+          // biome-ignore lint/suspicious/noArrayIndexKey: 上のとおり
+          key={`${index}:${action.label}`}
+          type="button"
+          onClick={() => onPick(action)}
+          title={action.prompt}
+          // 入力欄の周りの灰色の部品や、強調色の自分の発言と見分けられるよう、枠と地とアイコンを薄い緑にする
+          className="flex min-w-0 max-w-full flex-1 basis-[180px] flex-col items-start gap-0.5 rounded-xl border border-emerald-500/35 bg-emerald-500/6 px-3 py-2 text-left transition-colors hover:border-emerald-500/60 hover:bg-emerald-500/12"
+        >
+          <span className="flex max-w-full items-center gap-1.5 text-[14px] font-medium text-foreground">
+            <CornerDownRight
+              className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+              aria-hidden
+            />
+            <span className="truncate">{action.label}</span>
+          </span>
+          {action.reason && (
+            <span className="line-clamp-2 text-[12px] leading-[1.4] text-muted-foreground">
+              {action.reason}
+            </span>
+          )}
+        </button>
+      ))}
+    </fieldset>
   );
 }
 
@@ -1359,7 +1409,18 @@ export function SplitChatPane({
     if (shouldOpen) setSlashIndex(0);
   }, [inputValue]);
 
+  // 次の一手。答えたら JSONL に発言が出る前でも消す (同じものを二度送らせない)。
+  // built-in のスラッシュコマンドは JSONL に発言として残らないので、送った時点で
+  // そのとき出ていた選択肢を答え済みにする。あとから届く別の next_actions はまた出る
+  const nextActions = useMemo(() => pendingNextActions(events), [events]);
+  const [answeredNextActionsId, setAnsweredNextActionsId] = useState<
+    string | null
+  >(null);
+  const nextActionsIdRef = useRef<string | null>(null);
+  nextActionsIdRef.current = nextActions?.toolUseId ?? null;
+
   const appendLocalSlashCommand = useCallback((name: string, args?: string) => {
+    setAnsweredNextActionsId(nextActionsIdRef.current);
     setLocalSlashCommands(prev => [
       ...prev,
       {
@@ -1644,7 +1705,13 @@ export function SplitChatPane({
     submitText(buildChatQuickActionMessage(action, inputValue));
   };
 
-  const submitText = (value: string) => {
+  const pickNextAction = (toolUseId: string, action: NextAction) => {
+    setAnsweredNextActionsId(toolUseId);
+    // 入力欄に書きかけの文があれば残す
+    submitText(action.prompt, { keepDraft: true });
+  };
+
+  const submitText = (value: string, options?: { keepDraft?: boolean }) => {
     if (!value) return;
     lastSubmittedRef.current = value;
     onSendMessage(value);
@@ -1664,7 +1731,7 @@ export function SplitChatPane({
         },
       ]);
     }
-    setInputValue("");
+    if (!options?.keepDraft) setInputValue("");
   };
 
   // ===== ファイルアップロード =====
@@ -2010,6 +2077,26 @@ export function SplitChatPane({
     />
   ) : null;
 
+  // 次の一手は Claude が止まっているときだけ出す。動いている間 (最後の返答を書いている
+  // 途中を含む)、確認待ち、質問への回答待ち、送った文が届く前は出さない
+  const showNextActions =
+    nextActions !== null &&
+    nextActions.toolUseId !== answeredNextActionsId &&
+    pending.length === 0 &&
+    !activeAuq &&
+    // 状態がまだ届いていない間は、止まっているとみなさない
+    bridgeStatus !== undefined &&
+    bridgeStatus !== "TOOL" &&
+    bridgeStatus !== "THINK" &&
+    bridgeStatus !== "AWAITING";
+  const nextActionsBar =
+    showNextActions && nextActions ? (
+      <NextActionsBar
+        actions={nextActions.actions}
+        onPick={action => pickNextAction(nextActions.toolUseId, action)}
+      />
+    ) : null;
+
   return (
     <div className="relative flex h-full flex-col">
       {/* JSONL イベントリスト (上段、flex-1)。
@@ -2072,6 +2159,7 @@ export function SplitChatPane({
               {dockedCard}
             </div>
           )}
+          {nextActionsBar}
           {onOpenTerminal && (
             <TerminalStrip
               liveTail={liveTail}
@@ -2100,6 +2188,7 @@ export function SplitChatPane({
           )}
           <div className="shrink-0 px-4 pt-2 pb-3.5">
             <div className="mx-auto flex w-full max-w-[792px] flex-col gap-2">
+              {nextActionsBar}
               {onOpenTerminal && (
                 <TerminalStrip liveTail={liveTail} onOpen={onOpenTerminal} />
               )}
