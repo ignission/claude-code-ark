@@ -294,10 +294,10 @@ function NextActionsBar({
           type="button"
           onClick={() => onPick(action)}
           title={action.prompt}
-          // 入力欄の周りの灰色の部品に埋もれないよう、枠と地と文字に強調色を使う
-          className="flex min-w-0 max-w-full flex-1 basis-[180px] flex-col items-start gap-0.5 rounded-xl border border-primary/50 bg-primary/10 px-3 py-2 text-left transition-colors hover:border-primary hover:bg-primary/20"
+          // 入力欄の周りの灰色の部品や、強調色の自分の発言と見分けられるよう緑にする
+          className="flex min-w-0 max-w-full flex-1 basis-[180px] flex-col items-start gap-0.5 rounded-xl border border-emerald-500/60 bg-emerald-500/12 px-3 py-2 text-left transition-colors hover:border-emerald-500 hover:bg-emerald-500/22"
         >
-          <span className="flex max-w-full items-center gap-1.5 text-[14px] font-semibold text-primary">
+          <span className="flex max-w-full items-center gap-1.5 text-[14px] font-semibold text-emerald-600 dark:text-emerald-400">
             <CornerDownRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="truncate">{action.label}</span>
           </span>
