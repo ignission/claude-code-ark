@@ -32,7 +32,7 @@
  *
  * task_start の repo を指定すると、呼び出し元と別のリポジトリに子を作る (解決は task-repo.ts)。
  * 1 つのセッションを入口にして、各リポジトリの仕事を切り出すためのもの。ベースは切り出し先の
- * 既定ブランチで、プロファイルは切り出し先のリポジトリの紐付けで決まる (startSession が
+ * リモートの既定ブランチの最新 (fetch してから origin/main などを使う。git.ts の getLatestDefaultBase) で、プロファイルは切り出し先のリポジトリの紐付けで決まる (startSession が
  * worktree のパスから引く)。画面は、別のリポジトリへ切り出した子のセッションを、
  * リポジトリが未登録でも一覧に出す (web の lib/child-task-repos.ts)。
  */

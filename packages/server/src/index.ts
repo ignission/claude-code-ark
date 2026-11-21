@@ -72,7 +72,7 @@ import {
   createWorktree,
   deleteWorktree,
   getAttachedBranch,
-  getDefaultBranch,
+  getLatestDefaultBase,
   isGitRepository,
   listWorktrees,
   scanRepositories,
@@ -723,12 +723,12 @@ export async function startServer(
       if (requestedRepo && !(await isGitRepository(repoPath))) {
         throw new Error(`repo '${repoPath}' is not a git repository`);
       }
-      // 別のリポジトリへ切り出すとき、親のブランチはそのリポジトリに無い。既定ブランチから作る
+      // 別のリポジトリへ切り出すとき、親のブランチはそのリポジトリに無い。リモートの既定ブランチの最新から作る
       const baseBranch =
         input.baseBranch?.trim() ||
         (isSameRepoPath(repoPath, parentRepoPath)
           ? await getAttachedBranch(worktreePath)
-          : await getDefaultBranch(repoPath));
+          : await getLatestDefaultBase(repoPath));
       const started = await startTask(taskStartDeps, {
         repoPath,
         name: input.name,
@@ -1884,7 +1884,7 @@ export async function startServer(
         }
         const baseBranch =
           (typeof data.baseBranch === "string" && data.baseBranch.trim()) ||
-          (await getDefaultBranch(repoPath));
+          (await getLatestDefaultBase(repoPath));
         const started = await startTask(taskStartDeps, {
           repoPath,
           name: data.name,

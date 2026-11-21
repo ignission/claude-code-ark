@@ -360,7 +360,7 @@ export function createBoardMcpServer(
           .string()
           .optional()
           .describe(
-            "Base branch. Defaults to the current branch of the caller's worktree, or to the default branch of repo when repo is another repository"
+            "Base branch. Defaults to the current branch of the caller's worktree, or to the latest remote default branch of repo (fetched first, e.g. origin/main) when repo is another repository"
           ),
         repo: z
           .string()

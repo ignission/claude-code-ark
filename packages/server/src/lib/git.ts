@@ -688,6 +688,58 @@ export async function getDefaultBranch(
   }
 }
 
+/** 既定ブランチの最新を取りに行く fetch を待つ上限 */
+const DEFAULT_BASE_FETCH_TIMEOUT_MS = 20_000;
+
+/**
+ * 新しいタスクのベース: リモートの既定ブランチの最新 (origin/main など)。
+ *
+ * 先に `git fetch origin <既定ブランチ>` で取り直してから、リモートの ref を返す。手元のブランチは
+ * 使わない (pull していなければ古く、そこから作った worktree は最初から遅れている)。
+ * fetch に失敗したら (オフライン、認証切れ、時間切れ)、今ある ref のまま進める。
+ * origin/HEAD が無いリポジトリは getDefaultBranch と同じ結果になる
+ */
+export async function getLatestDefaultBase(
+  repoPath: string
+): Promise<string | undefined> {
+  const safePath = validatePath(repoPath);
+  let remoteRef: string;
+  try {
+    const { stdout } = await execAsync(
+      "git symbolic-ref --quiet --short refs/remotes/origin/HEAD",
+      { cwd: safePath }
+    );
+    remoteRef = stdout.trim();
+  } catch {
+    return getDefaultBranch(repoPath);
+  }
+  if (!remoteRef.startsWith("origin/")) return getDefaultBranch(repoPath);
+  const branch = validateBranchName(remoteRef.slice("origin/".length));
+  try {
+    await execAsync(`git fetch --quiet origin "${branch}"`, {
+      cwd: safePath,
+      timeout: DEFAULT_BASE_FETCH_TIMEOUT_MS,
+      // 認証を聞かれて止まらないようにする (聞かれたら失敗させ、今ある ref で進める)
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+  } catch (error) {
+    console.warn(
+      `[Git] Could not fetch the default branch (repo=${safePath}, branch=${branch}); using the ref as it is: ${getErrorMessage(error)}`
+    );
+  }
+  try {
+    await execAsync(
+      `git rev-parse --verify --quiet "refs/remotes/${remoteRef}"`,
+      {
+        cwd: safePath,
+      }
+    );
+    return remoteRef;
+  } catch {
+    return getDefaultBranch(repoPath);
+  }
+}
+
 /** 作業ツリーの今のブランチ。detached なら undefined */
 export async function getAttachedBranch(
   worktreePath: string

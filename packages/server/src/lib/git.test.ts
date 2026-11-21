@@ -25,7 +25,12 @@ vi.mock("node:fs", () => {
 
 import { exec } from "node:child_process";
 import fs from "node:fs";
-import { createWorktree, deleteWorktree, getDefaultBranch } from "./git.js";
+import {
+  createWorktree,
+  deleteWorktree,
+  getDefaultBranch,
+  getLatestDefaultBase,
+} from "./git.js";
 
 const mockedExec = vi.mocked(exec);
 
@@ -573,5 +578,49 @@ describe("getDefaultBranch", () => {
       ...baseRules(() => porcelain([{ path: REPO, detached: true }])),
     ];
     await expect(getDefaultBranch(REPO)).resolves.toBeUndefined();
+  });
+});
+
+describe("getLatestDefaultBase", () => {
+  const originHead: ExecRule = {
+    match: /symbolic-ref --quiet --short refs\/remotes\/origin\/HEAD/,
+    respond: () => ({ stdout: "origin/main\n" }),
+  };
+  const verified: ExecRule = {
+    match: /rev-parse --verify --quiet "refs\/remotes\/origin\/main"/,
+    respond: () => ({ stdout: "abc\n" }),
+  };
+
+  it("既定ブランチを fetch してから、リモートの ref を返す", async () => {
+    execRules = [
+      originHead,
+      {
+        match: /git fetch --quiet origin "main"/,
+        respond: () => ({ stdout: "" }),
+      },
+      verified,
+    ];
+    await expect(getLatestDefaultBase(REPO)).resolves.toBe("origin/main");
+    expect(
+      execCalls.some(cmd => /git fetch --quiet origin "main"/.test(cmd))
+    ).toBe(true);
+  });
+
+  it("fetch に失敗しても、今ある ref で進める", async () => {
+    execRules = [
+      originHead,
+      { match: /git fetch/, respond: () => execError("offline", 128) },
+      verified,
+    ];
+    await expect(getLatestDefaultBase(REPO)).resolves.toBe("origin/main");
+  });
+
+  it("origin/HEAD が無ければ fetch せず、本体の作業ツリーのブランチを返す", async () => {
+    execRules = [
+      { match: /symbolic-ref/, respond: () => execError("no origin/HEAD", 1) },
+      ...baseRules(() => porcelain([{ path: REPO, branch: "develop" }])),
+    ];
+    await expect(getLatestDefaultBase(REPO)).resolves.toBe("develop");
+    expect(execCalls.some(cmd => /git fetch/.test(cmd))).toBe(false);
   });
 });
