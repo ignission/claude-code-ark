@@ -961,6 +961,9 @@ export default function Dashboard() {
       if (isMobile) {
         setMobileActiveTab("session");
         setMobileSessionSubView("detail");
+        // 前に図や TODO を見たままでも、ホームへ戻ったら会話を出す
+        const homeId = homeSession.id;
+        setChatViewRequest(prev => createChatViewRequest(prev, homeId));
       }
       return;
     }
