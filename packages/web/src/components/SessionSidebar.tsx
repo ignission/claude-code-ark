@@ -52,6 +52,8 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   /** 下部に出すCPU/MEM/DISK (未着はnull) */
   metrics: HostMetrics | null;
   notificationControl?: ReactNode;
+  /** 一覧の上に固定で出すホームの行 (lib/home-session.ts)。ホームを決めていなければ無い */
+  home?: ReactNode;
   /** リモート画面。onOpenScreenManager が無ければメニューを出さない */
   screens?: Screen[];
   selectedScreenId?: string | null;
@@ -66,6 +68,7 @@ export function SessionSidebar({
   onCollapse,
   metrics,
   notificationControl,
+  home,
   screens = [],
   selectedScreenId = null,
   onSelectScreen,
@@ -186,6 +189,7 @@ export function SessionSidebar({
           (overflow-x: hiddenはViewportに効いてもscrollLeftが焼き付き、確定後に左端を戻せない)。
           素直なdivの縦スクロール + overflow-x: hiddenで水平方向の広がりを抑える。 */}
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 pb-3">
+        {home}
         <SessionSectionList variant="sidebar" {...listProps} />
       </div>
 

@@ -204,6 +204,17 @@ Claude inside a session can do the same with the MCP tool `task_start`. The call
 
 The first message is sent only after Ark sees claude running and waiting for input (it reads the CLI's status file, so Linux only). If it cannot tell, for example because a startup confirmation is still on screen, it does not send and tells you instead. The worktree and session stay, so you can open it and send by hand.
 
+## Home
+
+Instead of moving between one session per repository, you can make a single session your entry point. Choose "Set as home" in a session row's menu, and that worktree becomes home.
+
+- On desktop the conversation moves to the left and the task list to the right. Home is pinned at the top of the list, and the tabs of opened sessions are not shown. While a task is open, "Back to home" above the conversation takes you back
+- Ark opens on the home conversation, and starts the home session if it is not running
+- Ask home for work, and Claude in home hands it out to each repository with `task_start` and its `repo`, and answers how it is going with `task_list`
+- "Unset home" in the home row's menu brings the previous layout back
+
+Ark never adds instructions to the home session. What home does is decided by that directory's `CLAUDE.md` and `.claude/`.
+
 ## Configuration
 
 | Option                  | Description                                                    |

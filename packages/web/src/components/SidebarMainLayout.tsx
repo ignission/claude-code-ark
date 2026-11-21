@@ -39,6 +39,11 @@ interface SidebarMainLayoutProps {
   rail?: ReactNode;
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
+  /**
+   * サイドバーを置く側。既定は左。ホームを決めている間は右に置き、会話を左の主画面にする
+   * (lib/home-session.ts)
+   */
+  side?: "left" | "right";
 }
 
 /** ウィンドウ幅。取れない環境では上限の判断から外す（NaN で「制限なし」） */
@@ -53,7 +58,9 @@ export function SidebarMainLayout({
   rail,
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
+  side = "left",
 }: SidebarMainLayoutProps) {
+  const onRight = side === "right";
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     clampSidebarWidth(initialSidebarWidth, viewportWidth())
   );
@@ -92,8 +99,10 @@ export function SidebarMainLayout({
 
       const handleMouseMove = (ev: MouseEvent) => {
         // 画面の外側の余白のぶんだけ、ポインタの位置から引く (今は 0)
+        // 右に置いているときは、画面の右端からポインタまでが幅になる
         const newWidth = clampSidebarWidth(
-          ev.clientX - LAYOUT_PADDING_WIDTH,
+          (onRight ? viewportWidth() - ev.clientX : ev.clientX) -
+            LAYOUT_PADDING_WIDTH,
           viewportWidth()
         );
         preferredWidthRef.current = newWidth;
@@ -123,7 +132,7 @@ export function SidebarMainLayout({
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
     },
-    [onSidebarWidthChange]
+    [onSidebarWidthChange, onRight]
   );
 
   useEffect(() => {
@@ -131,17 +140,25 @@ export function SidebarMainLayout({
   }, []);
 
   return (
-    <div className="app-wallpaper h-[100dvh] flex relative">
+    <div
+      className={`app-wallpaper h-[100dvh] flex relative ${
+        onRight ? "flex-row-reverse" : ""
+      }`}
+    >
       {resizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
       {collapsed && (
-        <div className="panel-glass w-12 shrink-0 border-r border-sidebar-border">
+        <div
+          className={`panel-glass w-12 shrink-0 border-sidebar-border ${
+            onRight ? "border-l" : "border-r"
+          }`}
+        >
           {rail}
         </div>
       )}
       <div
-        className={`shrink-0 relative flex-col border-r border-sidebar-border ${
-          collapsed ? "hidden" : "flex"
-        }`}
+        className={`shrink-0 relative flex-col border-sidebar-border ${
+          onRight ? "border-l" : "border-r"
+        } ${collapsed ? "hidden" : "flex"}`}
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="panel-glass flex-1 min-h-0 overflow-hidden">
@@ -150,7 +167,9 @@ export function SidebarMainLayout({
         {/* 掴める幅は 7px、見える線は border-r の 1px。乗せたときとドラッグ中だけ線に色を出す */}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: リサイズハンドルはマウス操作専用 */}
         <div
-          className={`absolute inset-y-0 -right-1 z-10 w-[7px] cursor-col-resize bg-clip-content px-[3px] hover:bg-ring/70 transition-colors ${
+          className={`absolute inset-y-0 ${
+            onRight ? "-left-1" : "-right-1"
+          } z-10 w-[7px] cursor-col-resize bg-clip-content px-[3px] hover:bg-ring/70 transition-colors ${
             resizing ? "bg-ring/70" : "bg-transparent"
           }`}
           onMouseDown={handleSidebarResizeStart}

@@ -188,6 +188,10 @@ interface MobileLayoutProps {
   onCreateWorktreeForRepo?: (repoPath: string) => void;
   onRemoveRepo?: (repoPath: string) => void;
   notificationControl?: ReactNode;
+  /** 一覧の上に固定で出すホームの行と、ホームの worktree のパス (lib/home-session.ts) */
+  home?: ReactNode;
+  homeWorktreePath?: string | null;
+  onSetHome?: (worktreePath: string) => void;
   notificationsSupported?: boolean;
   isSessionNotificationEnabled?: (sessionId: string) => boolean;
   onSessionNotificationEnabledChange?: (
@@ -260,6 +264,9 @@ export function MobileLayout({
   onCreateWorktreeForRepo,
   onRemoveRepo,
   notificationControl,
+  home,
+  homeWorktreePath,
+  onSetHome,
   notificationsSupported = false,
   isSessionNotificationEnabled,
   onSessionNotificationEnabledChange,
@@ -449,6 +456,9 @@ export function MobileLayout({
           onNewTask={onNewTask}
           onSplitTask={onSplitTask}
           notificationControl={notificationControl}
+          home={home}
+          homeWorktreePath={homeWorktreePath}
+          onSetHome={onSetHome}
         />
       </div>
 
