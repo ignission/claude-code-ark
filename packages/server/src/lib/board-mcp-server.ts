@@ -293,7 +293,7 @@ export function createBoardMcpServer(
           .string()
           .optional()
           .describe(
-            "Suggested branch name for when a new worktree is created from this TODO. English kebab-case summarizing the topic (e.g. fix-log-format), about 3 to 5 words"
+            "Suggested branch name for when a new worktree is created from this TODO; it becomes the task's name. English kebab-case summarizing the topic (e.g. fix-log-format), about 3 to 5 words. When the work has a ticket, start with the ticket key as written (e.g. ABC-123-estimate). Always give it when you give repo"
           ),
         repo: z
           .string()

@@ -47,4 +47,15 @@ describe("todoBranchCandidate", () => {
   it("無ければidの先頭6文字から作る", () => {
     expect(todoBranchCandidate(todo())).toBe("todo-abcdef");
   });
+
+  it("名前が無ければ、本文かメモのチケット番号を使う", () => {
+    expect(
+      todoBranchCandidate(todo({ text: "ABC-123 の見積もりを出す" }))
+    ).toBe("ABC-123");
+    expect(
+      todoBranchCandidate(
+        todo({ note: "https://example.atlassian.net/browse/XY2-45" })
+      )
+    ).toBe("XY2-45");
+  });
 });

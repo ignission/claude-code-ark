@@ -55,14 +55,14 @@ export function normalizeTodoText(text: string): string {
 export const TODO_BRANCH_MAX_LENGTH = 40;
 
 /**
- * Claude が付けるブランチ名の候補を、git で安全な kebab-case に直す。
- * 英数字とハイフンだけを残し ("/" も使わない)、残らなければ null
+ * Claude が付けるブランチ名の候補を、git で安全な形に直す。
+ * 英数字とハイフンだけを残し ("/" も使わない)、残らなければ null。
+ * 大文字はそのまま残す (チケット番号を `ABC-123` のまま名前に使うため)
  */
 export function normalizeTodoBranch(input: unknown): string | null {
   if (typeof input !== "string") return null;
   const kebab = input
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/[^a-zA-Z0-9-]+/g, "-")
     .replace(/-{2,}/g, "-")
     .replace(/^-|-$/g, "");
   const cut = kebab.slice(0, TODO_BRANCH_MAX_LENGTH).replace(/-$/, "");

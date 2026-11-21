@@ -31,8 +31,8 @@ describe("normalizeTodoBranch", () => {
     expect(normalizeTodoBranch("fix-log-format")).toBe("fix-log-format");
   });
 
-  it("大文字を小文字にする", () => {
-    expect(normalizeTodoBranch("Fix-Log")).toBe("fix-log");
+  it("大文字はそのまま残す (チケット番号を名前に使える)", () => {
+    expect(normalizeTodoBranch("ABC-123-estimate")).toBe("ABC-123-estimate");
   });
 
   it("日本語だけなら null", () => {
@@ -40,7 +40,7 @@ describe("normalizeTodoBranch", () => {
   });
 
   it("日本語や記号が混ざったら、使えない文字の連なりをハイフン 1 つにする", () => {
-    expect(normalizeTodoBranch("Fix ログ format!!")).toBe("fix-format");
+    expect(normalizeTodoBranch("Fix ログ format!!")).toBe("Fix-format");
   });
 
   it("前後のハイフンを落とす", () => {
@@ -140,10 +140,10 @@ describe("SessionDatabase: todos", () => {
       branch: "Fix Log Format",
     });
     const b = db.addTodo({ worktreePath: "/w/a", text: "2" });
-    expect(a.branchName).toBe("fix-log-format");
+    expect(a.branchName).toBe("Fix-Log-Format");
     expect(b.branchName).toBeNull();
     expect(db.listTodos().map(x => x.branchName)).toEqual([
-      "fix-log-format",
+      "Fix-Log-Format",
       null,
     ]);
   });
