@@ -1,41 +1,33 @@
 import type { ManagedSession } from "@ark/shared";
 import { describe, expect, it } from "vitest";
-import { missingChildTaskRepos } from "./child-task-repos";
+import { isCrossRepoChild } from "./child-task-repos";
 
-function session(overrides: Partial<ManagedSession>): ManagedSession {
-  return {
-    id: "s",
-    worktreeId: "w",
-    worktreePath: "/r/app",
-    status: "active",
-    createdAt: new Date(0),
-    tmuxSessionName: "ark-s",
-    ttydPort: null,
-    ttydUrl: null,
-    ...overrides,
-  };
-}
+const session = (over: Partial<ManagedSession>) =>
+  ({ id: "s", worktreePath: "/r/app-fix", ...over }) as ManagedSession;
 
-describe("missingChildTaskRepos", () => {
-  it("未登録のリポジトリにいる子のリポジトリを返す", () => {
-    const sessions = [
-      session({ id: "home", repoPath: "/note" }),
-      session({ id: "b", repoPath: "/r/b", parentWorktreePath: "/note" }),
-      session({ id: "a", repoPath: "/r/a", parentWorktreePath: "/note" }),
-      session({ id: "a2", repoPath: "/r/a", parentWorktreePath: "/note" }),
-    ];
-    expect(missingChildTaskRepos(sessions, ["/note"])).toEqual([
-      "/r/a",
-      "/r/b",
-    ]);
+describe("isCrossRepoChild", () => {
+  it("親と別のリポジトリへ切り出した子は true", () => {
+    expect(
+      isCrossRepoChild(
+        session({ repoPath: "/r/app", parentWorktreePath: "/note" })
+      )
+    ).toBe(true);
   });
 
-  it("登録済みのリポジトリと、親を持たないセッションは足さない", () => {
-    const sessions = [
-      session({ id: "a", repoPath: "/r/a", parentWorktreePath: "/note" }),
-      session({ id: "x", repoPath: "/r/x" }),
-      session({ id: "y", parentWorktreePath: "/note" }),
-    ];
-    expect(missingChildTaskRepos(sessions, ["/note", "/r/a"])).toEqual([]);
+  it("同じリポジトリの中で分けた子は false (本体、中の worktree、兄弟ディレクトリ)", () => {
+    for (const parent of ["/r/app", "/r/app/.worktrees/a", "/r/app-a"]) {
+      expect(
+        isCrossRepoChild(
+          session({ repoPath: "/r/app", parentWorktreePath: parent })
+        )
+      ).toBe(false);
+    }
+  });
+
+  it("親が無い、またはリポジトリが分からないセッションは false", () => {
+    expect(isCrossRepoChild(session({ repoPath: "/r/app" }))).toBe(false);
+    expect(isCrossRepoChild(session({ parentWorktreePath: "/note" }))).toBe(
+      false
+    );
   });
 });

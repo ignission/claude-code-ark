@@ -11,6 +11,7 @@
 
 import type { ManagedSession, Worktree } from "@ark/shared";
 import { useMemo } from "react";
+import { isCrossRepoChild } from "@/lib/child-task-repos";
 import { isPathWithin } from "@/utils/pathUtils";
 import { findRepoForSession } from "@/utils/sessionUtils";
 
@@ -99,7 +100,10 @@ export function useGroupedWorktreeItems(
       if (repoListEmpty) break;
       if (worktreeSessionIds.has(session.id)) continue;
       const repo = session.repoPath ?? findRepoForSession(session, repoList);
-      if (!repo || !repoList.includes(repo)) continue;
+      // 別のリポジトリへ切り出した子は、リポジトリが未登録でも出す (lib/child-task-repos.ts)
+      if (!repo || !(repoList.includes(repo) || isCrossRepoChild(session))) {
+        continue;
+      }
       ensureGroup(repo).items.push({ worktree: null, session });
     }
 

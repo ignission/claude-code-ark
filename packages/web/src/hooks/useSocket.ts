@@ -45,7 +45,6 @@ import {
   readReloadTarget,
   reloadForBuild,
 } from "../lib/build-version";
-import { missingChildTaskRepos } from "../lib/child-task-repos";
 import { requestDiagramDelete } from "../lib/diagram-delete-transport";
 import { m } from "../lib/i18n";
 import { mergePlanLimits } from "../lib/plan-limits";
@@ -476,13 +475,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       optionsRef.current.onRepoListChange?.(repoList);
     }
   }, [repoList]);
-
-  // 別のリポジトリへ切り出した子のリポジトリを一覧に足す (lib/child-task-repos.ts)
-  useEffect(() => {
-    const missing = missingChildTaskRepos(sessions.values(), repoList);
-    if (missing.length === 0) return;
-    setRepoList(prev => [...prev, ...missing.filter(p => !prev.includes(p))]);
-  }, [sessions, repoList]);
 
   // repoList の全リポジトリの worktree を取得する。
   // サーバーは repo:select 応答時に選択中repoの worktree:list しか返さないため、
