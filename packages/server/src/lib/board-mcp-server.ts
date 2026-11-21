@@ -4,7 +4,8 @@
  * board_open ツール（生成した図ファイルをセッションのボードペインで開かせる）を
  * 公開する **Streamable HTTP MCP server** を 127.0.0.1 に公開する。
  * 分岐TODOの todo_add / todo_list も同じサーバーで公開する（完了・削除のツールは持たない）。
- * 子タスクを別の worktree に起こす task_start も同じサーバーで公開する（実装は task-start.ts）。
+ * 子タスクを別の worktree に起こす task_start と、起こした子の今の状態を読む task_list も
+ * 同じサーバーで公開する（実装は task-start.ts。子の状態を親へ届ける経路は持たず、親が呼んだときだけ返す）。
  * 次の一手の next_actions も同じサーバーで公開する。サーバーは入力を検証して受け取るだけで、
  * 何も保持も配信もしない。画面は JSONL に残った tool_use の入力から選択肢を出す
  * (web の next-actions.ts)。会話の情報源を JSONL だけにしておけば、リロード、Ark の再起動、
@@ -23,7 +24,7 @@
  */
 
 import { createServer, type Server as HttpServer } from "node:http";
-import type { Todo } from "@ark/shared";
+import type { BridgeSessionStatus, Todo } from "@ark/shared";
 import { DIAGRAM_DIR, NEXT_ACTIONS_LIMITS } from "@ark/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -60,6 +61,51 @@ export interface TaskStartToolInput {
   name: string;
   prompt: string;
   baseBranch?: string;
+  /** 子を作るリポジトリ。省くと呼び出し元と同じリポジトリ (解決は task-repo.ts) */
+  repo?: string;
+}
+
+/** task_list が返す子 1 件。どれも Ark の一覧に出ている値で、会話の中身は含めない */
+export interface TaskListItem {
+  /** 子の worktree のディレクトリ名 */
+  name: string;
+  repoPath: string | null;
+  worktreePath: string;
+  branch: string | null;
+  /**
+   * working: Claude が動いている / your_turn: 人の返事か確認を待っている /
+   * resting: 何も頼まれていないか止まっている / unknown: 画面を読めなかった
+   */
+  state: "working" | "your_turn" | "resting" | "unknown";
+  /** state の元になった Bridge の状態 (読めなければ null) */
+  bridgeStatus: BridgeSessionStatus | null;
+  pr: {
+    number: number;
+    url: string;
+    state: "OPEN" | "MERGED" | "CLOSED";
+    isDraft: boolean;
+    checks: "none" | "pending" | "passed" | "failed";
+  } | null;
+}
+
+/** Bridge の状態を、一覧のセクションと同じ 3 区分に寄せる (web の status-tone.ts と同じ分け方) */
+export function taskStateOf(
+  status: BridgeSessionStatus | null
+): TaskListItem["state"] {
+  switch (status) {
+    case "TOOL":
+    case "THINK":
+      return "working";
+    case "AWAITING":
+    case "IDLE":
+    case "ERR":
+      return "your_turn";
+    case "READY":
+    case "STOP":
+      return "resting";
+    default:
+      return "unknown";
+  }
 }
 
 export interface TaskStartToolResult {
@@ -79,6 +125,11 @@ export interface BoardMcpDeps {
     worktreePath: string,
     input: TaskStartToolInput
   ): Promise<TaskStartToolResult>;
+  /**
+   * 呼び出し元の worktree を親に持つ子のうち、セッションが残っているもの。
+   * セッションを消した子は返らない
+   */
+  listTasks(worktreePath: string): Promise<TaskListItem[]>;
   /** 分岐TODOを足す。本文の正規化と空の拒否は DB 側で行う */
   addTodo(
     worktreePath: string,
@@ -150,6 +201,18 @@ export async function handleTaskStart(
 ): Promise<TaskStartToolResult | { error: string }> {
   try {
     return await deps.startTask(worktreePath, input);
+  } catch (error) {
+    return { error: getErrorMessage(error) };
+  }
+}
+
+/** task_list の純ロジック。親が自分で呼んだときだけ返す (子の状態をセッションへ配ることはしない) */
+export async function handleTaskList(
+  deps: Pick<BoardMcpDeps, "listTasks">,
+  worktreePath: string
+): Promise<{ tasks: TaskListItem[] } | { error: string }> {
+  try {
+    return { tasks: await deps.listTasks(worktreePath) };
   } catch (error) {
     return { error: getErrorMessage(error) };
   }
@@ -259,7 +322,8 @@ export function createBoardMcpServer(
       description:
         "Start a child task in a separate git worktree. Creates a worktree on a new branch with the caller's worktree as its parent, " +
         "starts an Ark session, waits for it to start, and sends prompt as the first message. The child appears under its parent in Ark's list. " +
-        "The child's result is not returned, and this tool does not wait for it (the user watches the progress in Ark). " +
+        "By default the worktree is created in the caller's repository; pass repo to start the task in another repository. " +
+        "The child's result is not returned, and this tool does not wait for it (the user watches the progress in Ark; call task_list when you need the current state of your children). " +
         "Returns the new worktree's path and branch name, and whether prompt was sent (promptSent).",
       inputSchema: {
         name: z
@@ -276,7 +340,13 @@ export function createBoardMcpServer(
           .string()
           .optional()
           .describe(
-            "Base branch. Defaults to the current branch of the caller's worktree"
+            "Base branch. Defaults to the current branch of the caller's worktree, or to the default branch of repo when repo is another repository"
+          ),
+        repo: z
+          .string()
+          .optional()
+          .describe(
+            "Repository to create the worktree in, when it is not the caller's. An absolute path, or the trailing part of one (e.g. name, owner/name). It must be a repository Ark knows; an ambiguous value fails and lists the candidates"
           ),
       },
     },
@@ -287,10 +357,31 @@ export function createBoardMcpServer(
         ...(args.baseBranch === undefined
           ? {}
           : { baseBranch: args.baseBranch }),
+        ...(args.repo === undefined ? {} : { repo: args.repo }),
       });
       return textResult(
         "error" in result
           ? `task_start failed: ${result.error}`
+          : JSON.stringify(result)
+      );
+    }
+  );
+
+  server.registerTool(
+    "task_list",
+    {
+      description:
+        "List the child tasks you started with task_start that still have an Ark session, with each one's current state. " +
+        "state is working (Claude is running), your_turn (waiting for the user's reply or a confirmation), resting (nothing asked yet, or stopped), or unknown (the screen could not be read). " +
+        "Also returns the repository, the worktree path, the branch, and the pull request with its checks when one exists. " +
+        "It does not return what the child said or did; read the child's worktree or its pull request for that. Ark never reports a child's progress to you on its own, so call this when the user asks how a task is going.",
+      inputSchema: {},
+    },
+    async () => {
+      const result = await handleTaskList(deps, worktreePath);
+      return textResult(
+        "error" in result
+          ? `task_list failed: ${result.error}`
           : JSON.stringify(result)
       );
     }

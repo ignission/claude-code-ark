@@ -11,9 +11,12 @@ import {
   BoardSessionRegistry,
   createBoardMcpServer,
   handleBoardOpen,
+  handleTaskList,
   handleTaskStart,
   handleTodoAdd,
   handleTodoList,
+  type TaskListItem,
+  taskStateOf,
 } from "./board-mcp-server.js";
 
 afterEach(() => {
@@ -60,7 +63,7 @@ describe("handleBoardOpen", () => {
 });
 
 describe("createBoardMcpServer", () => {
-  it("board_open / todo_add / todo_list / task_start / next_actions の 5 ツールを登録する", () => {
+  it("board_open / todo_add / todo_list / task_start / task_list / next_actions の 6 ツールを登録する", () => {
     const registerTool = vi.spyOn(McpServer.prototype, "registerTool");
 
     createBoardMcpServer(
@@ -69,6 +72,7 @@ describe("createBoardMcpServer", () => {
         addTodo: vi.fn(),
         listTodos: vi.fn(async () => []),
         startTask: vi.fn(),
+        listTasks: vi.fn(async () => []),
       },
       "/wt"
     );
@@ -78,6 +82,7 @@ describe("createBoardMcpServer", () => {
       "todo_add",
       "todo_list",
       "task_start",
+      "task_list",
       "next_actions",
     ]);
     const [, config] = registerTool.mock.calls[0] ?? [];
@@ -101,6 +106,7 @@ describe("next_actions", () => {
         addTodo: vi.fn(),
         listTodos: vi.fn(async () => []),
         startTask: vi.fn(),
+        listTasks: vi.fn(async () => []),
       },
       "/wt"
     );
@@ -231,5 +237,45 @@ describe("handleTaskStart", () => {
         prompt: "直して",
       })
     ).toEqual({ error: "ブランチ 'fix' は既に別の worktree で使用中です" });
+  });
+});
+
+describe("task_list", () => {
+  const item: TaskListItem = {
+    name: "app-fix",
+    repoPath: "/r/app",
+    worktreePath: "/r/app-fix",
+    branch: "fix",
+    state: "your_turn",
+    bridgeStatus: "IDLE",
+    pr: null,
+  };
+
+  it("呼び出し元の worktree の子を返す", async () => {
+    const listTasks = vi.fn(async () => [item]);
+    expect(await handleTaskList({ listTasks }, "/home")).toEqual({
+      tasks: [item],
+    });
+    expect(listTasks).toHaveBeenCalledWith("/home");
+  });
+
+  it("失敗は error にして返す (throw しない)", async () => {
+    const listTasks = vi.fn(async () => {
+      throw new Error("読めません");
+    });
+    expect(await handleTaskList({ listTasks }, "/home")).toEqual({
+      error: "読めません",
+    });
+  });
+
+  it("Bridge の状態を一覧のセクションと同じ 3 区分に寄せる", () => {
+    expect(taskStateOf("TOOL")).toBe("working");
+    expect(taskStateOf("THINK")).toBe("working");
+    expect(taskStateOf("AWAITING")).toBe("your_turn");
+    expect(taskStateOf("IDLE")).toBe("your_turn");
+    expect(taskStateOf("ERR")).toBe("your_turn");
+    expect(taskStateOf("READY")).toBe("resting");
+    expect(taskStateOf("STOP")).toBe("resting");
+    expect(taskStateOf(null)).toBe("unknown");
   });
 });

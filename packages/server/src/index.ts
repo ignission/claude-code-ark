@@ -41,6 +41,8 @@ import {
   type BoardMcpDeps,
   BoardMcpServer,
   BoardSessionRegistry,
+  type TaskListItem,
+  taskStateOf,
 } from "./lib/board-mcp-server.js";
 import {
   buildTunnelEntries,
@@ -131,6 +133,7 @@ import {
   staticCacheControl,
 } from "./lib/static-cache.js";
 import { detectMultiProfileSupported, resolveGhPath } from "./lib/system.js";
+import { resolveTaskRepo } from "./lib/task-repo.js";
 import {
   describeDelivery,
   startTask,
@@ -683,18 +686,38 @@ export async function startServer(
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     now: () => Date.now(),
   };
+  // task_start の repo を解決する候補。許可リストがあればそれ、無ければ保存済みの走査先を
+  // 走査した結果 (画面のリポジトリ選択に出るものと同じ)
+  const taskRepoCandidates = async (): Promise<string[]> => {
+    if (allowedRepos.length > 0) return allowedRepos;
+    const basePath = db.getSetting("scanBasePath");
+    if (typeof basePath !== "string" || !basePath) return [];
+    return (await scanRepositories(basePath)).map(repo => repo.path);
+  };
   const boardDeps: BoardMcpDeps = {
     async startTask(worktreePath, input) {
       // 親は呼び出し元の worktree。リポジトリとベースの既定は親から引く
       const parent = sessionOrchestrator.getSessionByWorktree(worktreePath);
-      const repoPath = parent?.repoPath;
+      const parentRepoPath = parent?.repoPath;
+      // repo の指定があれば、Ark が知っているリポジトリの中から解決する (task-repo.ts)
+      const requestedRepo = input.repo?.trim();
+      const repoPath = requestedRepo
+        ? resolveTaskRepo(requestedRepo, await taskRepoCandidates())
+        : parentRepoPath;
       if (!repoPath) {
         throw new Error(
           "Could not determine the repository of the calling worktree"
         );
       }
+      if (requestedRepo && !(await isGitRepository(repoPath))) {
+        throw new Error(`repo '${repoPath}' is not a git repository`);
+      }
+      // 別のリポジトリへ切り出すとき、親のブランチはそのリポジトリに無い。既定ブランチから作る
       const baseBranch =
-        input.baseBranch?.trim() || (await getAttachedBranch(worktreePath));
+        input.baseBranch?.trim() ||
+        (repoPath === parentRepoPath
+          ? await getAttachedBranch(worktreePath)
+          : await getDefaultBranch(repoPath));
       const started = await startTask(taskStartDeps, {
         repoPath,
         name: input.name,
@@ -709,6 +732,37 @@ export async function startServer(
         promptSent: delivery.sent,
         message: describeDelivery(delivery),
       };
+    },
+    async listTasks(worktreePath) {
+      // 親の記録は task_start が受け取った生パス (registry の値) なので、同じ値で引く
+      const children = sessionOrchestrator
+        .getAllSessions()
+        .filter(session => session.parentWorktreePath === worktreePath);
+      return Promise.all(
+        children.map(async (session): Promise<TaskListItem> => {
+          const bridgeStatus =
+            sessionOrchestrator.readLaunchState(session.id)?.bridgeStatus ??
+            null;
+          const pr = prStatusCollector?.get(session.id) ?? null;
+          return {
+            name: path.basename(session.worktreePath),
+            repoPath: session.repoPath ?? null,
+            worktreePath: session.worktreePath,
+            branch: (await getAttachedBranch(session.worktreePath)) ?? null,
+            state: taskStateOf(bridgeStatus),
+            bridgeStatus,
+            pr: pr
+              ? {
+                  number: pr.number,
+                  url: pr.url,
+                  state: pr.state,
+                  isDraft: pr.isDraft,
+                  checks: pr.checks,
+                }
+              : null,
+          };
+        })
+      );
     },
     async addTodo(worktreePath, input) {
       // TODO は registry 登録時の生パスで持つ (クライアントの session.worktreePath と同じ値)
