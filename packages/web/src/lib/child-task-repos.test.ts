@@ -1,0 +1,63 @@
+import type { ManagedSession } from "@ark/shared";
+import { describe, expect, it } from "vitest";
+import { isCrossRepoChild } from "./child-task-repos";
+
+const session = (over: Partial<ManagedSession>) =>
+  ({ id: "s", worktreePath: "/r/app-fix", ...over }) as ManagedSession;
+
+describe("isCrossRepoChild", () => {
+  it("親と別のリポジトリへ切り出した子は true", () => {
+    expect(
+      isCrossRepoChild(
+        session({ repoPath: "/r/app", parentWorktreePath: "/note" })
+      )
+    ).toBe(true);
+  });
+
+  it("同じリポジトリの中で分けた子は false (本体、中の worktree、兄弟ディレクトリ)", () => {
+    for (const parent of ["/r/app", "/r/app/.worktrees/a", "/r/app-a"]) {
+      expect(
+        isCrossRepoChild(
+          session({ repoPath: "/r/app", parentWorktreePath: parent })
+        )
+      ).toBe(false);
+    }
+  });
+
+  it("親が無い、またはリポジトリが分からないセッションは false", () => {
+    expect(isCrossRepoChild(session({ repoPath: "/r/app" }))).toBe(false);
+    expect(isCrossRepoChild(session({ parentWorktreePath: "/note" }))).toBe(
+      false
+    );
+  });
+
+  it("親のセッションのリポジトリが分かれば、名前の形ではなくそれと比べる", () => {
+    // 親は名前が `app-` で始まる別のリポジトリ
+    const child = session({
+      repoPath: "/r/app",
+      parentWorktreePath: "/r/app-admin",
+    });
+    expect(isCrossRepoChild(child)).toBe(false);
+    expect(isCrossRepoChild(child, "/r/app-admin")).toBe(true);
+    expect(isCrossRepoChild(child, "/r/app")).toBe(false);
+  });
+
+  it("起こした時点で記録した親のリポジトリがあれば、親のセッションが無くてもそれと比べる", () => {
+    const child = session({
+      repoPath: "/r/app",
+      parentWorktreePath: "/r/app-admin",
+      parentRepoPath: "/r/app-admin",
+    });
+    expect(isCrossRepoChild(child)).toBe(true);
+    // 同じリポジトリの兄弟ディレクトリから分けた子
+    expect(
+      isCrossRepoChild(
+        session({
+          repoPath: "/r/app",
+          parentWorktreePath: "/r/app-a",
+          parentRepoPath: "/r/app",
+        })
+      )
+    ).toBe(false);
+  });
+});

@@ -127,6 +127,7 @@ export const session = {
     startSession: "セッションを起動",
     splitTask: "子タスクを分離...",
     openParent: "親を開く",
+    setHome: "ホームにする",
     rename: "表示名を変更",
     muteNotifications: "通知をオフにする",
     unmuteNotifications: "通知をオンにする",
@@ -155,6 +156,16 @@ export const session = {
     removeRepoBody: (repoName: string) =>
       `「${repoName}」をサイドバー一覧から非表示にします。Worktreeやセッション、リポジトリ自体は削除されません。再度リポジトリを選択すれば復元できます。`,
     removeRepoAction: "除外",
+  },
+  /** ホーム (入口にするセッション。決まりは web の lib/home-session.ts) */
+  home: {
+    label: "ホーム",
+    unset: "ホームを解除",
+    back: "ホームへ戻る",
+    menu: "ホームのメニュー",
+    notRunning: "未起動 (押すと起動)",
+    worktreeMissing:
+      "ホームのworktreeが見つかりません。リポジトリを一覧に追加するか、ホームを解除してください",
   },
   sidebar: {
     arkMenu: "Arkのメニュー",

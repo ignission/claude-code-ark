@@ -35,6 +35,8 @@ type MobileSessionListProps = Omit<
   /** 画面の管理ダイアログを開く。画面が未登録でも一覧の見出しから登録できるようにする */
   onOpenScreenManager?: () => void;
   notificationControl?: ReactNode;
+  /** 一覧の上に固定で出すホームの行 (lib/home-session.ts)。ホームを決めていなければ無い */
+  home?: ReactNode;
 };
 
 export function MobileSessionList({
@@ -42,6 +44,7 @@ export function MobileSessionList({
   onNewTask,
   onOpenScreenManager,
   notificationControl,
+  home,
   ...listProps
 }: MobileSessionListProps) {
   return (
@@ -118,6 +121,7 @@ export function MobileSessionList({
       </header>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-1 pb-4">
+        {home}
         <SessionSectionList
           variant="card"
           selectedSessionId={null}

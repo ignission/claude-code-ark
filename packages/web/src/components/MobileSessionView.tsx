@@ -66,6 +66,7 @@ import {
   Copy,
   Ellipsis,
   File as FileIcon,
+  Home,
   RefreshCw,
   RotateCw,
   Send,
@@ -197,6 +198,13 @@ export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   notificationsEnabled?: boolean;
   onNotificationsEnabledChange?: (enabled: boolean) => void;
   onBack: () => void;
+  /**
+   * ホームの会話を開く (lib/home-session.ts)。ホームを決めていて、このセッションがホームで
+   * ないときだけ渡す。戻る (一覧へ) とは別に、ホームへ 1 手で戻るボタンを出す
+   */
+  onOpenHome?: () => void;
+  /** このセッションがホームか。主ラベルの前にホームの印を出す */
+  isHome?: boolean;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
   /** セッション削除（停止 + メイン以外のWorktree削除） */
@@ -246,6 +254,8 @@ export function MobileSessionView({
   notificationsEnabled = true,
   onNotificationsEnabledChange,
   onBack,
+  onOpenHome,
+  isHome = false,
   onSendMessage: onSendMessageProp,
   onSendKey: onSendKeyProp,
   onDeleteSession,
@@ -1056,6 +1066,23 @@ export function MobileSessionView({
             >
               <ChevronLeft className="size-[22px]" />
             </Button>
+            {onOpenHome && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-10 shrink-0 rounded-sm"
+                onClick={onOpenHome}
+                aria-label={m.session.home.back}
+              >
+                <Home className="size-5" />
+              </Button>
+            )}
+            {isHome && (
+              <Home
+                className="size-[18px] shrink-0 text-muted-foreground"
+                aria-label={m.session.home.label}
+              />
+            )}
             <div className="flex min-w-0 flex-1 items-baseline gap-2">
               <span className="min-w-0 truncate text-[17px] font-semibold tracking-[-0.01em]">
                 {headerLabels.primary}

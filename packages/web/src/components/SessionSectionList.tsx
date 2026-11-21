@@ -114,6 +114,13 @@ export interface SessionSectionListProps {
   onOpenProfileManager?: () => void;
   /** 「あなたの番」の件数が変わるたびに呼ぶ (畳んだサイドバーの帯に出す) */
   onYourTurnCountChange?: (count: number) => void;
+  /**
+   * ホームの worktree のパス (lib/home-session.ts)。この行は一覧に出さない
+   * (呼び出し側が一覧の上に固定の行で出す)
+   */
+  homeWorktreePath?: string | null;
+  /** 行のメニューから worktree をホームにする。無ければ項目を出さない */
+  onSetHome?: (worktreePath: string) => void;
 }
 
 type DeleteTarget =
@@ -178,6 +185,8 @@ export function SessionSectionList({
   onSetWorktreeProfile,
   onOpenProfileManager,
   onYourTurnCountChange,
+  homeWorktreePath = null,
+  onSetHome,
 }: SessionSectionListProps) {
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
@@ -185,12 +194,18 @@ export function SessionSectionList({
     repoList
   );
   const { held, bindings, onMenuOpenChange } = useListHold();
+  // ホームの行は一覧から外す。親をたどる対応表 (entryByPath) にも入らないので、
+  // ホームの子は親の表示を持たない普通の行になる (子は全部ホームの子なので、出すと全行に付く)
   const entries = useMemo(
     () =>
       sortSessionEntries(
         buildSessionEntries(groupedItems, sessionStatuses, sessionLastUpdatedAt)
+      ).filter(
+        entry =>
+          homeWorktreePath === null ||
+          worktreePathOf(entry) !== homeWorktreePath
       ),
-    [groupedItems, sessionStatuses, sessionLastUpdatedAt]
+    [groupedItems, sessionStatuses, sessionLastUpdatedAt, homeWorktreePath]
   );
   const rows = useMemo(() => toListRows(sectionize(entries)), [entries]);
   // 見出しの件数と同じ値を外へ知らせる。並びを保留していても件数は最新にする
@@ -293,6 +308,8 @@ export function SessionSectionList({
       onOpenParent: parentSession
         ? () => onOpenSession(parentSession.id)
         : undefined,
+      onSetHome:
+        onSetHome && worktreePath ? () => onSetHome(worktreePath) : undefined,
       onStartRename:
         onSetWorktreeDisplayName && worktreePath
           ? () => setEditingKey(entry.key)
@@ -405,7 +422,11 @@ export function SessionSectionList({
           entry.session ? (sessionTodoCounts?.get(entry.session.id) ?? 0) : 0
         }
         childCount={worktreePath ? (childCounts.get(worktreePath) ?? 0) : 0}
-        parentLabel={parentPath ? labelOf(parentPath) : null}
+        parentLabel={
+          parentPath && parentPath !== homeWorktreePath
+            ? labelOf(parentPath)
+            : null
+        }
         onOpenParent={
           parentSession ? () => onOpenSession(parentSession.id) : undefined
         }

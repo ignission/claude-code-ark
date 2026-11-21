@@ -12,8 +12,19 @@ export function buildTodoDraft(todo: Todo, originBranch?: string): string {
   return parts.join("\n\n");
 }
 
-/** 新しいworktreeのブランチ名の候補。Claudeが付けた名前があればそれ、無ければidから作る */
+/** 本文かメモにあるチケット番号 (`ABC-123` の形)。無ければ null */
+function ticketKeyOf(todo: Todo): string | null {
+  const match = /\b[A-Z][A-Z0-9]+-\d+\b/.exec(
+    `${todo.text}\n${todo.note ?? ""}`
+  );
+  return match ? match[0] : null;
+}
+
+/**
+ * 新しいworktreeのブランチ名の候補 (タスクの名前になる)。Claudeが付けた名前があればそれ。
+ * 無ければ本文かメモのチケット番号、それも無ければidから作る
+ */
 export function todoBranchCandidate(todo: Todo): string {
   if (todo.branchName) return todo.branchName;
-  return `todo-${todo.id.slice(0, 6)}`;
+  return ticketKeyOf(todo) ?? `todo-${todo.id.slice(0, 6)}`;
 }

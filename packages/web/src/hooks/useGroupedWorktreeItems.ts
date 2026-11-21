@@ -11,6 +11,7 @@
 
 import type { ManagedSession, Worktree } from "@ark/shared";
 import { useMemo } from "react";
+import { isCrossRepoChild } from "@/lib/child-task-repos";
 import { isPathWithin } from "@/utils/pathUtils";
 import { findRepoForSession } from "@/utils/sessionUtils";
 
@@ -95,11 +96,25 @@ export function useGroupedWorktreeItems(
     const sortedSessions = Array.from(sessions.values()).sort((a, b) =>
       a.worktreePath.localeCompare(b.worktreePath)
     );
+    // 親のセッションのリポジトリ (別のリポジトリへ切り出した子かを見分けるのに使う)
+    const repoPathByWorktreePath = new Map<string, string>();
     for (const session of sortedSessions) {
-      if (repoListEmpty) break;
+      if (session.repoPath) {
+        repoPathByWorktreePath.set(session.worktreePath, session.repoPath);
+      }
+    }
+    // 登録したリポジトリが空でも走査する。別のリポジトリへ切り出した子は、リポジトリが
+    // 未登録でも出す (lib/child-task-repos.ts)。それ以外の未登録のセッションは出さない
+    for (const session of sortedSessions) {
       if (worktreeSessionIds.has(session.id)) continue;
       const repo = session.repoPath ?? findRepoForSession(session, repoList);
-      if (!repo || !repoList.includes(repo)) continue;
+      const crossRepoChild = isCrossRepoChild(
+        session,
+        session.parentWorktreePath
+          ? repoPathByWorktreePath.get(session.parentWorktreePath)
+          : null
+      );
+      if (!repo || !(repoList.includes(repo) || crossRepoChild)) continue;
       ensureGroup(repo).items.push({ worktree: null, session });
     }
 

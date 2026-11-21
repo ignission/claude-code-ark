@@ -55,14 +55,14 @@ export function normalizeTodoText(text: string): string {
 export const TODO_BRANCH_MAX_LENGTH = 40;
 
 /**
- * Claude が付けるブランチ名の候補を、git で安全な kebab-case に直す。
- * 英数字とハイフンだけを残し ("/" も使わない)、残らなければ null
+ * Claude が付けるブランチ名の候補を、git で安全な形に直す。
+ * 英数字とハイフンだけを残し ("/" も使わない)、残らなければ null。
+ * 大文字はそのまま残す (チケット番号を `ABC-123` のまま名前に使うため)
  */
 export function normalizeTodoBranch(input: unknown): string | null {
   if (typeof input !== "string") return null;
   const kebab = input
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/[^a-zA-Z0-9-]+/g, "-")
     .replace(/-{2,}/g, "-")
     .replace(/^-|-$/g, "");
   const cut = kebab.slice(0, TODO_BRANCH_MAX_LENGTH).replace(/-$/, "");
@@ -80,6 +80,7 @@ interface TodoRow {
   started_worktree_path: string | null;
   started_at: number | null;
   branch_name: string | null;
+  repo_path: string | null;
 }
 
 function rowToTodo(row: TodoRow): Todo {
@@ -93,6 +94,7 @@ function rowToTodo(row: TodoRow): Todo {
     startedWorktreePath: row.started_worktree_path,
     startedAt: row.started_at,
     branchName: row.branch_name,
+    repoPath: row.repo_path ?? null,
   };
 }
 
@@ -109,6 +111,7 @@ interface SessionRow {
   /** セッションで最後に開いた図（.claude/diagrams/*.diagram.html）の worktree 相対パス */
   last_diagram_path: string | null;
   parent_worktree_path: string | null;
+  parent_repo_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -162,6 +165,8 @@ interface CreateSessionInput {
   readonly boardMcpConfigPath?: string | null;
   /** 親の worktree のパス (task_start で起こした子だけ) */
   readonly parentWorktreePath?: string | null;
+  /** 親の worktree が属するリポジトリ (task_start で起こした子だけ) */
+  readonly parentRepoPath?: string | null;
 }
 
 /** メッセージ作成時の入力データ */
@@ -342,6 +347,16 @@ export class SessionDatabase {
         throw e;
       }
     }
+    // マイグレーション: sessionsテーブルにparent_repo_path列を追加
+    // (親のセッションを止めたあとも、別のリポジトリへ切り出した子かを見分けるため)
+    try {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN parent_repo_path TEXT");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
     // 旧 root の保存値は実ファイルの移行を保証できず stale tab を作るため、
     // prefix rewrite せず無効化する。同じ UPDATE の再実行は結果を変えない。
     this.db
@@ -487,6 +502,10 @@ export class SessionDatabase {
     if (!todoColumns.includes("branch_name")) {
       this.db.exec("ALTER TABLE todos ADD COLUMN branch_name TEXT");
     }
+    // この TODO を始めるリポジトリ (todo_add の repo。置いた worktree と別のリポジトリで始めるとき)
+    if (!todoColumns.includes("repo_path")) {
+      this.db.exec("ALTER TABLE todos ADD COLUMN repo_path TEXT");
+    }
 
     // マイグレーション: 旧 label 列を削除する。
     // 1) 列が無ければ何もしない (新規 DB / 既に削除済み)
@@ -557,8 +576,8 @@ export class SessionDatabase {
   upsertSession(session: CreateSessionInput): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, board_mcp_config_path, parent_worktree_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, board_mcp_config_path, parent_worktree_path, parent_repo_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worktree_path) DO UPDATE SET
         id = excluded.id,
         worktree_id = excluded.worktree_id,
@@ -569,6 +588,7 @@ export class SessionDatabase {
         board_mcp_config_path = excluded.board_mcp_config_path,
         -- A start without a parent (session:start etc.) must not erase the parent link of an existing row
         parent_worktree_path = COALESCE(excluded.parent_worktree_path, parent_worktree_path),
+        parent_repo_path = COALESCE(excluded.parent_repo_path, parent_repo_path),
         updated_at = excluded.updated_at
     `);
     stmt.run(
@@ -581,6 +601,7 @@ export class SessionDatabase {
       session.profileConfigDir ?? null,
       session.boardMcpConfigPath ?? null,
       session.parentWorktreePath ?? null,
+      session.parentRepoPath ?? null,
       now,
       now
     );
@@ -781,6 +802,7 @@ export class SessionDatabase {
       boardMcpConfigPath: row.board_mcp_config_path,
       lastDiagramPath: row.last_diagram_path,
       parentWorktreePath: row.parent_worktree_path ?? null,
+      parentRepoPath: row.parent_repo_path ?? null,
     };
   }
 
@@ -1467,6 +1489,8 @@ export class SessionDatabase {
     text: string;
     note?: string | null;
     branch?: string | null;
+    /** 解決済みのリポジトリの絶対パス。置いた worktree と同じリポジトリなら渡さない */
+    repoPath?: string | null;
   }): Todo {
     const text = normalizeTodoText(input.text);
     if (!text) throw new Error("TODO text is empty");
@@ -1481,11 +1505,12 @@ export class SessionDatabase {
       started_worktree_path: null,
       started_at: null,
       branch_name: normalizeTodoBranch(input.branch),
+      repo_path: input.repoPath?.trim() || null,
     };
     this.db
       .prepare(
-        `INSERT INTO todos (id, worktree_path, text, note, created_at, done_at, branch_name)
-         VALUES (@id, @worktree_path, @text, @note, @created_at, @done_at, @branch_name)`
+        `INSERT INTO todos (id, worktree_path, text, note, created_at, done_at, branch_name, repo_path)
+         VALUES (@id, @worktree_path, @text, @note, @created_at, @done_at, @branch_name, @repo_path)`
       )
       .run(row);
     return rowToTodo(row);

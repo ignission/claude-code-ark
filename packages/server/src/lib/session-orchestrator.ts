@@ -446,6 +446,7 @@ export class SessionOrchestrator extends EventEmitter {
       lastDiagramPath: dbSession?.lastDiagramPath ?? null,
       // サイドバーで子を親の下に並べるために必要 (task_start で起こした子だけ値がある)
       parentWorktreePath: dbSession?.parentWorktreePath ?? null,
+      parentRepoPath: dbSession?.parentRepoPath ?? null,
     };
   }
 
@@ -647,6 +648,10 @@ export class SessionOrchestrator extends EventEmitter {
     // 呼び出し側の `currentRepoPath` はソケット状態に依存するため、
     // 別リポジトリのworktreeに対して誤った値が渡るケースがある。
     const resolvedRepoPath = this.deriveRepoPath(worktreePath) ?? repoPath;
+    // 親のリポジトリは起こした時点で記録する (親のセッションを止めたあとは導けないことがある)
+    const parentRepoPath = options.parentWorktreePath
+      ? (this.deriveRepoPath(options.parentWorktreePath) ?? null)
+      : null;
 
     // 撤去済み ark/context が注入したままの hook / deny を取り除く (#367 の移行)。
     // 既存セッションを再利用する経路でも掃除するため、existingTmux の判定より前に置く。
@@ -743,6 +748,7 @@ export class SessionOrchestrator extends EventEmitter {
         // mcp-config のパスを永続化する (token 自体は 0600 のファイル内のみ)
         boardMcpConfigPath: boardPrep?.cfgPath ?? null,
         parentWorktreePath: options.parentWorktreePath ?? null,
+        parentRepoPath,
       });
     } catch (error) {
       ttydManager.stopInstance(tmuxSession.id);
@@ -767,6 +773,7 @@ export class SessionOrchestrator extends EventEmitter {
       ttydUrl: `/ttyd/${tmuxSession.id}/`,
       profileId: snapshot?.id ?? null,
       parentWorktreePath: options.parentWorktreePath ?? null,
+      parentRepoPath,
     };
 
     this.emit("session:created", managed);
@@ -888,6 +895,7 @@ export class SessionOrchestrator extends EventEmitter {
         boardMcpConfigPath: boardPrep?.cfgPath ?? null,
         // 再起動しても親子の表示を保つ
         parentWorktreePath: dbSession?.parentWorktreePath ?? null,
+        parentRepoPath: dbSession?.parentRepoPath ?? null,
       };
       if (dbSession) {
         db.replaceSession(dbSession.id, newSessionInput);
@@ -936,6 +944,7 @@ export class SessionOrchestrator extends EventEmitter {
       ttydUrl: `/ttyd/${newTmux.id}/`,
       profileId: snapshot?.id ?? null,
       parentWorktreePath: dbSession?.parentWorktreePath ?? null,
+      parentRepoPath: dbSession?.parentRepoPath ?? null,
     };
     this.emit("session:created", managed);
     this.emit("session:restarted", {

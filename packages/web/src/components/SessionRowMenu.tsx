@@ -15,6 +15,7 @@ import {
   CornerLeftUp,
   EyeOff,
   GitBranchPlus,
+  Home,
   LayoutGrid,
   MessageSquare,
   Pencil,
@@ -64,6 +65,8 @@ export interface SessionRowMenuProps {
   onSplitTask?: () => void;
   /** 子の行で、親のセッションを開く */
   onOpenParent?: () => void;
+  /** この worktree をホームにする (lib/home-session.ts) */
+  onSetHome?: () => void;
   /** 表示名の編集を始める */
   onStartRename?: () => void;
   /** このセッションの通知。ブラウザが通知に対応していなければundefined */
@@ -129,6 +132,7 @@ export function SessionRowMenu({
   onOpen,
   onSplitTask,
   onOpenParent,
+  onSetHome,
   onStartRename,
   notifications,
   onRestart,
@@ -164,6 +168,12 @@ export function SessionRowMenu({
           <Menu.Item onSelect={onOpenParent}>
             <CornerLeftUp />
             {m.session.menu.openParent}
+          </Menu.Item>
+        )}
+        {onSetHome && (
+          <Menu.Item onSelect={onSetHome}>
+            <Home />
+            {m.session.menu.setHome}
           </Menu.Item>
         )}
         {onStartRename && (

@@ -119,6 +119,7 @@ export const session: Messages["session"] = {
     startSession: "Start session",
     splitTask: "Split off a child task...",
     openParent: "Open parent",
+    setHome: "Set as home",
     rename: "Rename",
     muteNotifications: "Turn off notifications",
     unmuteNotifications: "Turn on notifications",
@@ -146,6 +147,16 @@ export const session: Messages["session"] = {
     removeRepoBody: (repoName: string) =>
       `“${repoName}” will be hidden from the sidebar. Its worktrees, sessions, and the repository itself are not deleted. Select the repository again to bring it back.`,
     removeRepoAction: "Remove",
+  },
+  /** ホーム (入口にするセッション。決まりは web の lib/home-session.ts) */
+  home: {
+    label: "Home",
+    unset: "Unset home",
+    back: "Back to home",
+    menu: "Home menu",
+    notRunning: "Not running (tap to start)",
+    worktreeMissing:
+      "The home worktree was not found. Add its repository to the list, or unset home",
   },
   sidebar: {
     arkMenu: "Ark menu",

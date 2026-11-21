@@ -8,6 +8,7 @@ import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FilePane } from "@/components/FilePane";
 import { FilePeek, type FilePeekTarget } from "@/components/FilePeek";
 import { GitPane } from "@/components/git/GitPane";
+import { HomeBackBar, HomeSessionRow } from "@/components/HomeSessionRow";
 import {
   MobileLayout,
   type MobileTab,
@@ -63,6 +64,12 @@ import { useSocket } from "@/hooks/useSocket";
 import { useTodos } from "@/hooks/useTodos";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { requestChatDraft } from "@/lib/chat-draft-store";
+import {
+  findHomeSession,
+  findHomeWorktree,
+  HOME_WORKTREE_SETTING,
+  normalizeHomeWorktreePath,
+} from "@/lib/home-session";
 import { m } from "@/lib/i18n";
 import {
   type ChatViewRequest,
@@ -122,6 +129,15 @@ export default function Dashboard() {
   );
   // 畳んだ帯に出す「あなたの番」の件数 (一覧が数えて知らせる)
   const [yourTurnCount, setYourTurnCount] = useState(0);
+  // ホーム (入口にするセッション)。決まりは lib/home-session.ts
+  const homeWorktreePath = normalizeHomeWorktreePath(
+    getSetting<unknown>(HOME_WORKTREE_SETTING, null)
+  );
+  const setHomeWorktreePath = useCallback(
+    (worktreePath: string | null) =>
+      setSetting(HOME_WORKTREE_SETTING, worktreePath),
+    [setSetting]
+  );
 
   // 新しいタスクのダイアログ。null の間は閉じている。分岐TODOから開くときは
   // 名前・プロンプト・ベース・親の worktree を初期値に入れる
@@ -217,6 +233,14 @@ export default function Dashboard() {
   });
 
   const isMobile = useIsMobile();
+  const homeSession = useMemo(
+    () => findHomeSession(sessions.values(), homeWorktreePath),
+    [sessions, homeWorktreePath]
+  );
+  const homeWorktree = useMemo(
+    () => findHomeWorktree(worktrees, homeWorktreePath),
+    [worktrees, homeWorktreePath]
+  );
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
@@ -816,6 +840,49 @@ export default function Dashboard() {
     openSessionForTodo(sessionId);
   }, [sessions, pendingSelectWorktreePath, openSessionForTodo]);
 
+  // Ark を開いたとき (とホームを決めたとき) は、ホームの会話から始める。ホームごとに 1 回だけ。
+  // 設定からの選択の復元より後に宣言して、同じ描画で両方走ってもホームが勝つようにする
+  const homeOpenedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isSettingsLoading) return;
+    // ホームを解除したら記録も消す。同じ worktree をもう一度ホームにしたときも開く
+    if (!homeWorktreePath) {
+      homeOpenedForRef.current = null;
+      return;
+    }
+    if (!homeSession) return;
+    if (homeOpenedForRef.current === homeWorktreePath) return;
+    homeOpenedForRef.current = homeWorktreePath;
+    setGridRepoPath(null);
+    setSelectedSessionId(homeSession.id);
+    if (isMobile) {
+      setMobileActiveTab("session");
+      setMobileSessionSubView("detail");
+    }
+  }, [isSettingsLoading, homeWorktreePath, homeSession, isMobile]);
+
+  // ホームのセッションが無ければ起動する。開いて最初の 1 回だけで、
+  // 動いているのを一度見たあと (人が止めたあと) は起こし直さない
+  const homeStartSettledRef = useRef(false);
+  useEffect(() => {
+    if (!homeWorktreePath || !sessionsLoaded || homeStartSettledRef.current) {
+      return;
+    }
+    if (homeSession) {
+      homeStartSettledRef.current = true;
+      return;
+    }
+    if (!homeWorktree) return;
+    homeStartSettledRef.current = true;
+    startSession(homeWorktree.id, homeWorktree.path);
+  }, [
+    homeWorktreePath,
+    sessionsLoaded,
+    homeSession,
+    homeWorktree,
+    startSession,
+  ]);
+
   // セッション自動選択
   useEffect(() => {
     // 画面の選択中はリセットしない
@@ -823,7 +890,8 @@ export default function Dashboard() {
 
     // グリッドビュー表示中は自動選択を抑制 (ユーザーがセルクリックで明示的に選ぶ)
     if (!selectedSessionId && sessions.size > 0 && !gridRepoPath) {
-      const first = Array.from(sessions.values())[0];
+      // ホームがあればホームへ戻る (タスクを消したあとなど)
+      const first = homeSession ?? Array.from(sessions.values())[0];
       setSelectedSessionId(first.id);
     }
     // session:list を未受信のうちは dangling 判定をスキップ (savedId 復元保護)。
@@ -835,7 +903,9 @@ export default function Dashboard() {
       !sessions.has(selectedSessionId)
     ) {
       const remaining = Array.from(sessions.values());
-      setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
+      setSelectedSessionId(
+        homeSession?.id ?? (remaining.length > 0 ? remaining[0].id : null)
+      );
     }
   }, [
     sessions,
@@ -843,6 +913,7 @@ export default function Dashboard() {
     selectedSessionId,
     gridRepoPath,
     selectedScreenId,
+    homeSession,
   ]);
 
   useEffect(() => {
@@ -881,6 +952,59 @@ export default function Dashboard() {
     deleteWorktree(worktree.path);
     toast.info(m.session.dashboard.worktreeDeleting);
   };
+
+  // ホームの行を押す。動いていれば開き、無ければ起動する (起動したら上の効果が開く)
+  const handleOpenHome = () => {
+    if (homeSession) {
+      setGridRepoPath(null);
+      setSelectedSessionId(homeSession.id);
+      if (isMobile) {
+        setMobileActiveTab("session");
+        setMobileSessionSubView("detail");
+        // 前に図や TODO を見たままでも、ホームへ戻ったら会話を出す
+        const homeId = homeSession.id;
+        setChatViewRequest(prev => createChatViewRequest(prev, homeId));
+      }
+      return;
+    }
+    // ホームの worktree が一覧に無い (worktree を消した、リポジトリを一覧から外した)。
+    // 起動できないので理由を伝える。設定は勝手に外さない (一覧の読み込み前と区別できないため)
+    if (!homeWorktree) {
+      toast.error(m.session.home.worktreeMissing);
+      return;
+    }
+    homeOpenedForRef.current = null;
+    startSession(homeWorktree.id, homeWorktree.path);
+  };
+  const homeRow = homeWorktreePath ? (
+    <HomeSessionRow
+      variant={isMobile ? "card" : "sidebar"}
+      subLabel={getBaseName(homeWorktreePath)}
+      statusKey={resolveStatusKey(
+        homeSession !== null,
+        homeSession ? sessionStatuses.get(homeSession.id) : undefined
+      )}
+      running={homeSession !== null}
+      selected={
+        !isMobile &&
+        homeSession !== null &&
+        selectedSessionId === homeSession.id
+      }
+      onOpen={handleOpenHome}
+      onUnset={() => setHomeWorktreePath(null)}
+      onRestart={
+        homeSession ? () => handleRestartSession(homeSession.id) : undefined
+      }
+    />
+  ) : null;
+  // PCで、ホーム以外のセッションを開いている間に出す「ホームへ戻る」の対象
+  const awayFromHomeSessionId =
+    homeWorktreePath &&
+    selectedSessionId &&
+    sessions.has(selectedSessionId) &&
+    selectedSessionId !== homeSession?.id
+      ? selectedSessionId
+      : null;
 
   const handleStartSession = (worktree: Worktree) => {
     const existingSession = getSessionForWorktree(worktree.id);
@@ -983,6 +1107,18 @@ export default function Dashboard() {
    * 送られ、元のworktreeが親になる (始めた先の記録はサーバーが todoId を見て行う)
    */
   const handleStartTodoInNewWorktree = (todo: Todo) => {
+    // 行き先のリポジトリを持つ TODO (todo_add の repo) は、そのリポジトリで始める。
+    // ベースは空にしてサーバーに既定ブランチを選ばせる (置いた worktree のブランチはそこに無い)
+    if (todo.repoPath) {
+      setNewTaskInitial({
+        repoPath: todo.repoPath,
+        name: todoBranchCandidate(todo),
+        prompt: buildTodoDraft(todo),
+        parentWorktreePath: todo.worktreePath,
+        todoId: todo.id,
+      });
+      return;
+    }
     const origin = resolveTodoOrigin(
       todo.worktreePath,
       sessions.values(),
@@ -1025,6 +1161,7 @@ export default function Dashboard() {
 
   // 元のworktreeのリポジトリが分かるときだけ、新しいworktreeで始められる
   const canStartTodoInNewWorktree = (todo: Todo) =>
+    todo.repoPath !== null ||
     resolveTodoOrigin(
       todo.worktreePath,
       sessions.values(),
@@ -1130,6 +1267,10 @@ export default function Dashboard() {
           onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
           onRemoveRepo={handleRemoveRepo}
           notificationControl={notificationControl}
+          home={homeRow}
+          homeWorktreePath={homeWorktreePath}
+          onSetHome={setHomeWorktreePath}
+          onOpenHome={homeWorktreePath ? handleOpenHome : undefined}
           notificationsSupported={sessionNotifications.supported}
           isSessionNotificationEnabled={isSessionNotificationEnabled}
           onSessionNotificationEnabledChange={
@@ -1178,6 +1319,9 @@ export default function Dashboard() {
               onYourTurnCountChange={setYourTurnCount}
               metrics={hostMetrics}
               notificationControl={notificationControl}
+              home={homeRow}
+              homeWorktreePath={homeWorktreePath}
+              onSetHome={setHomeWorktreePath}
               screens={screens}
               selectedScreenId={selectedScreenId}
               onSelectScreen={handleSelectScreen}
@@ -1195,16 +1339,28 @@ export default function Dashboard() {
                   <span>{m.session.strip.disconnected}</span>
                 </div>
               )}
-              <SessionTabBar
-                tabs={sessionTabItems}
-                activeSessionId={
-                  selectedSessionId && sessions.has(selectedSessionId)
-                    ? selectedSessionId
-                    : null
-                }
-                onSelect={handleSelectSessionTab}
-                onClose={handleCloseSessionTab}
-              />
+              {/* ホームを決めている間はタブを出さず、行き来はホームと一覧で行う (lib/home-session.ts) */}
+              {homeWorktreePath ? (
+                awayFromHomeSessionId && (
+                  <HomeBackBar
+                    label={
+                      sessionNotificationLabels.get(awayFromHomeSessionId) ?? ""
+                    }
+                    onBack={handleOpenHome}
+                  />
+                )
+              ) : (
+                <SessionTabBar
+                  tabs={sessionTabItems}
+                  activeSessionId={
+                    selectedSessionId && sessions.has(selectedSessionId)
+                      ? selectedSessionId
+                      : null
+                  }
+                  onSelect={handleSelectSessionTab}
+                  onClose={handleCloseSessionTab}
+                />
+              )}
               <div className="flex-1 overflow-hidden relative">
                 {/* リポジトリグリッドビュー: gridRepoPath が設定されているとき
                     全 TerminalPane と独立して表示する (ttyd iframe は非マウント) */}
@@ -1312,8 +1468,9 @@ export default function Dashboard() {
                     <div
                       key={session.id}
                       id={sessionPanelId(session.id)}
-                      // タブがあるセッションだけ、タブと結ぶ (閉じたタブを指す参照を残さない)
-                      {...(sessionTabs.includes(session.id)
+                      // タブがあるセッションだけ、タブと結ぶ (閉じたタブを指す参照を残さない)。
+                      // ホームを決めている間はタブを出さないので結ばない
+                      {...(!homeWorktreePath && sessionTabs.includes(session.id)
                         ? {
                             role: "tabpanel",
                             "aria-labelledby": sessionTabId(session.id),
@@ -1417,6 +1574,7 @@ export default function Dashboard() {
               </div>
             </div>
           }
+          side={homeWorktreePath ? "right" : "left"}
           collapsed={sidebarCollapsed}
           rail={
             <SessionSidebarRail
