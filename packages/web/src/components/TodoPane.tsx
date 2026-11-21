@@ -9,7 +9,9 @@
  *
  * 行き先のリポジトリを持つ行 (todo_add の repo) は、アイコンではなく「<リポジトリ名> で始める」と
  * 文字で出すボタンを本文の下に置く。別のリポジトリのタスクとして切り出す行で、アイコン 2 つの
- * 見分けに頼らせないため。押すと新しいタスクのダイアログがそのリポジトリで開く
+ * 見分けに頼らせないため。押すと新しいタスクのダイアログがそのリポジトリで開く。
+ * この行には「元のセッションで話す」を出さない (別のリポジトリの仕事を、置いたセッションが
+ * 自分で始めてしまうため)
  */
 
 import type { Todo } from "@ark/shared";
@@ -133,7 +135,7 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
           </button>
         )}
       </div>
-      {canStart && props.onStartHere && (
+      {canStart && !startInRepo && props.onStartHere && (
         <button
           type="button"
           aria-label={m.todo.talkHere}
