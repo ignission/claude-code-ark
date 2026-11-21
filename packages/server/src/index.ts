@@ -694,6 +694,17 @@ export async function startServer(
     if (typeof basePath !== "string" || !basePath) return [];
     return (await scanRepositories(basePath)).map(repo => repo.path);
   };
+  // 候補のパスはシンボリックリンクを含む表記のまま残ることがある。親のリポジトリと同じかは
+  // 実体のパスで比べる (同じリポジトリを別のリポジトリと見て、既定ブランチから作らないように)
+  const isSameRepoPath = (a: string, b: string | undefined): boolean => {
+    if (b === undefined) return false;
+    if (a === b) return true;
+    try {
+      return fs.realpathSync(a) === fs.realpathSync(b);
+    } catch {
+      return false;
+    }
+  };
   const boardDeps: BoardMcpDeps = {
     async startTask(worktreePath, input) {
       // 親は呼び出し元の worktree。リポジトリとベースの既定は親から引く
@@ -715,7 +726,7 @@ export async function startServer(
       // 別のリポジトリへ切り出すとき、親のブランチはそのリポジトリに無い。既定ブランチから作る
       const baseBranch =
         input.baseBranch?.trim() ||
-        (repoPath === parentRepoPath
+        (isSameRepoPath(repoPath, parentRepoPath)
           ? await getAttachedBranch(worktreePath)
           : await getDefaultBranch(repoPath));
       const started = await startTask(taskStartDeps, {

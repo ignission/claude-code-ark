@@ -844,7 +844,13 @@ export default function Dashboard() {
   // 設定からの選択の復元より後に宣言して、同じ描画で両方走ってもホームが勝つようにする
   const homeOpenedForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (isSettingsLoading || !homeWorktreePath || !homeSession) return;
+    if (isSettingsLoading) return;
+    // ホームを解除したら記録も消す。同じ worktree をもう一度ホームにしたときも開く
+    if (!homeWorktreePath) {
+      homeOpenedForRef.current = null;
+      return;
+    }
+    if (!homeSession) return;
     if (homeOpenedForRef.current === homeWorktreePath) return;
     homeOpenedForRef.current = homeWorktreePath;
     setGridRepoPath(null);
@@ -958,7 +964,12 @@ export default function Dashboard() {
       }
       return;
     }
-    if (!homeWorktree) return;
+    // ホームの worktree が一覧に無い (worktree を消した、リポジトリを一覧から外した)。
+    // 起動できないので理由を伝える。設定は勝手に外さない (一覧の読み込み前と区別できないため)
+    if (!homeWorktree) {
+      toast.error(m.session.home.worktreeMissing);
+      return;
+    }
     homeOpenedForRef.current = null;
     startSession(homeWorktree.id, homeWorktree.path);
   };
@@ -1437,8 +1448,9 @@ export default function Dashboard() {
                     <div
                       key={session.id}
                       id={sessionPanelId(session.id)}
-                      // タブがあるセッションだけ、タブと結ぶ (閉じたタブを指す参照を残さない)
-                      {...(sessionTabs.includes(session.id)
+                      // タブがあるセッションだけ、タブと結ぶ (閉じたタブを指す参照を残さない)。
+                      // ホームを決めている間はタブを出さないので結ばない
+                      {...(!homeWorktreePath && sessionTabs.includes(session.id)
                         ? {
                             role: "tabpanel",
                             "aria-labelledby": sessionTabId(session.id),

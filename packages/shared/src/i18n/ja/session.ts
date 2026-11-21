@@ -164,6 +164,8 @@ export const session = {
     back: "ホームへ戻る",
     menu: "ホームのメニュー",
     notRunning: "未起動 (押すと起動)",
+    worktreeMissing:
+      "ホームのworktreeが見つかりません。リポジトリを一覧に追加するか、ホームを解除してください",
   },
   sidebar: {
     arkMenu: "Arkのメニュー",
