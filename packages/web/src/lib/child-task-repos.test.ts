@@ -30,4 +30,15 @@ describe("isCrossRepoChild", () => {
       false
     );
   });
+
+  it("親のセッションのリポジトリが分かれば、名前の形ではなくそれと比べる", () => {
+    // 親は名前が `app-` で始まる別のリポジトリ
+    const child = session({
+      repoPath: "/r/app",
+      parentWorktreePath: "/r/app-admin",
+    });
+    expect(isCrossRepoChild(child)).toBe(false);
+    expect(isCrossRepoChild(child, "/r/app-admin")).toBe(true);
+    expect(isCrossRepoChild(child, "/r/app")).toBe(false);
+  });
 });

@@ -582,45 +582,57 @@ describe("getDefaultBranch", () => {
 });
 
 describe("getLatestDefaultBase", () => {
-  const originHead: ExecRule = {
-    match: /symbolic-ref --quiet --short refs\/remotes\/origin\/HEAD/,
-    respond: () => ({ stdout: "origin/main\n" }),
+  const remoteHead = (branch: string): ExecRule => ({
+    match: /ls-remote --symref origin HEAD/,
+    respond: () => ({
+      stdout: `ref: refs/heads/${branch}\tHEAD\nabc\tHEAD\n`,
+    }),
+  });
+  const remoteUnreachable: ExecRule = {
+    match: /ls-remote/,
+    respond: () => execError("offline", 128),
   };
+  const originHead = (ref: string): ExecRule => ({
+    match: /symbolic-ref --quiet --short refs\/remotes\/origin\/HEAD/,
+    respond: () => ({ stdout: `${ref}\n` }),
+  });
   const verified: ExecRule = {
-    match: /rev-parse --verify --quiet "refs\/remotes\/origin\/main"/,
+    match: /rev-parse --verify --quiet "refs\/remotes\/origin\//,
     respond: () => ({ stdout: "abc\n" }),
   };
+  const fetched = (cmd: string) => /git fetch --quiet origin/.test(cmd);
 
-  it("既定ブランチを fetch してから、リモートの ref を返す", async () => {
+  it("リモートに聞いた既定ブランチを、取得先を明示して fetch し、リモートの ref を返す", async () => {
     execRules = [
-      originHead,
-      {
-        match: /git fetch --quiet origin "main"/,
-        respond: () => ({ stdout: "" }),
-      },
+      remoteHead("main"),
+      // 手元の origin/HEAD は古い名前のまま
+      originHead("origin/master"),
+      { match: /git fetch/, respond: () => ({ stdout: "" }) },
       verified,
     ];
     await expect(getLatestDefaultBase(REPO)).resolves.toBe("origin/main");
-    expect(
-      execCalls.some(cmd => /git fetch --quiet origin "main"/.test(cmd))
-    ).toBe(true);
+    expect(execCalls.find(fetched)).toContain(
+      '"+refs/heads/main:refs/remotes/origin/main"'
+    );
   });
 
-  it("fetch に失敗しても、今ある ref で進める", async () => {
+  it("リモートに聞けなければ、手元の origin/HEAD のブランチを使う", async () => {
     execRules = [
-      originHead,
+      remoteUnreachable,
+      originHead("origin/main"),
       { match: /git fetch/, respond: () => execError("offline", 128) },
       verified,
     ];
     await expect(getLatestDefaultBase(REPO)).resolves.toBe("origin/main");
   });
 
-  it("origin/HEAD が無ければ fetch せず、本体の作業ツリーのブランチを返す", async () => {
+  it("リモートに聞けず origin/HEAD も無ければ fetch せず、本体の作業ツリーのブランチを返す", async () => {
     execRules = [
+      remoteUnreachable,
       { match: /symbolic-ref/, respond: () => execError("no origin/HEAD", 1) },
       ...baseRules(() => porcelain([{ path: REPO, branch: "develop" }])),
     ];
     await expect(getLatestDefaultBase(REPO)).resolves.toBe("develop");
-    expect(execCalls.some(cmd => /git fetch/.test(cmd))).toBe(false);
+    expect(execCalls.some(fetched)).toBe(false);
   });
 });

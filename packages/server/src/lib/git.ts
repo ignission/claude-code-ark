@@ -692,36 +692,66 @@ export async function getDefaultBranch(
 const DEFAULT_BASE_FETCH_TIMEOUT_MS = 20_000;
 
 /**
- * 新しいタスクのベース: リモートの既定ブランチの最新 (origin/main など)。
- *
- * 先に `git fetch origin <既定ブランチ>` で取り直してから、リモートの ref を返す。手元のブランチは
- * 使わない (pull していなければ古く、そこから作った worktree は最初から遅れている)。
- * fetch に失敗したら (オフライン、認証切れ、時間切れ)、今ある ref のまま進める。
- * origin/HEAD が無いリポジトリは getDefaultBranch と同じ結果になる
+ * リモートが今、既定にしているブランチ (`git ls-remote --symref origin HEAD`)。
+ * 手元の origin/HEAD は、リモートの既定が替わっても通常の fetch では更新されないので、
+ * リモートに聞く。聞けなければ (オフライン、認証切れ、時間切れ) null
  */
-export async function getLatestDefaultBase(
-  repoPath: string
-): Promise<string | undefined> {
-  const safePath = validatePath(repoPath);
-  let remoteRef: string;
+async function queryRemoteDefaultBranch(
+  safePath: string
+): Promise<string | null> {
   try {
-    const { stdout } = await execAsync(
-      "git symbolic-ref --quiet --short refs/remotes/origin/HEAD",
-      { cwd: safePath }
-    );
-    remoteRef = stdout.trim();
-  } catch {
-    return getDefaultBranch(repoPath);
-  }
-  if (!remoteRef.startsWith("origin/")) return getDefaultBranch(repoPath);
-  const branch = validateBranchName(remoteRef.slice("origin/".length));
-  try {
-    await execAsync(`git fetch --quiet origin "${branch}"`, {
+    const { stdout } = await execAsync("git ls-remote --symref origin HEAD", {
       cwd: safePath,
       timeout: DEFAULT_BASE_FETCH_TIMEOUT_MS,
       // 認証を聞かれて止まらないようにする (聞かれたら失敗させ、今ある ref で進める)
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     });
+    const match = /^ref:\s+refs\/heads\/(\S+)\s+HEAD$/m.exec(stdout);
+    return match ? validateBranchName(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 新しいタスクのベース: リモートの既定ブランチの最新 (origin/main など)。
+ *
+ * リモートに既定ブランチを聞き (聞けなければ手元の origin/HEAD)、そのブランチを
+ * `refs/remotes/origin/<名前>` へ取り直してから、そのリモートの ref を返す。手元のブランチは
+ * 使わない (pull していなければ古く、そこから作った worktree は最初から遅れている)。
+ * 取得先を明示するのは、remote.origin.fetch の設定によっては `git fetch origin <名前>` が
+ * origin/<名前> を更新しないため。
+ * fetch に失敗したら (オフライン、認証切れ、時間切れ)、今ある ref のまま進める。
+ * リモートに聞けず origin/HEAD も無いリポジトリは getDefaultBranch と同じ結果になる
+ */
+export async function getLatestDefaultBase(
+  repoPath: string
+): Promise<string | undefined> {
+  const safePath = validatePath(repoPath);
+  let branch = await queryRemoteDefaultBranch(safePath);
+  if (!branch) {
+    try {
+      const { stdout } = await execAsync(
+        "git symbolic-ref --quiet --short refs/remotes/origin/HEAD",
+        { cwd: safePath }
+      );
+      const remoteRef = stdout.trim();
+      if (!remoteRef.startsWith("origin/")) return getDefaultBranch(repoPath);
+      branch = validateBranchName(remoteRef.slice("origin/".length));
+    } catch {
+      return getDefaultBranch(repoPath);
+    }
+  }
+  const remoteRef = `origin/${branch}`;
+  try {
+    await execAsync(
+      `git fetch --quiet origin "+refs/heads/${branch}:refs/remotes/origin/${branch}"`,
+      {
+        cwd: safePath,
+        timeout: DEFAULT_BASE_FETCH_TIMEOUT_MS,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      }
+    );
   } catch (error) {
     console.warn(
       `[Git] Could not fetch the default branch (repo=${safePath}, branch=${branch}); using the ref as it is: ${getErrorMessage(error)}`
@@ -730,9 +760,7 @@ export async function getLatestDefaultBase(
   try {
     await execAsync(
       `git rev-parse --verify --quiet "refs/remotes/${remoteRef}"`,
-      {
-        cwd: safePath,
-      }
+      { cwd: safePath }
     );
     return remoteRef;
   } catch {

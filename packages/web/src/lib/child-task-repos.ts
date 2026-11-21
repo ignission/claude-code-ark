@@ -24,8 +24,17 @@ function belongsToRepo(path: string, repoPath: string): boolean {
   );
 }
 
-/** 親と別のリポジトリへ切り出した子のセッションか */
-export function isCrossRepoChild(session: ManagedSession): boolean {
+/**
+ * 親と別のリポジトリへ切り出した子のセッションか。
+ * 親のセッションのリポジトリが分かれば、それと比べる。親のセッションが無いとき
+ * (止めたあと) だけ、親のパスが子のリポジトリのものかどうかの形で見分ける
+ * (名前が `<repo>-*` で始まる別のリポジトリを、同じリポジトリと見ることがある)
+ */
+export function isCrossRepoChild(
+  session: ManagedSession,
+  parentRepoPath?: string | null
+): boolean {
   if (!session.parentWorktreePath || !session.repoPath) return false;
+  if (parentRepoPath) return parentRepoPath !== session.repoPath;
   return !belongsToRepo(session.parentWorktreePath, session.repoPath);
 }
