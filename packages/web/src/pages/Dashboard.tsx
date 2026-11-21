@@ -992,6 +992,9 @@ export default function Dashboard() {
       }
       onOpen={handleOpenHome}
       onUnset={() => setHomeWorktreePath(null)}
+      onRestart={
+        homeSession ? () => handleRestartSession(homeSession.id) : undefined
+      }
     />
   ) : null;
   // PCで、ホーム以外のセッションを開いている間に出す「ホームへ戻る」の対象

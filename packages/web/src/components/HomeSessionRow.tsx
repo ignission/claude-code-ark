@@ -5,6 +5,17 @@
  */
 
 import { ArrowLeft, Home, MoreHorizontal } from "lucide-react";
+import { useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +39,11 @@ interface HomeSessionRowProps {
   /** ホームを開く。未起動なら起動する */
   onOpen: () => void;
   onUnset: () => void;
+  /**
+   * ホームのセッションを再起動する (会話は新しく始まる)。動いていなければ渡さない。
+   * ホームは一覧の行から外れていて行のメニューを使えないので、ここに置く
+   */
+  onRestart?: () => void;
 }
 
 export function HomeSessionRow({
@@ -38,8 +54,11 @@ export function HomeSessionRow({
   selected,
   onOpen,
   onUnset,
+  onRestart,
 }: HomeSessionRowProps) {
   const card = variant === "card";
+  // 再起動は会話の履歴を切るので、一覧の行と同じ確認を挟む
+  const [confirmingRestart, setConfirmingRestart] = useState(false);
   return (
     <div
       data-home-row=""
@@ -89,6 +108,14 @@ export function HomeSessionRow({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">
+          {onRestart && (
+            <DropdownMenuItem
+              className={card ? "min-h-11" : undefined}
+              onSelect={() => setConfirmingRestart(true)}
+            >
+              {m.session.actions.restart}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             className={card ? "min-h-11" : undefined}
             onSelect={onUnset}
@@ -97,6 +124,32 @@ export function HomeSessionRow({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <AlertDialog open={confirmingRestart} onOpenChange={setConfirmingRestart}>
+        <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md mx-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {m.session.list.restartConfirmTitle}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.session.list.restartConfirmBody}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+            <AlertDialogCancel className="h-12 md:h-10">
+              {m.common.cancel}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="h-12 md:h-10"
+              onClick={() => {
+                onRestart?.();
+                setConfirmingRestart(false);
+              }}
+            >
+              {m.session.actions.restart}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
