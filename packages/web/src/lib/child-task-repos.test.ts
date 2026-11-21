@@ -41,4 +41,23 @@ describe("isCrossRepoChild", () => {
     expect(isCrossRepoChild(child, "/r/app-admin")).toBe(true);
     expect(isCrossRepoChild(child, "/r/app")).toBe(false);
   });
+
+  it("起こした時点で記録した親のリポジトリがあれば、親のセッションが無くてもそれと比べる", () => {
+    const child = session({
+      repoPath: "/r/app",
+      parentWorktreePath: "/r/app-admin",
+      parentRepoPath: "/r/app-admin",
+    });
+    expect(isCrossRepoChild(child)).toBe(true);
+    // 同じリポジトリの兄弟ディレクトリから分けた子
+    expect(
+      isCrossRepoChild(
+        session({
+          repoPath: "/r/app",
+          parentWorktreePath: "/r/app-a",
+          parentRepoPath: "/r/app",
+        })
+      )
+    ).toBe(false);
+  });
 });

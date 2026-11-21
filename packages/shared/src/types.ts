@@ -100,6 +100,11 @@ export interface Session {
    * サイドバーで子を親の下に並べ、子から親を開くために使う。人が普通に作ったセッションは null
    */
   parentWorktreePath?: string | null;
+  /**
+   * 親の worktree が属するリポジトリ (起こした時点で記録する)。親のセッションを止めたあとも、
+   * 親と別のリポジトリへ切り出した子かどうかを見分けるために使う。記録の無い古い行は null
+   */
+  parentRepoPath?: string | null;
 }
 
 /**

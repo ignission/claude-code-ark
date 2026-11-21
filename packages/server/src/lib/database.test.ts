@@ -370,6 +370,38 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
       expect(restored?.id).toBe("new");
       expect(restored?.parentWorktreePath).toBe("/repo");
     });
+
+    it("親のリポジトリも保存でき、親を渡さない upsert では消さず、再起動で引き継ぐ", () => {
+      const base = {
+        worktreeId: "wt",
+        worktreePath: "/other-fix",
+        repoPath: "/other",
+        status: "active" as const,
+      };
+      testDb.upsertSession({
+        id: "a",
+        ...base,
+        parentWorktreePath: "/repo",
+        parentRepoPath: "/repo",
+      });
+      testDb.upsertSession({ id: "b", ...base });
+      expect(
+        testDb.getSessionByWorktreePath("/other-fix")?.parentRepoPath
+      ).toBe("/repo");
+      testDb.replaceSession("b", {
+        id: "c",
+        ...base,
+        parentWorktreePath: "/repo",
+        parentRepoPath: "/repo",
+      });
+      expect(
+        testDb.getSessionByWorktreePath("/other-fix")?.parentRepoPath
+      ).toBe("/repo");
+      testDb.upsertSession({ id: "plain", ...base, worktreePath: "/plain" });
+      expect(
+        testDb.getSessionByWorktreePath("/plain")?.parentRepoPath
+      ).toBeNull();
+    });
   });
 
   // ============================================================

@@ -111,6 +111,7 @@ interface SessionRow {
   /** セッションで最後に開いた図（.claude/diagrams/*.diagram.html）の worktree 相対パス */
   last_diagram_path: string | null;
   parent_worktree_path: string | null;
+  parent_repo_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -164,6 +165,8 @@ interface CreateSessionInput {
   readonly boardMcpConfigPath?: string | null;
   /** 親の worktree のパス (task_start で起こした子だけ) */
   readonly parentWorktreePath?: string | null;
+  /** 親の worktree が属するリポジトリ (task_start で起こした子だけ) */
+  readonly parentRepoPath?: string | null;
 }
 
 /** メッセージ作成時の入力データ */
@@ -338,6 +341,16 @@ export class SessionDatabase {
     // (task_start で起こした子を、サーバー再起動後も親の下に並べるため)
     try {
       this.db.exec("ALTER TABLE sessions ADD COLUMN parent_worktree_path TEXT");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
+    // マイグレーション: sessionsテーブルにparent_repo_path列を追加
+    // (親のセッションを止めたあとも、別のリポジトリへ切り出した子かを見分けるため)
+    try {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN parent_repo_path TEXT");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes("duplicate column name")) {
@@ -563,8 +576,8 @@ export class SessionDatabase {
   upsertSession(session: CreateSessionInput): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, board_mcp_config_path, parent_worktree_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, board_mcp_config_path, parent_worktree_path, parent_repo_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worktree_path) DO UPDATE SET
         id = excluded.id,
         worktree_id = excluded.worktree_id,
@@ -575,6 +588,7 @@ export class SessionDatabase {
         board_mcp_config_path = excluded.board_mcp_config_path,
         -- A start without a parent (session:start etc.) must not erase the parent link of an existing row
         parent_worktree_path = COALESCE(excluded.parent_worktree_path, parent_worktree_path),
+        parent_repo_path = COALESCE(excluded.parent_repo_path, parent_repo_path),
         updated_at = excluded.updated_at
     `);
     stmt.run(
@@ -587,6 +601,7 @@ export class SessionDatabase {
       session.profileConfigDir ?? null,
       session.boardMcpConfigPath ?? null,
       session.parentWorktreePath ?? null,
+      session.parentRepoPath ?? null,
       now,
       now
     );
@@ -787,6 +802,7 @@ export class SessionDatabase {
       boardMcpConfigPath: row.board_mcp_config_path,
       lastDiagramPath: row.last_diagram_path,
       parentWorktreePath: row.parent_worktree_path ?? null,
+      parentRepoPath: row.parent_repo_path ?? null,
     };
   }
 
