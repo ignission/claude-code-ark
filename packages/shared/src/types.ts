@@ -1023,7 +1023,11 @@ export interface Todo {
   /** 会話を始めた時刻 (ms)。始めていなければ null */
   startedAt: number | null;
   /** Claude が付けた、新しい worktree のブランチ名の候補 (kebab-case)。無ければ null */
-  branchName: string | null;
+  branchName: string | null /**
+   * この TODO を始めるリポジトリの絶対パス (todo_add の repo を解決したもの)。
+   * null なら TODO を置いた worktree と同じリポジトリ
+   */;
+  repoPath: string | null;
 }
 
 /** task:start で送るもの */

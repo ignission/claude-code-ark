@@ -777,7 +777,22 @@ export async function startServer(
     },
     async addTodo(worktreePath, input) {
       // TODO は registry 登録時の生パスで持つ (クライアントの session.worktreePath と同じ値)
-      const todo = db.addTodo({ worktreePath, ...input });
+      // repo は task_start と同じ候補から解決する。置いた worktree と同じリポジトリなら持たない
+      const { repo, ...rest } = input;
+      const requestedRepo = repo?.trim();
+      const resolvedRepo = requestedRepo
+        ? resolveTaskRepo(requestedRepo, await taskRepoCandidates())
+        : undefined;
+      const ownRepo =
+        sessionOrchestrator.getSessionByWorktree(worktreePath)?.repoPath;
+      const todo = db.addTodo({
+        worktreePath,
+        ...rest,
+        repoPath:
+          resolvedRepo && !isSameRepoPath(resolvedRepo, ownRepo)
+            ? resolvedRepo
+            : null,
+      });
       emitTodoChanged();
       return todo;
     },

@@ -163,6 +163,7 @@ describe("handleTodoAdd / handleTodoList", () => {
     startedWorktreePath: null,
     startedAt: null,
     branchName: null,
+    repoPath: null,
   });
 
   it("ブランチ名の候補をそのまま addTodo へ渡す", async () => {
@@ -189,6 +190,30 @@ describe("handleTodoAdd / handleTodoList", () => {
     expect(addTodo).toHaveBeenCalledWith("/w", { text: "ログの形式" });
   });
 
+  it("repo を渡すとそのまま addTodo に渡し、一覧では解決済みのパスを返す", async () => {
+    const addTodo = vi.fn(async (_w: string, input: { text: string }) =>
+      todo(input.text)
+    );
+    await handleTodoAdd({ addTodo }, "/w", { text: "見積もり", repo: "app" });
+    expect(addTodo).toHaveBeenCalledWith("/w", {
+      text: "見積もり",
+      repo: "app",
+    });
+    const listTodos = vi.fn(async () => [
+      { ...todo("見積もり"), repoPath: "/dev/acme/app" },
+    ]);
+    expect(await handleTodoList({ listTodos }, "/w")).toEqual({
+      todos: [
+        {
+          id: "id-見積もり",
+          text: "見積もり",
+          note: null,
+          repo: "/dev/acme/app",
+        },
+      ],
+    });
+  });
+
   it("足せなければ error を返す", async () => {
     const addTodo = vi.fn(async () => {
       throw new Error("TODO の本文が空です");
@@ -201,7 +226,7 @@ describe("handleTodoAdd / handleTodoList", () => {
   it("未完了の一覧を id・本文・メモだけにして返す", async () => {
     const listTodos = vi.fn(async () => [todo("a")]);
     expect(await handleTodoList({ listTodos }, "/w")).toEqual({
-      todos: [{ id: "id-a", text: "a", note: null }],
+      todos: [{ id: "id-a", text: "a", note: null, repo: null }],
     });
   });
 });

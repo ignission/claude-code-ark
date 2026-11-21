@@ -12,6 +12,7 @@ const todo = (over: Partial<Todo> = {}): Todo => ({
   startedWorktreePath: null,
   startedAt: null,
   branchName: null,
+  repoPath: null,
   ...over,
 });
 

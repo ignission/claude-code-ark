@@ -155,6 +155,8 @@ export const session: Messages["session"] = {
     back: "Back to home",
     menu: "Home menu",
     notRunning: "Not running (tap to start)",
+    notStarted: "Not started",
+    startTodo: "Start this",
     worktreeMissing:
       "The home worktree was not found. Add its repository to the list, or unset home",
   },

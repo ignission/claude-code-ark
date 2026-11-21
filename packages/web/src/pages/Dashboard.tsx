@@ -9,6 +9,7 @@ import { FilePane } from "@/components/FilePane";
 import { FilePeek, type FilePeekTarget } from "@/components/FilePeek";
 import { GitPane } from "@/components/git/GitPane";
 import { HomeBackBar, HomeSessionRow } from "@/components/HomeSessionRow";
+import { HomeTodoList } from "@/components/HomeTodoList";
 import {
   MobileLayout,
   type MobileTab,
@@ -997,6 +998,29 @@ export default function Dashboard() {
       }
     />
   ) : null;
+  // ホームに置いた、まだ始めていない TODO。一覧の先頭に「未着手」として並べる
+  const homeOpenTodos = homeWorktreePath
+    ? todos.todos.filter(
+        todo =>
+          todo.worktreePath === homeWorktreePath &&
+          todo.doneAt === null &&
+          todo.startedWorktreePath === null
+      )
+    : [];
+  const homeSlot = homeRow ? (
+    <>
+      {homeRow}
+      <HomeTodoList
+        variant={isMobile ? "card" : "sidebar"}
+        todos={homeOpenTodos}
+        onStart={todo =>
+          todo.repoPath
+            ? handleStartTodoInNewWorktree(todo)
+            : handleStartTodoHere(todo)
+        }
+      />
+    </>
+  ) : null;
   // PCで、ホーム以外のセッションを開いている間に出す「ホームへ戻る」の対象
   const awayFromHomeSessionId =
     homeWorktreePath &&
@@ -1107,6 +1131,18 @@ export default function Dashboard() {
    * 送られ、元のworktreeが親になる (始めた先の記録はサーバーが todoId を見て行う)
    */
   const handleStartTodoInNewWorktree = (todo: Todo) => {
+    // 行き先のリポジトリを持つ TODO (todo_add の repo) は、そのリポジトリで始める。
+    // ベースは空にしてサーバーに既定ブランチを選ばせる (置いた worktree のブランチはそこに無い)
+    if (todo.repoPath) {
+      setNewTaskInitial({
+        repoPath: todo.repoPath,
+        name: todoBranchCandidate(todo),
+        prompt: buildTodoDraft(todo),
+        parentWorktreePath: todo.worktreePath,
+        todoId: todo.id,
+      });
+      return;
+    }
     const origin = resolveTodoOrigin(
       todo.worktreePath,
       sessions.values(),
@@ -1149,6 +1185,7 @@ export default function Dashboard() {
 
   // 元のworktreeのリポジトリが分かるときだけ、新しいworktreeで始められる
   const canStartTodoInNewWorktree = (todo: Todo) =>
+    todo.repoPath !== null ||
     resolveTodoOrigin(
       todo.worktreePath,
       sessions.values(),
@@ -1254,7 +1291,7 @@ export default function Dashboard() {
           onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
           onRemoveRepo={handleRemoveRepo}
           notificationControl={notificationControl}
-          home={homeRow}
+          home={homeSlot}
           homeWorktreePath={homeWorktreePath}
           onSetHome={setHomeWorktreePath}
           onOpenHome={homeWorktreePath ? handleOpenHome : undefined}
@@ -1306,7 +1343,7 @@ export default function Dashboard() {
               onYourTurnCountChange={setYourTurnCount}
               metrics={hostMetrics}
               notificationControl={notificationControl}
-              home={homeRow}
+              home={homeSlot}
               homeWorktreePath={homeWorktreePath}
               onSetHome={setHomeWorktreePath}
               screens={screens}

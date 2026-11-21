@@ -130,10 +130,13 @@ export interface BoardMcpDeps {
    * セッションを消した子は返らない
    */
   listTasks(worktreePath: string): Promise<TaskListItem[]>;
-  /** 分岐TODOを足す。本文の正規化と空の拒否は DB 側で行う */
+  /**
+   * 分岐TODOを足す。本文の正規化と空の拒否は DB 側で行う。
+   * repo は task_start と同じ決まりで解決する (task-repo.ts)。解決できなければ throw する
+   */
   addTodo(
     worktreePath: string,
-    input: { text: string; note?: string; branch?: string }
+    input: { text: string; note?: string; branch?: string; repo?: string }
   ): Promise<Todo>;
   /** この worktree の未完了の TODO */
   listTodos(worktreePath: string): Promise<Todo[]>;
@@ -170,7 +173,7 @@ export async function handleBoardOpen(
 export async function handleTodoAdd(
   deps: Pick<BoardMcpDeps, "addTodo">,
   worktreePath: string,
-  input: { text: string; note?: string; branch?: string }
+  input: { text: string; note?: string; branch?: string; repo?: string }
 ): Promise<{ added: { id: string; text: string } } | { error: string }> {
   try {
     const todo = await deps.addTodo(worktreePath, input);
@@ -185,11 +188,21 @@ export async function handleTodoList(
   deps: Pick<BoardMcpDeps, "listTodos">,
   worktreePath: string
 ): Promise<{
-  todos: Array<{ id: string; text: string; note: string | null }>;
+  todos: Array<{
+    id: string;
+    text: string;
+    note: string | null;
+    repo: string | null;
+  }>;
 }> {
   const todos = await deps.listTodos(worktreePath);
   return {
-    todos: todos.map(t => ({ id: t.id, text: t.text, note: t.note })),
+    todos: todos.map(t => ({
+      id: t.id,
+      text: t.text,
+      note: t.note,
+      repo: t.repoPath,
+    })),
   };
 }
 
@@ -282,6 +295,12 @@ export function createBoardMcpServer(
           .describe(
             "Suggested branch name for when a new worktree is created from this TODO. English kebab-case summarizing the topic (e.g. fix-log-format), about 3 to 5 words"
           ),
+        repo: z
+          .string()
+          .optional()
+          .describe(
+            "Repository the work belongs to, when it is not this session's. An absolute path, or the trailing part of one (e.g. name, owner/name), resolved the same way as task_start's repo. With it, the user can start the TODO as a task in that repository in one step. Omit it when the repository is unknown"
+          ),
       },
     },
     async args => {
@@ -289,6 +308,7 @@ export function createBoardMcpServer(
         text: args.text,
         ...(args.note === undefined ? {} : { note: args.note }),
         ...(args.branch === undefined ? {} : { branch: args.branch }),
+        ...(args.repo === undefined ? {} : { repo: args.repo }),
       });
       return textResult(
         "error" in result

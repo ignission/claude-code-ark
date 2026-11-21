@@ -96,6 +96,20 @@ describe("SessionDatabase: todos", () => {
     expect(db.listTodos()).toHaveLength(2);
   });
 
+  it("始めるリポジトリを持てる。渡さなければ null", () => {
+    const withRepo = db.addTodo({
+      worktreePath: "/home",
+      text: "見積もりを出す",
+      repoPath: "/dev/acme/app",
+    });
+    const plain = db.addTodo({ worktreePath: "/home", text: "メモを直す" });
+    expect(withRepo.repoPath).toBe("/dev/acme/app");
+    expect(plain.repoPath).toBeNull();
+    expect(
+      db.listTodos({ worktreePath: "/home" }).map(todo => todo.repoPath)
+    ).toEqual(["/dev/acme/app", null]);
+  });
+
   it("本文が空なら投げる", () => {
     expect(() => db.addTodo({ worktreePath: "/w/a", text: " \n " })).toThrow(
       "TODO text is empty"

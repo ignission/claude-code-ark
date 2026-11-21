@@ -80,6 +80,7 @@ interface TodoRow {
   started_worktree_path: string | null;
   started_at: number | null;
   branch_name: string | null;
+  repo_path: string | null;
 }
 
 function rowToTodo(row: TodoRow): Todo {
@@ -93,6 +94,7 @@ function rowToTodo(row: TodoRow): Todo {
     startedWorktreePath: row.started_worktree_path,
     startedAt: row.started_at,
     branchName: row.branch_name,
+    repoPath: row.repo_path ?? null,
   };
 }
 
@@ -486,6 +488,10 @@ export class SessionDatabase {
     // Claude が付けたブランチ名の候補 (新しいworktreeで話すときの既定値)
     if (!todoColumns.includes("branch_name")) {
       this.db.exec("ALTER TABLE todos ADD COLUMN branch_name TEXT");
+    }
+    // この TODO を始めるリポジトリ (todo_add の repo。置いた worktree と別のリポジトリで始めるとき)
+    if (!todoColumns.includes("repo_path")) {
+      this.db.exec("ALTER TABLE todos ADD COLUMN repo_path TEXT");
     }
 
     // マイグレーション: 旧 label 列を削除する。
@@ -1467,6 +1473,8 @@ export class SessionDatabase {
     text: string;
     note?: string | null;
     branch?: string | null;
+    /** 解決済みのリポジトリの絶対パス。置いた worktree と同じリポジトリなら渡さない */
+    repoPath?: string | null;
   }): Todo {
     const text = normalizeTodoText(input.text);
     if (!text) throw new Error("TODO text is empty");
@@ -1481,11 +1489,12 @@ export class SessionDatabase {
       started_worktree_path: null,
       started_at: null,
       branch_name: normalizeTodoBranch(input.branch),
+      repo_path: input.repoPath?.trim() || null,
     };
     this.db
       .prepare(
-        `INSERT INTO todos (id, worktree_path, text, note, created_at, done_at, branch_name)
-         VALUES (@id, @worktree_path, @text, @note, @created_at, @done_at, @branch_name)`
+        `INSERT INTO todos (id, worktree_path, text, note, created_at, done_at, branch_name, repo_path)
+         VALUES (@id, @worktree_path, @text, @note, @created_at, @done_at, @branch_name, @repo_path)`
       )
       .run(row);
     return rowToTodo(row);
