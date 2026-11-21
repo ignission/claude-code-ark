@@ -1,7 +1,7 @@
 name: build-bin (macOS arm64 tmux/ttyd)
 
 # F4: tmux/ttyd 同梱バイナリのクロスビルドワークフロー。
-# macos-14 (Apple Silicon) runner で arm64 native build を行い、
+# macos-15 (Apple Silicon) runner で arm64 native build を行い、
 # packages/desktop/build-assets/{bin,Frameworks,licenses}/ に成果物を配置する。
 # manifest.json の hash でビルド成果物を actions/cache にキャッシュする。
 #
@@ -34,7 +34,7 @@ on:
 jobs:
   build:
     name: Build tmux/ttyd for macOS arm64
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
 
     env:
@@ -57,7 +57,7 @@ jobs:
           fi
 
       - name: Install build tools
-        # macOS 14 runner には Xcode CLT が既にインストール済み。
+        # macOS 15 runner には Xcode CLT が既にインストール済み。
         # jq / cmake / autoconf / automake / pkg-config を Homebrew で追加導入。
         run: |
           brew update

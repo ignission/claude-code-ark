@@ -41,7 +41,7 @@ jobs:
 
   build:
     name: Build .app (macOS arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     # tmux/ttyd 同梱バイナリを取得した後でないと electron-builder が
     # extraResources で参照する build-assets/bin が空になり、配布した .app から
@@ -215,7 +215,7 @@ jobs:
           # readiness probe: 固定 ARK_PORT に対して curl で listen 到達を確認する。
           # bootstrap + server.listen に必要な時間 (Helper プロセス起動 +
           # better-sqlite3 binding + paths 初期化 + Express bind)。
-          # GHA macos-14 は最大 60s で十分。ループ内で early crash を検知して
+          # GHA macos-15 は最大 60s で十分。ループ内で early crash を検知して
           # 60s 待たずに即 fail させる (Dynamic require 系のクラッシュは bootstrap
           # 開始直後に throw するため)。
           READY=0
