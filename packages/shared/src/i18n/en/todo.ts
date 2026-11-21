@@ -9,6 +9,7 @@ export const todo: Messages["todo"] = {
   markUndone: "Mark as not done",
   talkHere: "Discuss in the original session",
   talkInNewWorktree: "Discuss in a new worktree",
+  startInRepo: (repoName: string) => `Start in ${repoName}`,
   remove: "Remove TODO",
   startedHere: "Started in this session",
   startedIn: (label: string | null) =>
