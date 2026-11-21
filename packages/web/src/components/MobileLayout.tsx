@@ -192,6 +192,8 @@ interface MobileLayoutProps {
   home?: ReactNode;
   homeWorktreePath?: string | null;
   onSetHome?: (worktreePath: string) => void;
+  /** ホームの会話を開く。ホームを決めていなければ無い */
+  onOpenHome?: () => void;
   notificationsSupported?: boolean;
   isSessionNotificationEnabled?: (sessionId: string) => boolean;
   onSessionNotificationEnabledChange?: (
@@ -267,6 +269,7 @@ export function MobileLayout({
   home,
   homeWorktreePath,
   onSetHome,
+  onOpenHome,
   notificationsSupported = false,
   isSessionNotificationEnabled,
   onSessionNotificationEnabledChange,
@@ -516,6 +519,15 @@ export function MobileLayout({
                     : undefined
                 }
                 onBack={handleBack}
+                onOpenHome={
+                  homeWorktreePath && session.worktreePath !== homeWorktreePath
+                    ? onOpenHome
+                    : undefined
+                }
+                isHome={
+                  homeWorktreePath != null &&
+                  session.worktreePath === homeWorktreePath
+                }
                 todoPane={renderTodoPane?.(session, openWorktreeSession)}
                 onSendMessage={message => onSendMessage(sessionId, message)}
                 onSendKey={key => onSendKey(sessionId, key)}

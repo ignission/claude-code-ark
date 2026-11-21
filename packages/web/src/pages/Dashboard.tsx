@@ -1251,6 +1251,7 @@ export default function Dashboard() {
           home={homeRow}
           homeWorktreePath={homeWorktreePath}
           onSetHome={setHomeWorktreePath}
+          onOpenHome={homeWorktreePath ? handleOpenHome : undefined}
           notificationsSupported={sessionNotifications.supported}
           isSessionNotificationEnabled={isSessionNotificationEnabled}
           onSessionNotificationEnabledChange={
