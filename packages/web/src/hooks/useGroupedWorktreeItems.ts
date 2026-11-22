@@ -38,10 +38,17 @@ function getBaseName(repoPath: string): string {
   return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
 }
 
+const NO_ACTIVE_SESSIONS: ReadonlySet<string> = new Set();
+
 export function useGroupedWorktreeItems(
   worktrees: Worktree[],
   sessions: Map<string, ManagedSession>,
-  repoList: string[]
+  repoList: string[],
+  /**
+   * いま動いているか直近に動いたセッションの id。リポジトリが未登録でも一覧に出す
+   * (lib/unlisted-active-sessions.ts)。中身が同じなら同じ参照を渡すこと
+   */
+  activeSessionIds: ReadonlySet<string> = NO_ACTIVE_SESSIONS
 ) {
   const sessionByWorktreeId = useMemo(() => {
     const map = new Map<string, ManagedSession>();
@@ -103,8 +110,9 @@ export function useGroupedWorktreeItems(
         repoPathByWorktreePath.set(session.worktreePath, session.repoPath);
       }
     }
-    // 登録したリポジトリが空でも走査する。別のリポジトリへ切り出した子は、リポジトリが
-    // 未登録でも出す (lib/child-task-repos.ts)。それ以外の未登録のセッションは出さない
+    // 登録したリポジトリが空でも走査する。別のリポジトリへ切り出した子 (lib/child-task-repos.ts)
+    // と、動いているか直近に動いたセッション (lib/unlisted-active-sessions.ts) は、リポジトリが
+    // 未登録でも出す。それ以外の未登録のセッションは出さない
     for (const session of sortedSessions) {
       if (worktreeSessionIds.has(session.id)) continue;
       const repo = session.repoPath ?? findRepoForSession(session, repoList);
@@ -114,7 +122,12 @@ export function useGroupedWorktreeItems(
           ? repoPathByWorktreePath.get(session.parentWorktreePath)
           : null
       );
-      if (!repo || !(repoList.includes(repo) || crossRepoChild)) continue;
+      if (!repo) continue;
+      const shown =
+        repoList.includes(repo) ||
+        crossRepoChild ||
+        activeSessionIds.has(session.id);
+      if (!shown) continue;
       ensureGroup(repo).items.push({ worktree: null, session });
     }
 
@@ -160,7 +173,7 @@ export function useGroupedWorktreeItems(
         return byName !== 0 ? byName : pathA.localeCompare(pathB);
       })
     );
-  }, [worktrees, sessions, sessionByWorktreeId, repoList]);
+  }, [worktrees, sessions, sessionByWorktreeId, repoList, activeSessionIds]);
 
   return { groupedItems, sessionByWorktreeId };
 }

@@ -42,6 +42,7 @@ import {
   toListRows,
 } from "@/lib/session-sections";
 import { presentStatus, SECTION_LABELS, TONE_CLASSES } from "@/lib/status-tone";
+import { collectActiveSessionIds } from "@/lib/unlisted-active-sessions";
 import { cn } from "@/lib/utils";
 import { getBaseName } from "@/utils/pathUtils";
 import { resolveSessionRowProfile, SessionListRow } from "./SessionListRow";
@@ -152,6 +153,8 @@ export function revealSelectedSessionRow(): void {
     ?.scrollIntoView?.({ block: "nearest" });
 }
 
+const NO_LAST_UPDATED: ReadonlyMap<string, number> = new Map();
+
 export function SessionSectionList({
   variant,
   sessions,
@@ -188,10 +191,23 @@ export function SessionSectionList({
   homeWorktreePath = null,
   onSetHome,
 }: SessionSectionListProps) {
+  // 未登録のリポジトリでも、動いているか直近に動いたセッションは一覧に出す。
+  // 中身が変わったときだけ Set を作り直す (状態は毎秒届くので、毎回作り直すと一覧を組み直し続ける)
+  const activeSessionKey = collectActiveSessionIds(
+    Array.from(sessions.values(), session => session.id),
+    sessionStatuses,
+    sessionLastUpdatedAt ?? NO_LAST_UPDATED,
+    Date.now()
+  ).join("\n");
+  const activeSessionIds = useMemo(
+    () => new Set(activeSessionKey ? activeSessionKey.split("\n") : []),
+    [activeSessionKey]
+  );
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
     sessions,
-    repoList
+    repoList,
+    activeSessionIds
   );
   const { held, bindings, onMenuOpenChange } = useListHold();
   // ホームの行は一覧から外す。親をたどる対応表 (entryByPath) にも入らないので、
