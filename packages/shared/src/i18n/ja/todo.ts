@@ -8,6 +8,8 @@ export const todo = {
   talkHere: "元のセッションで話す",
   talkInNewWorktree: "新しいworktreeで話す",
   startInRepo: (repoName: string) => `${repoName} で始める`,
+  /** 始めた先のセッションがあるときに「始める」の代わりに出す。label はその表示名 */
+  openStarted: (label: string) => `${label} へ移動`,
   remove: "TODO を消す",
   startedHere: "このセッションで始めた",
   /** label は始めた先の worktree の表示名。worktree を消していれば null */
