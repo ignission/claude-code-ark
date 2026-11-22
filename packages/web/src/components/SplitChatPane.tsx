@@ -1772,6 +1772,9 @@ export function SplitChatPane({
   // 「中断 + 入力欄に直前のテキストを復元」を再現するため。
   // 復元したら ref をクリアし、次の submit で上書きされる。
   const lastSubmittedRef = useRef<string>("");
+  // 直近に送った本文 (メンションを絶対パスへ置き換えたあと)。Esc で送信中の吹き出しを消すときに
+  // 照合する。候補は送ったあとに変わりうるので、置き換えをやり直さずに送った時点の文を持つ
+  const lastSentRef = useRef<string>("");
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -1794,6 +1797,7 @@ export function SplitChatPane({
     // Esc で入力欄へ戻すのは、書いたままの文 (`@名前`)。送るのは絶対パスへ置き換えた文
     lastSubmittedRef.current = value;
     const sent = expandRepoMentions(value, repoMentions);
+    lastSentRef.current = sent;
     onSendMessage(sent);
     // built-in slash command (/compact, /clear 等) は JSONL に user-input として
     // 記録されないため、pending bubble だと永遠に spinner が残る。
@@ -2006,10 +2010,7 @@ export function SplitChatPane({
           lastSubmittedRef.current = "";
         }
         if (action.removePendingText !== null) {
-          const norm = expandRepoMentions(
-            action.removePendingText,
-            repoMentions
-          ).trim();
+          const norm = lastSentRef.current.trim();
           setPending(prev => prev.filter(p => p.text.trim() !== norm));
         }
       }

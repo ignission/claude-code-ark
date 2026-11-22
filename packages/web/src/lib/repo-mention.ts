@@ -21,13 +21,19 @@
 
 /** リポジトリのパスの一部になりうる文字。メンションとパスの終わりを見分けるのに使う */
 const PATH_CHAR = /[A-Za-z0-9._/-]/;
-/** `@` の直前にあるとメンションにしない文字 (正規表現の文字クラスの中身) */
-const NOT_BEFORE_MENTION = "A-Za-z0-9._/@-";
-const MENTION_AT_CARET = new RegExp(`(?:^|[^${NOT_BEFORE_MENTION}])@(\\S*)$`);
-const MENTION_IN_TEXT = new RegExp(
-  `(^|[^${NOT_BEFORE_MENTION}])@([^\\s@]+)`,
-  "g"
-);
+/** カーソルの直前にある打ちかけのメンション。別の `@` はまたがない */
+const MENTION_AT_CARET = /@([^\s@]*)$/;
+const MENTION_IN_TEXT = /@([^\s@]+)/g;
+
+/** `@` の直前の文字から、メンションとして読むかを決める (英数字などパスの文字と `@` の直後は読まない) */
+function canStartMention(prev: string | undefined): boolean {
+  return prev === undefined || (prev !== "@" && !PATH_CHAR.test(prev));
+}
+
+/** 名前に空白か `@` を含むと、`@名前` の終わりを本文から読み取れない */
+function isPlainLabel(label: string): boolean {
+  return !/[\s@]/.test(label);
+}
 
 export interface RepoMentionCandidate {
   /** リポジトリの絶対パス */
@@ -102,8 +108,9 @@ export function findRepoMentionAtCaret(
   const match = MENTION_AT_CARET.exec(before);
   if (!match) return null;
   const query = match[1] ?? "";
-  if (query.startsWith("/")) return null;
-  return { start: before.length - query.length - 1, query };
+  const start = before.length - query.length - 1;
+  if (query.startsWith("/") || !canStartMention(before[start - 1])) return null;
+  return { start, query };
 }
 
 /** 打った文字で候補を絞る。名前の先頭に一致するものを先に、途中に一致するものを後に並べる */
@@ -131,7 +138,10 @@ export function filterRepoMentionCandidates(
   return [...head, ...rest].slice(0, limit);
 }
 
-/** 打ちかけのメンションを、選んだ候補の短い名前に置き換える。続けて書けるよう空白を 1 つ足す */
+/**
+ * 打ちかけのメンションを、選んだ候補の短い名前に置き換える。続けて書けるよう空白を 1 つ足す。
+ * 名前に空白か `@` を含む候補は、送るときに名前の終わりを読み取れないので、絶対パスをそのまま入れる
+ */
 export function applyRepoMention(
   value: string,
   mention: ActiveRepoMention,
@@ -139,7 +149,10 @@ export function applyRepoMention(
   candidate: RepoMentionCandidate
 ): { value: string; caret: number } {
   const after = value.slice(caret);
-  const inserted = `@${candidate.label}${/^\s/.test(after) ? "" : " "}`;
+  const text = isPlainLabel(candidate.label)
+    ? `@${candidate.label}`
+    : candidate.path;
+  const inserted = `${text}${/^\s/.test(after) ? "" : " "}`;
   return {
     value: value.slice(0, mention.start) + inserted + after,
     caret: mention.start + inserted.length + (/^\s/.test(after) ? 1 : 0),
@@ -159,14 +172,16 @@ export function expandRepoMentions(
   const index = buildTailIndex(candidates.map(c => c.path));
   return value.replace(
     MENTION_IN_TEXT,
-    (whole, lead: string, token: string) => {
-      if (token.startsWith("/")) return whole;
+    (whole: string, token: string, offset: number) => {
+      if (token.startsWith("/") || !canStartMention(value[offset - 1])) {
+        return whole;
+      }
       // 日本語は空白を挟まずに続くので (`@shopで直して`)、長い方から順に名前を探す
       for (let end = token.length; end > 0; end--) {
         const next = token[end];
         if (next !== undefined && PATH_CHAR.test(next)) continue;
         const path = index.get(token.slice(0, end));
-        if (path) return `${lead}${path}${token.slice(end)}`;
+        if (path) return `${path}${token.slice(end)}`;
       }
       return whole;
     }

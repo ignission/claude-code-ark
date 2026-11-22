@@ -1315,6 +1315,20 @@ describe("SplitChatPane: リポジトリメンション", () => {
     expect(container.textContent).not.toContain(SHOP);
   });
 
+  it("送った直後の Esc は、書いたままの文を入力欄へ戻し、送信中の吹き出しを消す", async () => {
+    const { container, onSendKey } = await renderWithRepos();
+    const textarea = textareaOf(container);
+    typeInto(textarea, "@shop でログを直して");
+    press(textarea, "Enter");
+    expect(container.querySelector('[aria-label="送信中"]')).not.toBeNull();
+
+    press(textarea, "Escape");
+
+    expect(onSendKey).toHaveBeenCalledWith("Escape");
+    expect(textarea.value).toBe("@shop でログを直して");
+    expect(container.querySelector('[aria-label="送信中"]')).toBeNull();
+  });
+
   it("候補に無い名前は、書いたまま送る", async () => {
     const { container, onSendMessage } = await renderWithRepos();
     const textarea = textareaOf(container);

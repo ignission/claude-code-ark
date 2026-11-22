@@ -81,6 +81,17 @@ describe("findRepoMentionAtCaret", () => {
     expect(findRepoMentionAtCaret("a@b", 3)).toBeNull();
   });
 
+  it("前のメンションに続けて打った @ は、その @ だけを拾う", () => {
+    expect(findRepoMentionAtCaret("@shopと@ap", 9)).toEqual({
+      start: 6,
+      query: "ap",
+    });
+  });
+
+  it("@ に続く @ は拾わない", () => {
+    expect(findRepoMentionAtCaret("@@sh", 4)).toBeNull();
+  });
+
   it("空白をまたいだあとは拾わない", () => {
     expect(findRepoMentionAtCaret("@shop で", 9)).toBeNull();
   });
@@ -137,6 +148,19 @@ describe("applyRepoMention", () => {
   });
 });
 
+describe("名前に空白を含むリポジトリ", () => {
+  const SPACED = "/work/my app";
+  const spaced = buildRepoMentionCandidates([SPACED]);
+
+  it("選ぶと @名前 ではなく絶対パスが入り、そのまま送られる", () => {
+    const mention = findRepoMentionAtCaret("@my", 3);
+    if (!mention) throw new Error("fixture");
+    const applied = applyRepoMention("@my", mention, 3, spaced[0]);
+    expect(applied).toEqual({ value: `${SPACED} `, caret: 13 });
+    expect(expandRepoMentions(applied.value, spaced)).toBe(`${SPACED} `);
+  });
+});
+
 describe("expandRepoMentions", () => {
   it("@名前 を絶対パスへ置き換える", () => {
     expect(expandRepoMentions("@shop でログを直して", candidates)).toBe(
@@ -153,6 +177,12 @@ describe("expandRepoMentions", () => {
   it("日本語の直後の @名前 も置き換える", () => {
     expect(expandRepoMentions("これを@shopで直して", candidates)).toBe(
       `これを${SHOP}で直して`
+    );
+  });
+
+  it("空白を挟まずに並べた複数の @名前 を、それぞれ置き換える", () => {
+    expect(expandRepoMentions("@shopと@other/app", candidates)).toBe(
+      `${SHOP}と${APP_B}`
     );
   });
 

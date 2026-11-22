@@ -30,6 +30,8 @@ interface CacheEntry {
   /** 最後に取れた時刻。まだ取れていなければ 0 */
   fetchedAt: number;
   inFlight: Promise<RepoMentionCandidate[]> | null;
+  /** 要求ごとの番号。あとから別の要求を出していたら、古い要求の応答は書き込まない */
+  requestSeq: number;
 }
 
 const cache = new WeakMap<object, CacheEntry>();
@@ -44,7 +46,7 @@ export function loadRepoMentionCandidates(
 ): Promise<RepoMentionCandidate[]> {
   let entry = cache.get(socket);
   if (!entry) {
-    entry = { candidates: [], fetchedAt: 0, inFlight: null };
+    entry = { candidates: [], fetchedAt: 0, inFlight: null, requestSeq: 0 };
     cache.set(socket, entry);
   }
   const current = entry;
@@ -64,9 +66,11 @@ export function loadRepoMentionCandidates(
     finish(current.candidates);
   };
   const timer = setTimeout(settle, REPO_MENTION_TIMEOUT_MS);
+  current.requestSeq += 1;
+  const seq = current.requestSeq;
   socket.emit("repo:mention-list", response => {
-    // 時間切れのあとに届いた応答も、結果としては使う
-    if (!response.error) {
+    // 時間切れのあとに届いた応答も、あとから別の要求を出していなければ結果として使う
+    if (!response.error && seq === current.requestSeq) {
       current.candidates = buildRepoMentionCandidates(response.repos ?? []);
       current.fetchedAt = Date.now();
     }

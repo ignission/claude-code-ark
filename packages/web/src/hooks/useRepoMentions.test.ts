@@ -67,6 +67,37 @@ describe("loadRepoMentionCandidates", () => {
     expect((await retry).map(c => c.path)).toEqual([REPO]);
   });
 
+  it("時間切れになった要求の遅れた応答で、あとの要求の結果を上書きしない", async () => {
+    const { socket, replies } = createSocket();
+    void loadRepoMentionCandidates(socket, REPO_MENTION_FRESH_MS);
+    vi.advanceTimersByTime(REPO_MENTION_TIMEOUT_MS);
+
+    const retry = loadRepoMentionCandidates(socket, REPO_MENTION_FRESH_MS);
+    replies[1]({ repos: [REPO] });
+    await retry;
+    replies[0]({ repos: [] });
+
+    const cached = await loadRepoMentionCandidates(
+      socket,
+      REPO_MENTION_FRESH_MS
+    );
+    expect(cached.map(c => c.path)).toEqual([REPO]);
+  });
+
+  it("時間切れのあとに届いた応答は、あとの要求が無ければ使う", async () => {
+    const { socket, emit, replies } = createSocket();
+    void loadRepoMentionCandidates(socket, REPO_MENTION_FRESH_MS);
+    vi.advanceTimersByTime(REPO_MENTION_TIMEOUT_MS);
+    replies[0]({ repos: [REPO] });
+
+    const cached = await loadRepoMentionCandidates(
+      socket,
+      REPO_MENTION_FRESH_MS
+    );
+    expect(cached.map(c => c.path)).toEqual([REPO]);
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
   it("エラーのときは前の結果を残す", async () => {
     const { socket, replies } = createSocket();
     const first = loadRepoMentionCandidates(socket, REPO_MENTION_FRESH_MS);
