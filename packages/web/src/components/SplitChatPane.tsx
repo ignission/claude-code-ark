@@ -58,14 +58,17 @@ import {
   Wrench,
 } from "lucide-react";
 import {
+  createContext,
   type FormEvent,
   memo,
   type ReactNode,
   type Ref,
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -80,6 +83,7 @@ import { MermaidBlock } from "@/components/MermaidBlock";
 import { PlanLimitsBadge } from "@/components/PlanLimitsBadge";
 import { StatusChip } from "@/components/StatusChip";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
+import { useRepoMentions } from "@/hooks/useRepoMentions";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
 import {
@@ -114,6 +118,14 @@ import {
   reconcileLocalSlash,
 } from "@/lib/reconcile-local-slash";
 import { reconcilePending } from "@/lib/reconcile-pending";
+import {
+  applyRepoMention,
+  collapseRepoPaths,
+  expandRepoMentions,
+  filterRepoMentionCandidates,
+  findRepoMentionAtCaret,
+  type RepoMentionCandidate,
+} from "@/lib/repo-mention";
 import { cn } from "@/lib/utils";
 import { VIEW_MODE_ICONS } from "@/lib/view-mode-icons";
 
@@ -210,7 +222,19 @@ const COMPOSER_SIZE = {
 
 // ===== JSONL イベントカード =====
 
-function UserInputCard({ text }: { text: string }) {
+/**
+ * リポジトリメンションの候補。利用者の発言の吹き出しが、本文の絶対パスを短い名前へ
+ * 戻して見せるのに使う (lib/repo-mention.ts)
+ */
+const RepoMentionContext = createContext<readonly RepoMentionCandidate[]>([]);
+
+function useCollapsedRepoPaths(text: string): string {
+  const candidates = useContext(RepoMentionContext);
+  return useMemo(() => collapseRepoPaths(text, candidates), [text, candidates]);
+}
+
+function UserInputCard({ text: rawText }: { text: string }) {
+  const text = useCollapsedRepoPaths(rawText);
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
       <div className="max-w-[78%] whitespace-pre-wrap break-words rounded-xl rounded-br-[4px] bg-primary/14 px-3.5 py-2.5 text-[15px] leading-[1.6] text-foreground">
@@ -403,7 +427,8 @@ function workingIndicatorLabel(
   return null;
 }
 
-function PendingMessageCard({ text }: { text: string }) {
+function PendingMessageCard({ text: rawText }: { text: string }) {
+  const text = useCollapsedRepoPaths(rawText);
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
       <div className="flex max-w-[78%] items-start gap-2 whitespace-pre-wrap break-words rounded-xl rounded-br-[4px] bg-primary/14 px-3.5 py-2.5 text-[15px] leading-[1.6] text-foreground opacity-60">
@@ -1409,6 +1434,59 @@ export function SplitChatPane({
     if (shouldOpen) setSlashIndex(0);
   }, [inputValue]);
 
+  // ===== リポジトリメンションの補完 (lib/repo-mention.ts) =====
+  const { candidates: repoMentions, refresh: refreshRepoMentions } =
+    useRepoMentions(socket, isActive);
+  // カーソルの位置。打ちかけのメンションは、入力値とカーソルの位置から毎回導く
+  const [caret, setCaret] = useState(0);
+  const activeMention = useMemo(
+    () => findRepoMentionAtCaret(inputValue, caret),
+    [inputValue, caret]
+  );
+  const mentionStart = activeMention?.start ?? null;
+  // Esc で閉じた補完は、その `@` を打ち直すまで開かない
+  const [dismissedMentionStart, setDismissedMentionStart] = useState<
+    number | null
+  >(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const filteredRepoMentions = useMemo(
+    () =>
+      activeMention && activeMention.start !== dismissedMentionStart
+        ? filterRepoMentionCandidates(repoMentions, activeMention.query)
+        : [],
+    [activeMention, dismissedMentionStart, repoMentions]
+  );
+  const mentionOpen = filteredRepoMentions.length > 0;
+  const mentionQuery = activeMention?.query ?? null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies(mentionQuery): 打った文字が変わるたびに先頭の候補へ戻すための意図的な依存
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [mentionQuery]);
+  useEffect(() => {
+    if (mentionStart === null) {
+      setDismissedMentionStart(null);
+      return;
+    }
+    // `@` を打った時点で候補を取り直す (あとから clone したリポジトリを出すため)
+    refreshRepoMentions();
+  }, [mentionStart, refreshRepoMentions]);
+  // 補完を確定したあとのカーソルの位置。入力値が描画に反映されてから当てる
+  const pendingCaretRef = useRef<number | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies(inputValue): 入力値が DOM に反映された直後に走らせるための意図的な依存
+  useLayoutEffect(() => {
+    const next = pendingCaretRef.current;
+    if (next === null) return;
+    pendingCaretRef.current = null;
+    inputRef.current?.setSelectionRange(next, next);
+    setCaret(next);
+  }, [inputValue]);
+  const applyMention = (candidate: RepoMentionCandidate) => {
+    if (!activeMention) return;
+    const next = applyRepoMention(inputValue, activeMention, caret, candidate);
+    pendingCaretRef.current = next.caret;
+    setInputValue(next.value);
+  };
+
   // 次の一手。答えたら JSONL に発言が出る前でも消す (同じものを二度送らせない)。
   // built-in のスラッシュコマンドは JSONL に発言として残らないので、送った時点で
   // そのとき出ていた選択肢を答え済みにする。あとから届く別の next_actions はまた出る
@@ -1694,6 +1772,9 @@ export function SplitChatPane({
   // 「中断 + 入力欄に直前のテキストを復元」を再現するため。
   // 復元したら ref をクリアし、次の submit で上書きされる。
   const lastSubmittedRef = useRef<string>("");
+  // 直近に送った本文 (メンションを絶対パスへ置き換えたあと)。Esc で送信中の吹き出しを消すときに
+  // 照合する。候補は送ったあとに変わりうるので、置き換えをやり直さずに送った時点の文を持つ
+  const lastSentRef = useRef<string>("");
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -1713,8 +1794,11 @@ export function SplitChatPane({
 
   const submitText = (value: string, options?: { keepDraft?: boolean }) => {
     if (!value) return;
+    // Esc で入力欄へ戻すのは、書いたままの文 (`@名前`)。送るのは絶対パスへ置き換えた文
     lastSubmittedRef.current = value;
-    onSendMessage(value);
+    const sent = expandRepoMentions(value, repoMentions);
+    lastSentRef.current = sent;
+    onSendMessage(sent);
     // built-in slash command (/compact, /clear 等) は JSONL に user-input として
     // 記録されないため、pending bubble だと永遠に spinner が残る。
     // 代わりにローカル slash-command カードを即時追加する。
@@ -1726,7 +1810,7 @@ export function SplitChatPane({
         ...prev,
         {
           id: `p:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-          text: value,
+          text: sent,
           sentAt: Date.now(),
         },
       ]);
@@ -1856,7 +1940,32 @@ export function SplitChatPane({
   }));
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (slashOpen && filteredSlashCommands.length > 0) {
+    // リポジトリメンションの補完が出ている間は、選択と確定と Esc をそちらで受ける
+    if (mentionOpen && !e.nativeEvent.isComposing) {
+      const count = filteredRepoMentions.length;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex(i => (i + 1) % count);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex(i => (i - 1 + count) % count);
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault();
+        const target = filteredRepoMentions[mentionIndex];
+        if (target) applyMention(target);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setDismissedMentionStart(mentionStart);
+        return;
+      }
+    }
+    if (!mentionOpen && slashOpen && filteredSlashCommands.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSlashIndex(i => (i + 1) % filteredSlashCommands.length);
@@ -1901,7 +2010,7 @@ export function SplitChatPane({
           lastSubmittedRef.current = "";
         }
         if (action.removePendingText !== null) {
-          const norm = action.removePendingText.trim();
+          const norm = lastSentRef.current.trim();
           setPending(prev => prev.filter(p => p.text.trim() !== norm));
         }
       }
@@ -1951,6 +2060,37 @@ export function SplitChatPane({
     </div>
   );
 
+  const repoMentionMenu = mentionOpen && (
+    <div
+      data-testid="chat-repo-mention-menu"
+      className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-lg border border-border bg-popover shadow-card"
+    >
+      {filteredRepoMentions.map((repo, i) => (
+        <button
+          type="button"
+          key={repo.path}
+          onMouseDown={e => {
+            e.preventDefault();
+            applyMention(repo);
+          }}
+          onMouseEnter={() => setMentionIndex(i)}
+          className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${
+            i === mentionIndex
+              ? "bg-accent text-accent-foreground"
+              : "hover:bg-muted/50"
+          }`}
+        >
+          <span className="shrink-0 font-medium text-foreground">
+            @{repo.label}
+          </span>
+          <span className="flex-1 truncate text-xs text-muted-foreground">
+            {repo.parent}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+
   const composerSize = COMPOSER_SIZE[layout];
 
   // フォームの relative は補完候補の位置の基準。入力欄だけを包み、帯は含めない
@@ -1975,7 +2115,7 @@ export function SplitChatPane({
         isDragging ? "ring-2 ring-primary/50" : ""
       }`}
     >
-      {slashMenu}
+      {repoMentionMenu || slashMenu}
       {onUploadFile && (
         <>
           <input
@@ -2028,7 +2168,11 @@ export function SplitChatPane({
       <textarea
         ref={inputRef}
         value={inputValue}
-        onChange={e => setInputValue(e.target.value)}
+        onChange={e => {
+          setInputValue(e.target.value);
+          setCaret(e.target.selectionStart);
+        }}
+        onSelect={e => setCaret(e.currentTarget.selectionStart)}
         onKeyDown={handleKeyDown}
         onPaste={onUploadFile ? handlePaste : undefined}
         data-focus-target="chat-input"
@@ -2115,17 +2259,21 @@ export function SplitChatPane({
             className="mx-auto w-full max-w-[760px] py-2"
             style={bottomReserve ? { paddingBottom: bottomReserve } : undefined}
           >
-            <ChatEventList
-              hasEvents={events.length > 0}
-              renderItems={renderItems}
-              localSlashCommands={localSlashCommands}
-              pending={pending}
-              hasMore={hasMore}
-              sessionId={session.id}
-              expandedToolGroups={expandedToolGroups}
-              onToggleToolGroup={toggleToolGroup}
-              toolGroupSurfaceClassName={isMobile ? "bg-card" : "bg-background"}
-            />
+            <RepoMentionContext value={repoMentions}>
+              <ChatEventList
+                hasEvents={events.length > 0}
+                renderItems={renderItems}
+                localSlashCommands={localSlashCommands}
+                pending={pending}
+                hasMore={hasMore}
+                sessionId={session.id}
+                expandedToolGroups={expandedToolGroups}
+                onToggleToolGroup={toggleToolGroup}
+                toolGroupSurfaceClassName={
+                  isMobile ? "bg-card" : "bg-background"
+                }
+              />
+            </RepoMentionContext>
             {workingLabel && (
               <WorkingIndicator label={workingLabel} announce={!isMobile} />
             )}

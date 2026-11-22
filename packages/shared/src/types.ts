@@ -728,6 +728,14 @@ export interface ClientToServerEvents {
     }) => void
   ) => void;
 
+  /**
+   * チャット入力の `@` 補完に出すリポジトリの絶対パスを返す。
+   * task_start / todo_add の repo が受け付ける集合と同じ (許可リスト、無ければ保存済みの走査先)。
+   */
+  "repo:mention-list": (
+    callback: (response: { repos?: string[]; error?: string }) => void
+  ) => void;
+
   // Repository commands
   "repo:scan": (basePath: string) => void;
   "repo:select": (path: string) => void;
