@@ -2280,6 +2280,25 @@ export async function startServer(
       }
     });
 
+    // チャット入力欄の `@` 補完用。task_start の repo を解決する候補と同じ集合を返すので、
+    // ここで出したパスは task_start / todo_add がそのまま受け付ける
+    socket.on("repo:mention-list", async (callback: unknown) => {
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: {
+        repos?: string[];
+        error?: string;
+      }) => void;
+      try {
+        reply({ repos: await taskRepoCandidates() });
+      } catch (err) {
+        try {
+          reply({ error: getErrorMessage(err) });
+        } catch {
+          // ack が二重呼び出し等で throw しても落とさない
+        }
+      }
+    });
+
     // 過去履歴をより多く読み直す。snapshot を limit 付きで再送する。
     // payload は外部入力なので分割代入の前に型検証する
     socket.on("session:jsonl-load-more", (data: unknown) => {

@@ -13,6 +13,9 @@ type ChatSocket = NonNullable<ComponentProps<typeof SplitChatPane>["socket"]>;
  * on / off / emitだけを持つsocketの偽物。サーバーからのpushはemitServerで起こす。
  * `slash:list` だけはコールバック型なので、渡された候補をその場で返す
  */
+/** `repo:mention-list` が返すリポジトリ。メンションのテストだけが入れる */
+let mentionRepos: string[] = [];
+
 function createFakeSocket(slashCommands: SlashCommandInfo[] = []) {
   const handlers = new Map<string, Set<(data: unknown) => void>>();
   const fake = {
@@ -27,6 +30,13 @@ function createFakeSocket(slashCommands: SlashCommandInfo[] = []) {
       return fake;
     },
     emit: vi.fn((event: string, ...args: unknown[]) => {
+      if (event === "repo:mention-list") {
+        const reply = args[0] as
+          | ((response: { repos?: string[] }) => void)
+          | undefined;
+        reply?.({ repos: mentionRepos });
+        return fake;
+      }
       if (event !== "slash:list") return fake;
       const callback = args[1] as
         | ((response: { commands?: SlashCommandInfo[] }) => void)
@@ -1209,5 +1219,109 @@ describe("SplitChatPane: 下書きの受け取り", () => {
     act(() => requestChatDraft("/worktrees/other", "よそ向け"));
     expect(textareaOf(container).value).toBe("");
     expect(takeChatDraft("/worktrees/other")).toBe("よそ向け");
+  });
+});
+
+describe("SplitChatPane: リポジトリメンション", () => {
+  const SHOP = "/home/u/dev/github.com/acme/shop";
+  const SHOP_IOS = "/home/u/dev/github.com/acme/shop-app-ios";
+  const menu = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>(
+      '[data-testid="chat-repo-mention-menu"]'
+    );
+  const textareaOf = (container: HTMLElement) =>
+    container.querySelector(
+      'textarea[aria-label="メッセージ"]'
+    ) as HTMLTextAreaElement;
+  const press = (el: HTMLElement, key: string) =>
+    act(() => {
+      el.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })
+      );
+    });
+  /** 候補はコールバックのあと Promise 経由で届くので、解決を待つ */
+  const renderWithRepos = async () => {
+    const rendered = renderChat();
+    await act(async () => {});
+    return rendered;
+  };
+
+  beforeEach(() => {
+    mentionRepos = [SHOP, SHOP_IOS];
+  });
+  afterEach(() => {
+    mentionRepos = [];
+  });
+
+  it("@ を打つと候補が出て、Enter で短い名前が入る (送信はしない)", async () => {
+    const { container, onSendMessage } = await renderWithRepos();
+    const textarea = textareaOf(container);
+    expect(menu(container)).toBeNull();
+
+    typeInto(textarea, "ログを直して @sho");
+
+    const options = menu(container)?.querySelectorAll("button");
+    expect(Array.from(options ?? []).map(o => o.textContent)).toEqual([
+      "@shop/home/u/dev/github.com/acme",
+      "@shop-app-ios/home/u/dev/github.com/acme",
+    ]);
+
+    press(textarea, "ArrowDown");
+    press(textarea, "Enter");
+
+    expect(textarea.value).toBe("ログを直して @shop-app-ios ");
+    expect(menu(container)).toBeNull();
+    expect(onSendMessage).not.toHaveBeenCalled();
+  });
+
+  it("Esc は候補を閉じるだけで、入力も Claude への Esc も動かさない", async () => {
+    const { container, onSendKey } = await renderWithRepos();
+    const textarea = textareaOf(container);
+    typeInto(textarea, "@sho");
+    expect(menu(container)).not.toBeNull();
+
+    press(textarea, "Escape");
+
+    expect(menu(container)).toBeNull();
+    expect(textarea.value).toBe("@sho");
+    expect(onSendKey).not.toHaveBeenCalled();
+  });
+
+  it("送るときに絶対パスへ置き換え、吹き出しには短い名前を見せる", async () => {
+    const { container, onSendMessage, emitServer } = await renderWithRepos();
+    const textarea = textareaOf(container);
+    typeInto(textarea, "@shop でログを直して");
+    // 名前のあとに空白があるので候補は出ていない。Enter はそのまま送信になる
+    expect(menu(container)).toBeNull();
+
+    press(textarea, "Enter");
+
+    expect(onSendMessage).toHaveBeenCalledWith(`${SHOP} でログを直して`);
+    expect(container.textContent).toContain("@shop でログを直して");
+    expect(container.textContent).not.toContain(SHOP);
+
+    // 記録 (絶対パスの本文) が届いたあとも、同じ見た目のまま
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: [
+        line({
+          type: "user",
+          uuid: "u1",
+          message: { role: "user", content: `${SHOP} でログを直して` },
+        }),
+      ],
+    });
+    expect(container.textContent).toContain("@shop でログを直して");
+    expect(container.textContent).not.toContain(SHOP);
+  });
+
+  it("候補に無い名前は、書いたまま送る", async () => {
+    const { container, onSendMessage } = await renderWithRepos();
+    const textarea = textareaOf(container);
+    typeInto(textarea, "@unknown を見て");
+
+    press(textarea, "Enter");
+
+    expect(onSendMessage).toHaveBeenCalledWith("@unknown を見て");
   });
 });
