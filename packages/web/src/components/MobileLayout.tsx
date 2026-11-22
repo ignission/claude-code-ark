@@ -188,6 +188,12 @@ interface MobileLayoutProps {
   onCreateWorktreeForRepo?: (repoPath: string) => void;
   onRemoveRepo?: (repoPath: string) => void;
   notificationControl?: ReactNode;
+  /** 一覧の上に固定で出すホームの行と、ホームの worktree のパス (lib/home-session.ts) */
+  home?: ReactNode;
+  homeWorktreePath?: string | null;
+  onSetHome?: (worktreePath: string) => void;
+  /** ホームの会話を開く。ホームを決めていなければ無い */
+  onOpenHome?: () => void;
   notificationsSupported?: boolean;
   isSessionNotificationEnabled?: (sessionId: string) => boolean;
   onSessionNotificationEnabledChange?: (
@@ -260,6 +266,10 @@ export function MobileLayout({
   onCreateWorktreeForRepo,
   onRemoveRepo,
   notificationControl,
+  home,
+  homeWorktreePath,
+  onSetHome,
+  onOpenHome,
   notificationsSupported = false,
   isSessionNotificationEnabled,
   onSessionNotificationEnabledChange,
@@ -449,6 +459,9 @@ export function MobileLayout({
           onNewTask={onNewTask}
           onSplitTask={onSplitTask}
           notificationControl={notificationControl}
+          home={home}
+          homeWorktreePath={homeWorktreePath}
+          onSetHome={onSetHome}
         />
       </div>
 
@@ -506,6 +519,15 @@ export function MobileLayout({
                     : undefined
                 }
                 onBack={handleBack}
+                onOpenHome={
+                  homeWorktreePath && session.worktreePath !== homeWorktreePath
+                    ? onOpenHome
+                    : undefined
+                }
+                isHome={
+                  homeWorktreePath != null &&
+                  session.worktreePath === homeWorktreePath
+                }
                 todoPane={renderTodoPane?.(session, openWorktreeSession)}
                 onSendMessage={message => onSendMessage(sessionId, message)}
                 onSendKey={key => onSendKey(sessionId, key)}

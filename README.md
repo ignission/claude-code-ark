@@ -200,9 +200,21 @@ From just a task name and a prompt, Ark creates a worktree, starts a session and
 - **"New task" in the list header:** creates a task with no parent. Pick the repository; leave the base branch empty to branch from the repository's default branch (`origin/HEAD`).
 - **"Split child task" in a session row's menu** (right-click or `…` on desktop, `⋮` on mobile): that row's worktree becomes the parent, and the base branch is prefilled with the parent's current branch. Leave it empty to branch from the repository's default branch.
 
-Claude inside a session can do the same with the MCP tool `task_start`. The calling session's worktree becomes the parent, and the base branch defaults to the parent's current branch. The child's result is not sent back to the parent. Children are listed right under their parent in the sidebar (when both are in the same status group), the "↳ parent" chip on a child row opens the parent, and the parent row shows how many children it has.
+Claude inside a session can do the same with the MCP tool `task_start`. The calling session's worktree becomes the parent, and the base branch defaults to the parent's current branch. Passing `repo` (an absolute path, or the trailing part of one such as `owner/name`) creates the child in another repository, based on the latest remote default branch of that repository (fetched first, e.g. `origin/main`); only repositories that appear in Ark's repository picker can be named. This lets one session act as the entry point and hand out work to each repository. The child's result is not sent back to the parent. When the parent needs the current state of its children it calls `task_list`, which returns each child's status group, branch, and pull request, not what the child said. Children are listed right under their parent in the sidebar (when both are in the same status group), the "↳ parent" chip on a child row opens the parent, and the parent row shows how many children it has.
 
 The first message is sent only after Ark sees claude running and waiting for input (it reads the CLI's status file, so Linux only). If it cannot tell, for example because a startup confirmation is still on screen, it does not send and tells you instead. The worktree and session stay, so you can open it and send by hand.
+
+## Home
+
+Instead of moving between one session per repository, you can make a single session your entry point. Choose "Set as home" in a session row's menu, and that worktree becomes home.
+
+- On desktop the conversation moves to the left and the task list to the right. Home is pinned at the top of the list, and the tabs of opened sessions are not shown. While a task is open, "Back to home" above the conversation takes you back
+- Ark opens on the home conversation, and starts the home session if it is not running
+- Ask home for work, and Claude in home hands it out to each repository with `task_start` and its `repo`, and answers how it is going with `task_list`
+- TODOs that Claude in home adds with `todo_add` are listed in the TODO tab of the home conversation. A TODO with `repo` starts as a new task in that repository when you choose to start it in a new worktree
+- "Unset home" in the home row's menu brings the previous layout back
+
+Ark never adds instructions to the home session. What home does is decided by that directory's `CLAUDE.md` and `.claude/`.
 
 ## Configuration
 

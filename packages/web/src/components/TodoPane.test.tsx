@@ -20,6 +20,7 @@ const base = (over: Partial<Todo>): Todo => ({
   startedWorktreePath: null,
   startedAt: null,
   branchName: null,
+  repoPath: null,
   ...over,
 });
 
@@ -136,6 +137,20 @@ describe("TodoPane", () => {
     click(container.querySelector('[aria-label="元のセッションで話す"]'));
     expect(onStartHere).toHaveBeenCalledWith(todo);
     click(container.querySelector('[aria-label="新しいworktreeで話す"]'));
+    expect(onStartInNewWorktree).toHaveBeenCalledWith(todo);
+  });
+
+  it("行き先のリポジトリを持つ行は、アイコンを出さず、文字のボタンだけで始める", () => {
+    const onStartInNewWorktree = vi.fn();
+    const todo = base({ id: "3", repoPath: "/dev/acme/app" });
+    mount({ todos: [todo], onStartHere: vi.fn(), onStartInNewWorktree });
+    expect(
+      container.querySelector('[aria-label="新しいworktreeで話す"]')
+    ).toBeNull();
+    expect(
+      container.querySelector('[aria-label="元のセッションで話す"]')
+    ).toBeNull();
+    click(byText("button", "app で始める"));
     expect(onStartInNewWorktree).toHaveBeenCalledWith(todo);
   });
 

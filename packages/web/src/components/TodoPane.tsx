@@ -6,6 +6,12 @@
  * 未完了の行からは、その話題の会話を「元のセッション」か「新しいworktree」で始められる。
  * どちらもチャット入力欄に下書きを入れるだけで送らない (配線は Dashboard)。元のworktreeが
  * 消えていれば始められない。始めた先 (最後の1件) は行の下に出し、押すとそのセッションを開く
+ *
+ * 行き先のリポジトリを持つ行 (todo_add の repo) は、アイコンではなく「<リポジトリ名> で始める」と
+ * 文字で出すボタンを本文の下に置く。別のリポジトリのタスクとして切り出す行で、アイコン 2 つの
+ * 見分けに頼らせないため。押すと新しいタスクのダイアログがそのリポジトリで開く。
+ * この行には「元のセッションで話す」を出さない (別のリポジトリの仕事を、置いたセッションが
+ * 自分で始めてしまうため)
  */
 
 import type { Todo } from "@ark/shared";
@@ -13,6 +19,7 @@ import { Check, GitBranchPlus, MessageSquareText, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { m } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { getBaseName } from "@/utils/pathUtils";
 
 interface TodoPaneProps {
   todos: Todo[];
@@ -84,6 +91,11 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
   const done = todo.doneAt !== null;
   // 始められるのは未完了で、元のworktreeが残っている行だけ
   const canStart = !done && props.worktreeLabel(todo.worktreePath) !== null;
+  // 行き先のリポジトリを持つ行は、文字のボタンでそのリポジトリのタスクとして始める
+  const startInRepo =
+    canStart &&
+    todo.repoPath !== null &&
+    props.onStartInNewWorktree !== undefined;
   return (
     <li className="group flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-muted">
       <button
@@ -112,8 +124,18 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
           <p className="mt-0.5 text-xs text-muted-foreground">{todo.note}</p>
         )}
         <StartedLine todo={todo} {...props} />
+        {startInRepo && (
+          <button
+            type="button"
+            onClick={() => props.onStartInNewWorktree?.(todo)}
+            className="mt-1.5 inline-flex min-h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <GitBranchPlus className="size-3.5" aria-hidden="true" />
+            {m.todo.startInRepo(getBaseName(todo.repoPath ?? ""))}
+          </button>
+        )}
       </div>
-      {canStart && props.onStartHere && (
+      {canStart && !startInRepo && props.onStartHere && (
         <button
           type="button"
           aria-label={m.todo.talkHere}
@@ -125,6 +147,7 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
         </button>
       )}
       {canStart &&
+        !startInRepo &&
         props.onStartInNewWorktree &&
         (props.canStartInNewWorktree?.(todo) ?? true) && (
           <button

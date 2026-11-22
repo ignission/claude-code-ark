@@ -42,6 +42,7 @@ import {
   toListRows,
 } from "@/lib/session-sections";
 import { presentStatus, SECTION_LABELS, TONE_CLASSES } from "@/lib/status-tone";
+import { collectActiveSessionIds } from "@/lib/unlisted-active-sessions";
 import { cn } from "@/lib/utils";
 import { getBaseName } from "@/utils/pathUtils";
 import { resolveSessionRowProfile, SessionListRow } from "./SessionListRow";
@@ -114,6 +115,13 @@ export interface SessionSectionListProps {
   onOpenProfileManager?: () => void;
   /** 「あなたの番」の件数が変わるたびに呼ぶ (畳んだサイドバーの帯に出す) */
   onYourTurnCountChange?: (count: number) => void;
+  /**
+   * ホームの worktree のパス (lib/home-session.ts)。この行は一覧に出さない
+   * (呼び出し側が一覧の上に固定の行で出す)
+   */
+  homeWorktreePath?: string | null;
+  /** 行のメニューから worktree をホームにする。無ければ項目を出さない */
+  onSetHome?: (worktreePath: string) => void;
 }
 
 type DeleteTarget =
@@ -144,6 +152,8 @@ export function revealSelectedSessionRow(): void {
     .querySelector('[data-session-list] [aria-current="true"]')
     ?.scrollIntoView?.({ block: "nearest" });
 }
+
+const NO_LAST_UPDATED: ReadonlyMap<string, number> = new Map();
 
 export function SessionSectionList({
   variant,
@@ -178,19 +188,40 @@ export function SessionSectionList({
   onSetWorktreeProfile,
   onOpenProfileManager,
   onYourTurnCountChange,
+  homeWorktreePath = null,
+  onSetHome,
 }: SessionSectionListProps) {
+  // 未登録のリポジトリでも、動いているか直近に動いたセッションは一覧に出す。
+  // 中身が変わったときだけ Set を作り直す (状態は毎秒届くので、毎回作り直すと一覧を組み直し続ける)
+  const activeSessionKey = collectActiveSessionIds(
+    Array.from(sessions.values(), session => session.id),
+    sessionStatuses,
+    sessionLastUpdatedAt ?? NO_LAST_UPDATED,
+    Date.now()
+  ).join("\n");
+  const activeSessionIds = useMemo(
+    () => new Set(activeSessionKey ? activeSessionKey.split("\n") : []),
+    [activeSessionKey]
+  );
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
     sessions,
-    repoList
+    repoList,
+    activeSessionIds
   );
   const { held, bindings, onMenuOpenChange } = useListHold();
+  // ホームの行は一覧から外す。親をたどる対応表 (entryByPath) にも入らないので、
+  // ホームの子は親の表示を持たない普通の行になる (子は全部ホームの子なので、出すと全行に付く)
   const entries = useMemo(
     () =>
       sortSessionEntries(
         buildSessionEntries(groupedItems, sessionStatuses, sessionLastUpdatedAt)
+      ).filter(
+        entry =>
+          homeWorktreePath === null ||
+          worktreePathOf(entry) !== homeWorktreePath
       ),
-    [groupedItems, sessionStatuses, sessionLastUpdatedAt]
+    [groupedItems, sessionStatuses, sessionLastUpdatedAt, homeWorktreePath]
   );
   const rows = useMemo(() => toListRows(sectionize(entries)), [entries]);
   // 見出しの件数と同じ値を外へ知らせる。並びを保留していても件数は最新にする
@@ -293,6 +324,8 @@ export function SessionSectionList({
       onOpenParent: parentSession
         ? () => onOpenSession(parentSession.id)
         : undefined,
+      onSetHome:
+        onSetHome && worktreePath ? () => onSetHome(worktreePath) : undefined,
       onStartRename:
         onSetWorktreeDisplayName && worktreePath
           ? () => setEditingKey(entry.key)
@@ -405,7 +438,11 @@ export function SessionSectionList({
           entry.session ? (sessionTodoCounts?.get(entry.session.id) ?? 0) : 0
         }
         childCount={worktreePath ? (childCounts.get(worktreePath) ?? 0) : 0}
-        parentLabel={parentPath ? labelOf(parentPath) : null}
+        parentLabel={
+          parentPath && parentPath !== homeWorktreePath
+            ? labelOf(parentPath)
+            : null
+        }
         onOpenParent={
           parentSession ? () => onOpenSession(parentSession.id) : undefined
         }

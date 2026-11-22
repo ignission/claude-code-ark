@@ -7,6 +7,7 @@ export const todo = {
   markUndone: "未完了に戻す",
   talkHere: "元のセッションで話す",
   talkInNewWorktree: "新しいworktreeで話す",
+  startInRepo: (repoName: string) => `${repoName} で始める`,
   remove: "TODO を消す",
   startedHere: "このセッションで始めた",
   /** label は始めた先の worktree の表示名。worktree を消していれば null */

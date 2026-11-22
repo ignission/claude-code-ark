@@ -568,14 +568,44 @@ describe("SessionSectionListの並べ方", () => {
     expect(sequence(container)).toEqual(["# あなたの番", "wt:b", "wt:a"]);
   });
 
+  it("リポジトリが未登録でも、動いているセッションと会話が直近に動いたセッションは出す", () => {
+    const { container } = mountList(
+      listProps({
+        repoList: [],
+        sessionStatuses: statusesOf("IDLE", "TOOL", "IDLE"),
+        sessionLastUpdatedAt: new Map([
+          ["session-a", Date.now() - 60_000],
+          ["session-c", Date.now() - 3 * 24 * 60 * 60 * 1000],
+        ]),
+      })
+    );
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "s:session-a",
+      "# 作業中",
+      "s:session-b",
+    ]);
+  });
+
   it("行が1件も無ければ新規作成の案内を出す", () => {
-    const { container } = mountList(listProps({ repoList: [] }));
+    const { container } = mountList(
+      listProps({
+        repoList: [],
+        sessionStatuses: statusesOf("IDLE", "READY", "READY"),
+      })
+    );
 
     expect(container.textContent).toContain("セッションがありません");
   });
 
   it("行が1件も無くてもdata-session-listの要素は残り、案内文を含む", () => {
-    const { container } = mountList(listProps({ repoList: [] }));
+    const { container } = mountList(
+      listProps({
+        repoList: [],
+        sessionStatuses: statusesOf("IDLE", "READY", "READY"),
+      })
+    );
 
     const list = container.querySelector("[data-session-list]");
     expect(list).not.toBeNull();
