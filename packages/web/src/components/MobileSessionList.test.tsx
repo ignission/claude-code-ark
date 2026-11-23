@@ -51,7 +51,6 @@ describe("MobileSessionList", () => {
   it("見出し「Ark」と新規作成を出し、一覧をPCと同じ並べ方のカードで描く", () => {
     const onNewSession = vi.fn();
     const sessionStatuses = new Map([["session-1", "IDLE" as const]]);
-    const sessionPreviews = new Map([["session-1", "テストを実行しています"]]);
     const worktreeDisplayNames = new Map([["/repo/worktree", "ログイン画面"]]);
     const container = mount(
       <MobileSessionList
@@ -59,7 +58,6 @@ describe("MobileSessionList", () => {
         worktrees={[]}
         repoList={["/repo"]}
         sessionStatuses={sessionStatuses}
-        sessionPreviews={sessionPreviews}
         sessionPrStatuses={new Map()}
         worktreeDisplayNames={worktreeDisplayNames}
         onOpenSession={vi.fn()}
@@ -87,7 +85,6 @@ describe("MobileSessionList", () => {
       repoList: ["/repo"],
     });
     expect(listProps.sessionStatuses).toBe(sessionStatuses);
-    expect(listProps.sessionPreviews).toBe(sessionPreviews);
     expect(listProps.worktreeDisplayNames).toBe(worktreeDisplayNames);
     expect(listProps).not.toHaveProperty("onSelectRepoGrid");
     expect(listProps).not.toHaveProperty("onNewSession");
@@ -101,7 +98,6 @@ describe("MobileSessionList", () => {
         worktrees={[]}
         repoList={[]}
         sessionStatuses={new Map()}
-        sessionPreviews={new Map()}
         sessionPrStatuses={new Map()}
         worktreeDisplayNames={new Map()}
         onOpenSession={vi.fn()}
@@ -132,7 +128,6 @@ describe("MobileSessionList", () => {
         worktrees={[]}
         repoList={["/repo"]}
         sessionStatuses={new Map()}
-        sessionPreviews={new Map()}
         sessionPrStatuses={new Map()}
         worktreeDisplayNames={new Map()}
         onOpenSession={vi.fn()}

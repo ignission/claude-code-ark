@@ -64,7 +64,6 @@ function createProps(): ComponentProps<typeof MobileLayout> {
     sessionStatuses: new Map(),
     sessionAwaitingTexts: new Map(),
     sessionLiveTails: new Map(),
-    sessionPreviews: new Map(),
     sessionPrStatuses: new Map(),
     sessionPlanLimits: new Map(),
     worktreeDisplayNames: new Map(),
@@ -159,7 +158,7 @@ describe("MobileLayoutの下部タブ", () => {
 });
 
 describe("MobileLayoutの一覧の配線", () => {
-  it("一覧の行にプレビュー文と表示名を出す", () => {
+  it("一覧の行に表示名を出す", () => {
     const worktree: Worktree = {
       id: session.worktreeId,
       path: session.worktreePath,
@@ -175,12 +174,10 @@ describe("MobileLayoutの一覧の配線", () => {
         repoList: ["/repo"],
         worktrees: [worktree],
         sessionStatuses: new Map([[session.id, "TOOL"]]),
-        sessionPreviews: new Map([[session.id, "テストを実行しています"]]),
         worktreeDisplayNames: new Map([[worktree.path, "一覧の表示名"]]),
       })
     );
 
-    expect(markup).toContain("テストを実行しています");
     expect(markup).toContain("一覧の表示名");
   });
 });

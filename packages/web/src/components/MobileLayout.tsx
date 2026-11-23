@@ -157,8 +157,6 @@ interface MobileLayoutProps {
   sessionLiveTails: Map<string, string>;
   /** プランの使用量マップ（入力欄の横に出す） */
   sessionPlanLimits: Map<string, PlanLimits>;
-  /** session:previews由来の端末の最後の内容行 (一覧の2行目) */
-  sessionPreviews: Map<string, string>;
   sessionPrStatuses: Map<string, SessionPrStatus>;
   /** sessionId → 未完了の分岐TODOの件数 */
   sessionTodoCounts?: Map<string, number>;
@@ -236,7 +234,6 @@ export function MobileLayout({
   sessionAwaitingTexts,
   sessionLiveTails,
   sessionPlanLimits,
-  sessionPreviews,
   sessionPrStatuses,
   sessionTodoCounts,
   renderTodoPane,
@@ -408,7 +405,6 @@ export function MobileLayout({
           repoList={repoList}
           sessionStatuses={sessionStatuses}
           sessionLastUpdatedAt={sessionLastUpdatedAt}
-          sessionPreviews={sessionPreviews}
           sessionPrStatuses={sessionPrStatuses}
           sessionTodoCounts={sessionTodoCounts}
           worktreeDisplayNames={worktreeDisplayNames}

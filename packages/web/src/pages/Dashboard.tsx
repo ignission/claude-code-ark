@@ -189,7 +189,6 @@ export default function Dashboard() {
     copyBuffer,
     deletedWorktreeId,
     clearDeletedWorktreeId,
-    sessionPreviews,
     sessionAwaitingTexts,
     sessionLiveTails,
     sessionPrStatuses,
@@ -1223,7 +1222,6 @@ export default function Dashboard() {
           sessionAwaitingTexts={sessionAwaitingTexts}
           sessionLiveTails={sessionLiveTails}
           sessionPlanLimits={sessionPlanLimits}
-          sessionPreviews={sessionPreviews}
           sessionPrStatuses={sessionPrStatuses}
           sessionTodoCounts={sessionTodoCounts}
           renderTodoPane={(session, openWorktree) => (
@@ -1263,7 +1261,6 @@ export default function Dashboard() {
               repoList={repoList}
               sessionStatuses={sessionStatuses}
               sessionLastUpdatedAt={sessionLastUpdatedAt}
-              sessionPreviews={sessionPreviews}
               sessionPrStatuses={sessionPrStatuses}
               sessionTodoCounts={sessionTodoCounts}
               selectedSessionId={selectedSessionId}
