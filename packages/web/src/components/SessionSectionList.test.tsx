@@ -664,6 +664,51 @@ describe("SessionSectionListの手動の休止", () => {
     expect(onSetSessionRested).toHaveBeenNthCalledWith(2, "session-c", false);
   });
 
+  it("一覧の中にフォーカスがあっても、メニューで休止にした行は休止中へ動かす", () => {
+    const onSetSessionRested = vi.fn();
+    const props = listProps({
+      sessionStatuses: statusesOf("IDLE", "TOOL", "IDLE"),
+      onSetSessionRested,
+    });
+    const { container, rerender } = mountList(props);
+    const menuButtonA = rowElementOf(
+      container,
+      "wt:a"
+    ).querySelector<HTMLButtonElement>(
+      'button[aria-label="app (feature/a) のメニュー"]'
+    );
+    act(() => menuButtonA?.focus());
+
+    act(() => menuOf("wt:a").rest?.onChange(true));
+    expect(onSetSessionRested).toHaveBeenCalledWith("session-a", true);
+    // サーバーから session:updated が届いた
+    rerender({ ...props, sessions: sessionsWithRested(["session-a"]) });
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:c",
+      "# 作業中",
+      "wt:b",
+      "# 休止中",
+      "wt:a",
+    ]);
+
+    // 動いたあとは保留に戻る: フォーカスが残る間は、ほかの状態の変化で行が動かない
+    rerender({
+      ...props,
+      sessions: sessionsWithRested(["session-a"]),
+      sessionStatuses: statusesOf("IDLE", "AWAITING", "IDLE"),
+    });
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:c",
+      "# 作業中",
+      "wt:b",
+      "# 休止中",
+      "wt:a",
+    ]);
+  });
+
   it("状態だけで休止中にいる行には、休止の項目を出さない", () => {
     mountList(
       listProps({

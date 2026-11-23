@@ -131,6 +131,9 @@ type DeleteTarget =
   | { kind: "worktree"; worktree: Worktree };
 
 const NO_PROFILES: Profile[] = [];
+
+/** 休止の付け外しがサーバーから届かなかったときに、保留へ戻すまでの時間 */
+const PENDING_REST_TIMEOUT_MS = 5000;
 const rowKey = (row: ListRow) => row.key;
 
 function worktreePathOf(entry: SessionListEntry): string | null {
@@ -212,7 +215,15 @@ export function SessionSectionList({
     repoList,
     activeSessionIds
   );
-  const { held, bindings, onMenuOpenChange } = useListHold();
+  const { held: pointerHeld, bindings, onMenuOpenChange } = useListHold();
+  // 行メニューで休止にした (戻した) 行は、保留中でも新しいセクションへ動かす。
+  // メニューを閉じるとフォーカスは … に残り、ポインタも一覧の上にあるので、保留のままだと
+  // 選んでも何も起きないように見える。行が動いたら (または届かなければ時間で) 保留に戻す
+  const [pendingRest, setPendingRest] = useState<{
+    key: string;
+    rested: boolean;
+  } | null>(null);
+  const held = pointerHeld && pendingRest === null;
   // ホームの行は一覧から外す。親をたどる対応表 (entryByPath) にも入らないので、
   // ホームの子は親の表示を持たない普通の行になる (子は全部ホームの子なので、出すと全行に付く)
   const entries = useMemo(
@@ -245,6 +256,19 @@ export function SessionSectionList({
     }
     return map;
   }, [entries]);
+  useEffect(() => {
+    if (!pendingRest) return;
+    const entry = entries.find(e => e.key === pendingRest.key);
+    if (!entry || entry.manuallyRested === pendingRest.rested) {
+      setPendingRest(null);
+      return;
+    }
+    const timer = setTimeout(
+      () => setPendingRest(null),
+      PENDING_REST_TIMEOUT_MS
+    );
+    return () => clearTimeout(timer);
+  }, [entries, pendingRest]);
   const shownRows = useHeldOrder(rows, rowKey, held);
   // 保留していなければ、直後に行が続かない (空の) 見出しは描かない。
   // 保留中は描く見出しを保留の前のまま固定する。空になった見出しも残して下の行を動かさず、
@@ -346,7 +370,10 @@ export function SessionSectionList({
         (entry.manuallyRested || entry.section === "your-turn")
           ? {
               rested: entry.manuallyRested,
-              onChange: rested => onSetSessionRested(session.id, rested),
+              onChange: rested => {
+                setPendingRest({ key: entry.key, rested });
+                onSetSessionRested(session.id, rested);
+              },
             }
           : undefined,
       onRestart:
