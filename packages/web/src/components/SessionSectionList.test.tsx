@@ -613,6 +613,69 @@ describe("SessionSectionListの並べ方", () => {
   });
 });
 
+describe("SessionSectionListの手動の休止", () => {
+  function sessionsWithRested(restedIds: string[]) {
+    return new Map(
+      Array.from(sessions, ([id, session]) => [
+        id,
+        restedIds.includes(id) ? { ...session, restedAt: 1_000 } : session,
+      ])
+    );
+  }
+
+  it("手動で休止にした行は、状態に関係なく休止中に並べ、あなたの番の件数から外す", () => {
+    const onYourTurnCountChange = vi.fn();
+    const { container } = mountList(
+      listProps({
+        sessions: sessionsWithRested(["session-a"]),
+        sessionStatuses: statusesOf("IDLE", "TOOL", "AWAITING"),
+        onYourTurnCountChange,
+      })
+    );
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:c",
+      "# 作業中",
+      "wt:b",
+      "# 休止中",
+      "wt:a",
+    ]);
+    expect(onYourTurnCountChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it("「休止にする」はあなたの番の行にだけ出し、手動で休止にした行には「休止から戻す」を出す", () => {
+    const onSetSessionRested = vi.fn();
+    mountList(
+      listProps({
+        sessions: sessionsWithRested(["session-c"]),
+        sessionStatuses: statusesOf("IDLE", "TOOL", "IDLE"),
+        onSetSessionRested,
+      })
+    );
+
+    expect(menuOf("wt:a").rest?.rested).toBe(false);
+    expect(menuOf("wt:b").rest).toBeUndefined();
+    expect(menuOf("wt:c").rest?.rested).toBe(true);
+
+    act(() => menuOf("wt:a").rest?.onChange(true));
+    act(() => menuOf("wt:c").rest?.onChange(false));
+    expect(onSetSessionRested).toHaveBeenNthCalledWith(1, "session-a", true);
+    expect(onSetSessionRested).toHaveBeenNthCalledWith(2, "session-c", false);
+  });
+
+  it("状態だけで休止中にいる行には、休止の項目を出さない", () => {
+    mountList(
+      listProps({
+        sessionStatuses: statusesOf("IDLE", "TOOL", "READY"),
+        onSetSessionRested: vi.fn(),
+      })
+    );
+
+    expect(menuOf("wt:c").rest).toBeUndefined();
+  });
+});
+
 describe("SessionSectionListの行メニューの配線", () => {
   it("「表示名を変更」でその行を編集にし、Enterでworktreeのパスと名前を保存する", () => {
     const onSetWorktreeDisplayName = vi.fn();

@@ -71,6 +71,35 @@ describe("buildSessionEntries", () => {
     ]);
   });
 
+  it("手動で休止にしたセッションは状態に関係なく休止中に置く", () => {
+    const groups = new Map<string, RepoGroup>([
+      [
+        "/r/app",
+        group("app", [
+          {
+            worktree: worktree("w1", "/r/app"),
+            session: { ...session("s1", "w1", "/r/app"), restedAt: 10 },
+          },
+          {
+            worktree: worktree("w2", "/r/app-x"),
+            session: session("s2", "w2", "/r/app-x"),
+          },
+        ]),
+      ],
+    ]);
+    const statuses = new Map<string, BridgeSessionStatus>([
+      ["s1", "AWAITING"],
+      ["s2", "IDLE"],
+    ]);
+    const entries = buildSessionEntries(groups, statuses);
+    expect(
+      entries.map(e => [e.key, e.statusKey, e.section, e.manuallyRested])
+    ).toEqual([
+      ["wt:w1", "AWAITING", "resting", true],
+      ["wt:w2", "IDLE", "your-turn", false],
+    ]);
+  });
+
   it("最終更新はセッションのものを引き当て、無ければ不明 (null) にする", () => {
     const groups = new Map<string, RepoGroup>([
       [

@@ -18,12 +18,14 @@ import {
   Home,
   LayoutGrid,
   MessageSquare,
+  Moon,
   Pencil,
   Play,
   Plus,
   RotateCw,
   Settings,
   Trash2,
+  Undo2,
   UserRound,
 } from "lucide-react";
 import type { ComponentProps, ComponentType } from "react";
@@ -71,6 +73,8 @@ export interface SessionRowMenuProps {
   onStartRename?: () => void;
   /** このセッションの通知。ブラウザが通知に対応していなければundefined */
   notifications?: { enabled: boolean; onChange: (enabled: boolean) => void };
+  /** 手動の休止。rested は今手動で休止にしているか (server の session-rest.ts) */
+  rest?: { rested: boolean; onChange: (rested: boolean) => void };
   /** 再起動の確認を開く */
   onRestart?: () => void;
   /** このworktreeの個別プロファイル。inheritedProfileNameはリポジトリの既定 (未設定はnull) */
@@ -135,6 +139,7 @@ export function SessionRowMenu({
   onSetHome,
   onStartRename,
   notifications,
+  rest,
   onRestart,
   worktreeProfile,
   onCreateWorktree,
@@ -190,6 +195,12 @@ export function SessionRowMenu({
             {notifications.enabled
               ? m.session.menu.muteNotifications
               : m.session.menu.unmuteNotifications}
+          </Menu.Item>
+        )}
+        {rest && (
+          <Menu.Item onSelect={() => rest.onChange(!rest.rested)}>
+            {rest.rested ? <Undo2 /> : <Moon />}
+            {rest.rested ? m.session.menu.unrest : m.session.menu.rest}
           </Menu.Item>
         )}
         {onRestart && (

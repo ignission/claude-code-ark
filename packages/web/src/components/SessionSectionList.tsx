@@ -41,7 +41,7 @@ import {
   sortSessionEntries,
   toListRows,
 } from "@/lib/session-sections";
-import { presentStatus, SECTION_LABELS, TONE_CLASSES } from "@/lib/status-tone";
+import { SECTION_LABELS, TONE_CLASSES } from "@/lib/status-tone";
 import { collectActiveSessionIds } from "@/lib/unlisted-active-sessions";
 import { cn } from "@/lib/utils";
 import { getBaseName } from "@/utils/pathUtils";
@@ -93,6 +93,8 @@ export interface SessionSectionListProps {
   onDeleteWorktree?: (worktree: Worktree) => void;
   /** 再起動 (tmux kill → 新セッション。会話履歴は失われる) */
   onRestartSession?: (sessionId: string) => void;
+  /** 手動で休止にする / 休止から戻す */
+  onSetSessionRested?: (sessionId: string, rested: boolean) => void;
   onSetWorktreeDisplayName?: (
     worktreePath: string,
     displayName: string | null
@@ -178,6 +180,7 @@ export function SessionSectionList({
   onDeleteSession,
   onDeleteWorktree,
   onRestartSession,
+  onSetSessionRested,
   onSetWorktreeDisplayName,
   onSessionNotificationEnabledChange,
   onCreateWorktreeForRepo,
@@ -226,9 +229,7 @@ export function SessionSectionList({
   const rows = useMemo(() => toListRows(sectionize(entries)), [entries]);
   // 見出しの件数と同じ値を外へ知らせる。並びを保留していても件数は最新にする
   const yourTurnCount = useMemo(
-    () =>
-      entries.filter(e => presentStatus(e.statusKey).section === "your-turn")
-        .length,
+    () => entries.filter(e => e.section === "your-turn").length,
     [entries]
   );
   useEffect(() => {
@@ -336,6 +337,16 @@ export function SessionSectionList({
               enabled: isSessionNotificationEnabled?.(session.id) ?? true,
               onChange: enabled =>
                 onSessionNotificationEnabledChange(session.id, enabled),
+            }
+          : undefined,
+      // 休止にできるのは「あなたの番」の行だけ。作業中の行は休止にしてもすぐ会話が動いて外れる
+      rest:
+        session &&
+        onSetSessionRested &&
+        (entry.manuallyRested || entry.section === "your-turn")
+          ? {
+              rested: entry.manuallyRested,
+              onChange: rested => onSetSessionRested(session.id, rested),
             }
           : undefined,
       onRestart:

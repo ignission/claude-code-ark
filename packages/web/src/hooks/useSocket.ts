@@ -251,6 +251,8 @@ interface UseSocketReturn {
     displayName: string | null
   ) => void;
   restartSessionWithProfile: (sessionId: string) => void;
+  /** 手動で休止にする / 休止から戻す */
+  setSessionRested: (sessionId: string, rested: boolean) => void;
 
   // リモート画面
   screens: Screen[];
@@ -1579,6 +1581,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("session:restart-with-profile", { sessionId });
   }, []);
 
+  const setSessionRested = useCallback((sessionId: string, rested: boolean) => {
+    socketRef.current?.emit("session:rest", { sessionId, rested });
+  }, []);
+
   // メッセージショートカット actions
   const createShortcut = useCallback((message: string) => {
     socketRef.current?.emit("shortcut:create", { message });
@@ -1705,6 +1711,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     worktreeDisplayNames,
     setWorktreeDisplayName,
     restartSessionWithProfile,
+    setSessionRested,
     // リモート画面
     screens,
     screensLoaded,

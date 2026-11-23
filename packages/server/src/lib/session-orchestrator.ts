@@ -447,6 +447,8 @@ export class SessionOrchestrator extends EventEmitter {
       // サイドバーで子を親の下に並べるために必要 (task_start で起こした子だけ値がある)
       parentWorktreePath: dbSession?.parentWorktreePath ?? null,
       parentRepoPath: dbSession?.parentRepoPath ?? null,
+      // 手動の休止。一覧のセクション分けに使う (session-rest.ts)
+      restedAt: dbSession?.restedAt ?? null,
     };
   }
 
@@ -1046,6 +1048,11 @@ export class SessionOrchestrator extends EventEmitter {
    */
   getSessionConfigDir(sessionId: string): string | null {
     return this.sessionProfiles.get(sessionId)?.configDir ?? null;
+  }
+
+  /** セッションの worktree のパス。毎秒の previews で引くので、メモリだけで答える */
+  getSessionWorktreePath(sessionId: string): string | null {
+    return tmuxManager.getSession(sessionId)?.worktreePath ?? null;
   }
 
   getSession(sessionId: string): ManagedSession | undefined {

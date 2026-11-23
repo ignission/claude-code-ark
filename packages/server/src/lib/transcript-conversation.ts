@@ -242,7 +242,7 @@ function classifyHead(head: TranscriptHead): TranscriptConversationState {
  *   - slash command の user (`<command-name>/clear</command-name>`) と、その
  *     出力 (`<local-command-stdout>…`)
  */
-function isConversationRecord(record: unknown): boolean {
+export function isConversationRecord(record: unknown): boolean {
   if (typeof record !== "object" || record === null) return false;
   const fields = record as Record<string, unknown>;
   // 実データの isCompactSummary は isMeta: null と同居するので、user 判定より先に見る

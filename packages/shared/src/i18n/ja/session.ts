@@ -131,6 +131,8 @@ export const session = {
     rename: "表示名を変更",
     muteNotifications: "通知をオフにする",
     unmuteNotifications: "通知をオンにする",
+    rest: "休止にする",
+    unrest: "休止から戻す",
     worktreeProfile: "このworktreeのプロファイル",
     inheritRepoProfile: (profileName: string | null) =>
       `リポジトリの設定を継承 (${profileName ?? "既定"})`,
