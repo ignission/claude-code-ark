@@ -9,7 +9,9 @@
  *
  * 始めた先のセッションがいまある行は、始めるボタンを出さず、黄色の「<名前> へ移動」だけを
  * 本文の下に出す (判定は todo-start.ts の todoStartedSessionPath)。押すとそのセッションを開き、
- * 新しくは始めない (同じTODOからセッションを二重に作らないため)。黄色は GitRefLabels の
+ * 新しくは始めない (同じTODOからセッションを二重に作らないため)。右には「完了」を並べ、
+ * 始めた先で片付いた行をその場で完了にできるようにする (左のチェックボックスと同じ操作)。
+ * 「完了」は黄色と同じ濃さの緑にする。黄色は GitRefLabels の
  * タグと同じ配色。行のアイコンは PC ではホバーするまで見えないので、色を付けるのではなく
  * 常に見える文字のボタンにする。セッションを消すと、行は元の始めるボタンに戻る
  *
@@ -159,14 +161,26 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
           <p className="mt-0.5 text-xs text-muted-foreground">{todo.note}</p>
         )}
         {startedPath !== null && startedLabel !== null ? (
-          <button
-            type="button"
-            onClick={() => openStarted?.(startedPath)}
-            className="mt-1.5 inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/15 px-2.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/25 dark:text-amber-300"
-          >
-            <ArrowRight className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="truncate">{m.todo.openStarted(startedLabel)}</span>
-          </button>
+          <div className="mt-1.5 flex min-w-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => openStarted?.(startedPath)}
+              className="inline-flex min-h-8 min-w-0 items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/15 px-2.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/25 dark:text-amber-300"
+            >
+              <ArrowRight className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="truncate">
+                {m.todo.openStarted(startedLabel)}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onSetDone(todo.id, true)}
+              className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md border border-emerald-500/50 bg-emerald-500/15 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-500/25 dark:text-emerald-300"
+            >
+              <Check className="size-3.5" aria-hidden="true" />
+              {m.todo.finishStarted}
+            </button>
+          </div>
         ) : (
           <StartedLine todo={todo} {...props} />
         )}

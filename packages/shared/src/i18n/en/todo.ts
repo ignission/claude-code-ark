@@ -11,6 +11,7 @@ export const todo: Messages["todo"] = {
   talkInNewWorktree: "Discuss in a new worktree",
   startInRepo: (repoName: string) => `Start in ${repoName}`,
   openStarted: (label: string) => `Go to ${label}`,
+  finishStarted: "Done",
   remove: "Remove TODO",
   startedHere: "Started in this session",
   startedIn: (label: string | null) =>

@@ -242,6 +242,22 @@ describe("TodoPane", () => {
     expect(onOpenWorktree).not.toHaveBeenCalled();
   });
 
+  it("「へ移動」の右に緑の「完了」を出し、押すと、その行を完了にする", () => {
+    const props = mount({
+      ...startedProps,
+      todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
+      onOpenWorktree: vi.fn(),
+    });
+    const jump = byText("button", "todo-abc へ移動");
+    const finish = [...container.querySelectorAll("button")].find(
+      el => el.textContent === "完了"
+    );
+    expect(finish?.previousElementSibling).toBe(jump);
+    expect(finish?.className).toContain("emerald");
+    click(finish);
+    expect(props.onSetDone).toHaveBeenCalledWith("1", true);
+  });
+
   it("行き先のリポジトリを持つ行も、始めた先のセッションがあれば「へ移動」だけを出す", () => {
     mount({
       ...startedProps,
