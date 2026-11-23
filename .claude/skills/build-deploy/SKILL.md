@@ -44,8 +44,24 @@ pkill -x ttyd
 
 ### 4. pm2で再起動
 
+先に、pm2のデーモンがsystemdのユニット (`pm2-admin.service`) の配下で動いているかを確かめる。
+
+```bash
+systemctl is-active pm2-admin.service && grep -q pm2-admin.service /proc/$(cat ~/.pm2/pm2.pid)/cgroup && echo OK
+```
+
+`OK` が出たら再起動する。
+
 ```bash
 pm2 restart claude-code-ark
+```
+
+`OK` が出ないときは `pm2 restart` を打たない。pm2のコマンドは、デーモンが無いと呼び出し元の下に新しいデーモンを立てる。ユニットの外にデーモンがあると、ユニットの起動は `pm2.pid` を待って90秒でタイムアウトし、再起動を繰り返す。デーモンが落ちても自動では起き直らない。次の手順でユニットの下へ戻す (Arkは一度止まるが、tmuxのセッションはpm2の外にいるので残る)。
+
+```bash
+pm2 save                                  # デーモンが動いているときだけ。いまの構成をdump.pm2に残す
+pm2 kill
+sudo systemctl restart pm2-admin.service  # ExecStartのpm2 resurrectがdump.pm2から戻す
 ```
 
 ### 5. 反映確認と結果報告
