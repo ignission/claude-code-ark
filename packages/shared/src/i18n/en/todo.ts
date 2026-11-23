@@ -12,6 +12,10 @@ export const todo: Messages["todo"] = {
   startInRepo: (repoName: string) => `Start in ${repoName}`,
   openStarted: (label: string) => `Go to ${label}`,
   finishStarted: "Done",
+  finishStartedConfirmTitle: "Mark TODO as done",
+  finishStartedConfirm: (label: string) =>
+    `Delete the session and worktree of ${label} and mark this TODO as done? Uncommitted changes will be lost.`,
+  finishStartedConfirmAction: "Delete and mark done",
   remove: "Remove TODO",
   startedHere: "Started in this session",
   startedIn: (label: string | null) =>

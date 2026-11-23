@@ -47,11 +47,13 @@ export function useTodos(socket: TypedSocket | null) {
     };
   }, [socket, api]);
 
+  // 結果を返す (完了できたときだけ続きの処理をしたい呼び出し側のため)
   const setDone = useCallback(
-    (id: string, done: boolean) => {
-      api?.setDone(id, done).then(res => {
-        if (!res.ok) setError(res.error);
-      });
+    async (id: string, done: boolean): Promise<boolean> => {
+      if (!api) return false;
+      const res = await api.setDone(id, done);
+      if (!res.ok) setError(res.error);
+      return res.ok;
     },
     [api]
   );

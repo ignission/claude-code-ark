@@ -155,14 +155,32 @@ describe("useTodos", () => {
         : { ok: false, error: "TODO が見つかりません" }
     );
     await render(socket);
-    act(() => latest.setDone("1", true));
+    let result: boolean | undefined;
+    await act(async () => {
+      result = await latest.setDone("1", true);
+    });
     await flush();
     expect(socket.emitted.at(-1)).toEqual({
       event: "todo:set-done",
       payload: { id: "1", done: true },
     });
+    expect(result).toBe(false);
     expect(latest.error).toBe("TODO が見つかりません");
     expect(latest.todos[0].doneAt).toBeNull();
+  });
+
+  it("setDone は成功したら true を返す", async () => {
+    const socket = fakeSocket(event =>
+      event === "todo:list"
+        ? { ok: true, todos: [todo("1", "/w/a")] }
+        : { ok: true }
+    );
+    await render(socket);
+    let result: boolean | undefined;
+    await act(async () => {
+      result = await latest.setDone("1", true);
+    });
+    expect(result).toBe(true);
   });
 
   it("remove の失敗を error に入れる", async () => {

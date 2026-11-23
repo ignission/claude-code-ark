@@ -1051,6 +1051,25 @@ export default function Dashboard() {
     }
   };
 
+  // TODOから始めたセッションがある行を完了にする (TodoPane で確認済み)。
+  // TODOを完了にしてから、始めた先のセッションを消す (worktreeはサーバーの session:stop が消す)。
+  // 完了にできなければ始めた先は残す (TODOが未完了のまま始めた先だけが消えないように)
+  const handleFinishStartedTodo = async (
+    todo: Todo,
+    startedWorktreePath: string
+  ) => {
+    if (!(await todos.setDone(todo.id, true))) return;
+    const sessionId = findSessionIdByWorktreePath(
+      sessions.values(),
+      startedWorktreePath
+    );
+    if (!sessionId) return;
+    handleDeleteSession(
+      sessionId,
+      worktrees.find(w => w.path === startedWorktreePath)
+    );
+  };
+
   const handleNewSession = () => {
     // まずリポジトリ選択（なければスキャン、あれば選択→worktree作成へ）
     setIsSelectRepoOpen(true);
@@ -1260,6 +1279,7 @@ export default function Dashboard() {
               worktreePath={session.worktreePath}
               error={todos.error}
               onSetDone={todos.setDone}
+              onFinishStarted={handleFinishStartedTodo}
               onRemove={todos.remove}
               worktreeLabel={worktreeLabelOf}
               onOpenWorktree={openWorktree}
@@ -1559,6 +1579,7 @@ export default function Dashboard() {
                             worktreePath={session.worktreePath}
                             error={todos.error}
                             onSetDone={todos.setDone}
+                            onFinishStarted={handleFinishStartedTodo}
                             onRemove={todos.remove}
                             worktreeLabel={worktreeLabelOf}
                             onOpenWorktree={openWorktreeSession}
