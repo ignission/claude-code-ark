@@ -29,6 +29,10 @@ export const DIAGRAM_SKETCH_LAYER_MARKER = "ark-diagram-sketch-layer";
  *   拡大縮小と読む。描いている間は、ペンを含むタッチをピンチの層へ渡さない。手のひらの
  *   動きでスクロールもしない
  *
+ * - 親のツールバーの「画像としてコピー」も、この層が画像を作る。こちらは図の全体を1枚にし
+ *   (漫画のように全体で読む図のため)、大きさは面積で抑える (iOS は大きすぎる canvas を作らない)。
+ *   書き込むのは親で、sandbox の iframe はクリップボードに書けない
+ *
  * 部品は Shadow DOM の中に置き、図の CSS の影響を受けないようにする。
  * port の扱いはリンク層 (diagram-link-layer.ts) と同じ。
  */
@@ -38,6 +42,9 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   var port=null;
   var MARGIN=140;
   var MAX_EDGE=2000;
+  // Copying takes the whole board, so it is capped by area (iOS refuses larger canvases)
+  var MAX_COPY_PIXELS=16000000;
+  var MAX_COPY_EDGE=16000;
   var MAX_DRAWS=6;
   var REDRAW_WAIT=90;
   var INK="#e11d48";
@@ -54,6 +61,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   var rubbed=false;
   var drawing=false;
   var sending=false;
+  var copying=false;
   var touches={};
   var host=document.createElement("ark-sketch");
   host.setAttribute("style","all:initial!important;position:fixed!important;inset:0!important;z-index:2147483646!important;pointer-events:none!important;display:block!important;");
@@ -307,7 +315,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
     if(port)port.postMessage({type:"ark:diagram-sketch-error"});
   }
   function send(){
-    if(!port||sending)return;
+    if(!port||sending||copying)return;
     sending=true;
     // End a stroke still being drawn (the button can be pressed with another finger):
     // what is added after the picture is taken would be cleared without being in it
@@ -316,9 +324,31 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
     rubbing=false;
     rubbed=false;
     sync();
-    probeImages(capture);
+    probeImages(function(){
+      capture(cropRect,function(crop){return Math.min(2,MAX_EDGE/Math.max(crop.w,crop.h));},function(dataUrl){
+        port.postMessage({type:"ark:diagram-sketch",dataUrl:dataUrl});
+      },fail);
+    });
   }
-  function capture(){
+  // "Copy as image" in the parent's toolbar: the whole board, strokes included. The parent
+  // writes it to the clipboard (this sandboxed frame cannot)
+  function copyPicture(){
+    if(!port)return;
+    if(copying||sending){port.postMessage({type:"ark:diagram-copy-error"});return;}
+    copying=true;
+    var reply=function(message){copying=false;if(port)port.postMessage(message);};
+    probeImages(function(){
+      capture(function(docWidth,docHeight){return {x:0,y:0,w:docWidth,h:docHeight};},function(crop){
+        return Math.min(2,MAX_COPY_EDGE/Math.max(crop.w,crop.h),Math.sqrt(MAX_COPY_PIXELS/(crop.w*crop.h)));
+      },function(dataUrl){
+        reply({type:"ark:diagram-copy",dataUrl:dataUrl});
+      },function(){
+        reply({type:"ark:diagram-copy-error"});
+      });
+    });
+  }
+  // pick(docWidth, docHeight) is the part to take, scaleOf(crop) its scale
+  function capture(pick,scaleOf,done,failed){
     try{
       var page=document.documentElement;
       var docWidth=Math.ceil(Math.max(page.scrollWidth,window.innerWidth));
@@ -346,10 +376,10 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       for(var d=0;d<drop.length;d++)if(drop[d].parentNode)drop[d].parentNode.removeChild(drop[d]);
       var xhtml=new XMLSerializer().serializeToString(clone);
       var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+docWidth+'" height="'+docHeight+'"><foreignObject x="0" y="0" width="'+layoutWidth+'" height="'+docHeight+'" style="overflow:visible">'+xhtml+"</foreignObject></svg>";
-      var crop=cropRect(docWidth,docHeight);
-      var scale=Math.min(2,MAX_EDGE/Math.max(crop.w,crop.h));
+      var crop=pick(docWidth,docHeight);
+      var scale=scaleOf(crop);
       var image=new Image();
-      image.onerror=fail;
+      image.onerror=failed;
       // WebKit fires load before the pictures inside the copy are decoded, and a draw made
       // right away leaves them out (drawing is what starts the decoding). So draw again after
       // a short wait, until two draws in a row come out the same
@@ -373,12 +403,12 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
             return;
           }
           drawStrokes(c,scale,crop.x,crop.y);
-          port.postMessage({type:"ark:diagram-sketch",dataUrl:out.toDataURL("image/png")});
-        }catch(e){fail();}
+          done(out.toDataURL("image/png"));
+        }catch(e){failed();}
       };
       image.onload=render;
       image.src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);
-    }catch(e){fail();}
+    }catch(e){failed();}
   }
   function start(){
     if(host.isConnected)return;
@@ -395,6 +425,8 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
       if(data.type==="ark:diagram-sketch-labels"&&data.labels){
         for(var key in labels)if(typeof data.labels[key]==="string")labels[key]=data.labels[key];
         sync();
+      }else if(data.type==="ark:diagram-copy-request"){
+        copyPicture();
       }else if(data.type==="ark:diagram-sketch-result"){
         // The parent attached the picture to the chat input: the strokes have done their job
         sending=false;

@@ -22,6 +22,8 @@ import {
   ArrowUp,
   ChevronLeft,
   ChevronRight,
+  Copy,
+  Loader2,
   Trash2,
   Workflow,
 } from "lucide-react";
@@ -63,6 +65,10 @@ interface DiagramSwitcherProps {
   isDeleting?: boolean;
   /** 削除の結果の知らせ (失敗の理由や、残ったファイルの警告)。一覧の中にも出す */
   notice?: string | null;
+  /** 開いている図を画像としてコピーする。省略時はボタンを出さない */
+  onCopyImage?: () => void;
+  /** コピーの画像を作っている最中か */
+  copyingImage?: boolean;
 }
 
 const COLUMNS: ReadonlyArray<{
@@ -149,6 +155,8 @@ export function DiagramSwitcher({
   isDeleting = false,
   notice = null,
   openKey,
+  onCopyImage,
+  copyingImage = false,
 }: DiagramSwitcherProps) {
   // 図をまだ選んでいないときは、一覧を開いた状態から始める
   const [open, setOpen] = useState(currentRelPath === undefined);
@@ -430,6 +438,27 @@ export function DiagramSwitcher({
             onClick={onRetry}
           >
             {m.board.switcher.retry}
+          </button>
+        )}
+        {!open && onCopyImage && (
+          <button
+            type="button"
+            aria-label={
+              copyingImage ? m.board.copyImage.copying : m.board.copyImage.label
+            }
+            title={m.board.copyImage.label}
+            disabled={copyingImage}
+            className={NAV_BUTTON}
+            onClick={onCopyImage}
+          >
+            {copyingImage ? (
+              <Loader2
+                className="size-4 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <Copy className="size-4" aria-hidden="true" />
+            )}
           </button>
         )}
       </div>

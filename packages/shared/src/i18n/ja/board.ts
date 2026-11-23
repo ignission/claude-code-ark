@@ -25,6 +25,14 @@ export const board = {
     failed: "手書きを画像にできませんでした",
     uploadFailed: (reason: string) => `手書きを添付できませんでした: ${reason}`,
   },
+  /** ツールバーの「画像としてコピー」。図の全体を1枚の画像にする */
+  copyImage: {
+    label: "図を画像としてコピー",
+    copying: "画像にしています...",
+    copied: "図を画像としてコピーしました",
+    downloaded: "クリップボードに書けないため、画像として保存しました",
+    failed: "図を画像にできませんでした",
+  },
   /** ボードの中の画像を押したときの拡大表示 */
   imageZoom: {
     label: "画像の拡大表示",

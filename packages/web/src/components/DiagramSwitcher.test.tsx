@@ -152,6 +152,34 @@ describe("DiagramSwitcher", () => {
     expect(forward()?.disabled).toBe(true);
   });
 
+  it("図の画面では「図を画像としてコピー」を出し、押すと onCopyImage を呼ぶ。一覧の画面では出さない", () => {
+    const onCopyImage = vi.fn();
+    render({ onCopyImage });
+    const copy = () =>
+      document.querySelector<HTMLButtonElement>(
+        'button[aria-label="図を画像としてコピー"]'
+      );
+    act(() => copy()?.click());
+    expect(onCopyImage).toHaveBeenCalledTimes(1);
+    openList();
+    expect(copy()).toBeNull();
+  });
+
+  it("コピーの画像を作っている間は、コピーのボタンを押せない", () => {
+    render({ onCopyImage: vi.fn(), copyingImage: true });
+    const copying = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="画像にしています..."]'
+    );
+    expect(copying?.disabled).toBe(true);
+  });
+
+  it("onCopyImage が無ければ、コピーのボタンを出さない", () => {
+    render();
+    expect(
+      document.querySelector('button[aria-label="図を画像としてコピー"]')
+    ).toBeNull();
+  });
+
   it("一覧の画面では、バーに件数を出し、「進む」で開いていた図へ戻れる", () => {
     render();
     openList();

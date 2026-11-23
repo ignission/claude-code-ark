@@ -5,6 +5,9 @@
  * （認証トークンを iframe 内に露出させないため）。
  * sandbox は allow-scripts のみで allow-same-origin を付けない。
  * 外部送信の遮断は本文に注入された meta CSP が担う（サーバー側で注入済み）。
+ *
+ * ツールバーの「画像としてコピー」は、図の中の層に図の全体を画像にさせ、親が
+ * クリップボードへ書く (書き方は board-copy-image.ts)。
  */
 import type {
   ClientToServerEvents,
@@ -22,6 +25,12 @@ import {
 } from "react";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
+import {
+  copyImageToClipboard,
+  diagramImageFileName,
+  pngDataUrlToBlob,
+  readDiagramCopyMessage,
+} from "@/lib/board-copy-image";
 import {
   buildSketchDraft,
   EMPTY_SKETCH,
@@ -48,6 +57,15 @@ import {
 import { DiagramSwitcher } from "./DiagramSwitcher";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+
+/** 層が画像を返すまで待つ上限。長い図でも数秒で返る */
+const COPY_IMAGE_TIMEOUT_MS = 20_000;
+
+interface PendingCopy {
+  resolve: (dataUrl: string) => void;
+  reject: (reason: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 export interface DiagramPaneProps {
   sessionId: string;
@@ -414,6 +432,17 @@ export function DiagramPane({
     null
   );
   const closeZoomedImage = useCallback(() => setZoomedImage(null), []);
+  const [copyingImage, setCopyingImage] = useState(false);
+  // 層に頼んで、まだ返っていないコピーの画像。図が読み直されたら返らないので失敗にする
+  const pendingCopyRef = useRef<PendingCopy | null>(null);
+  const settleCopy = useCallback((dataUrl: string | null) => {
+    const pending = pendingCopyRef.current;
+    if (!pending) return;
+    pendingCopyRef.current = null;
+    clearTimeout(pending.timer);
+    if (dataUrl === null) pending.reject(new Error(m.board.copyImage.failed));
+    else pending.resolve(dataUrl);
+  }, []);
   const zoomAnchorRef = useRef<DiagramZoomPoint | null>(null);
   const activeListRequestRef = useRef<object | null>(null);
   const deleteInFlightRef = useRef(false);
@@ -487,6 +516,7 @@ export function DiagramPane({
     scrollPositionRef.current = null;
     sketchRef.current = EMPTY_SKETCH;
     portGrantedForRef.current = null;
+    settleCopy(null);
     if (!relPath) {
       abortControllerRef.current?.abort();
       portRef.current?.close();
@@ -498,7 +528,7 @@ export function DiagramPane({
       portRef.current?.close();
       portRef.current = null;
     };
-  }, [load, relPath]);
+  }, [load, relPath, settleCopy]);
 
   // mount / reconnect / current 図変更 / 明示 refresh で一覧を再取得する。
   // request generation により、古い worktree の遅延 ACK は state へ反映しない。
@@ -637,8 +667,9 @@ export function DiagramPane({
       }
       portGrantedForRef.current = html;
 
-      // 前回の port が残っていれば閉じてから張り替える
+      // 前回の port が残っていれば閉じてから張り替える。古い port に頼んだコピーは返らない
       portRef.current?.close();
+      settleCopy(null);
 
       const channel = new MessageChannel();
       portRef.current = channel.port1;
@@ -662,6 +693,11 @@ export function DiagramPane({
         const scroll = readDiagramScrollMessage(event.data);
         if (scroll) {
           scrollPositionRef.current = scroll;
+          return;
+        }
+        const copy = readDiagramCopyMessage(event.data);
+        if (copy) {
+          settleCopy(copy.kind === "picture" ? copy.dataUrl : null);
           return;
         }
         const image = readDiagramImageMessage(event.data);
@@ -747,8 +783,29 @@ export function DiagramPane({
         });
       }
     },
-    [html]
+    [html, settleCopy]
   );
+
+  // await を挟まずにクリップボードへ書き始める (Safari はクリックから切れると拒む)
+  const handleCopyImage = useCallback(() => {
+    const port = portRef.current;
+    if (!port || !relPath || pendingCopyRef.current) return;
+    const picture = new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => settleCopy(null), COPY_IMAGE_TIMEOUT_MS);
+      pendingCopyRef.current = { resolve, reject, timer };
+    }).then(pngDataUrlToBlob);
+    port.postMessage({ type: "ark:diagram-copy-request" });
+    setCopyingImage(true);
+    void copyImageToClipboard(picture, diagramImageFileName(relPath)).then(
+      result => {
+        setCopyingImage(false);
+        if (result === "copied") toast.success(m.board.copyImage.copied);
+        else if (result === "downloaded")
+          toast.info(m.board.copyImage.downloaded);
+        else toast.error(m.board.copyImage.failed);
+      }
+    );
+  }, [relPath, settleCopy]);
 
   return (
     <div ref={rootRef} className="relative flex h-full flex-col">
@@ -769,6 +826,10 @@ export function DiagramPane({
         isConnected={isConnected}
         isDeleting={isDeleting}
         notice={deleteMessage}
+        onCopyImage={
+          relPath && html !== null && !error ? handleCopyImage : undefined
+        }
+        copyingImage={copyingImage}
       />
       {deleteMessage && (
         <div

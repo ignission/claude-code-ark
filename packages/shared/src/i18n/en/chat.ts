@@ -117,13 +117,15 @@ export const chat: Messages["chat"] = {
   },
   quickActions: {
     label: {
-      diagram: "Diagram on the board",
+      diagram: "Explain as a comic on the board",
       todo: "Save to TODO",
     },
     prompt: {
       diagram: {
-        alone: "Diagram your last explanation on the board.",
-        withText: "Diagram this on the board.",
+        alone:
+          "Draw your last explanation on the board as a comic, with panels and speech bubbles.",
+        withText:
+          "Draw this on the board as a comic, with panels and speech bubbles.",
       },
       todo: {
         alone:
