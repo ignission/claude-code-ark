@@ -2,9 +2,10 @@
  * 分岐TODOから会話を始めるときに、Dashboard が使う純粋な判定。
  * - 元のworktreeのリポジトリとブランチ (新しいタスクのダイアログの初期値)
  * - worktreeのパスからセッションを引く (セッションが現れたら選ぶ待ちに使う)
+ * - 始めた先のセッションへ移動できるか (TodoPane が「始める」の代わりに出すボタン)
  */
 
-import type { ManagedSession, Worktree } from "@ark/shared";
+import type { ManagedSession, Todo, Worktree } from "@ark/shared";
 import { isPathWithin } from "@/utils/pathUtils";
 import { isSessionBelongsToRepo } from "@/utils/sessionUtils";
 
@@ -53,4 +54,22 @@ export function resolveTodoOrigin(
     );
   if (!repoPath) return null;
   return { repoPath, branch: worktree?.branch };
+}
+
+/**
+ * TODOから始めたセッションへ移動できるなら、その worktree のパス。できなければ null。
+ * 移動できるのは、未完了で、始めた先が元の worktree と別で、そこにセッションがいまあるとき。
+ * - 始めた記録があっても、セッションを消した (止めた) あとは null に戻り、行は「始める」に戻る
+ * - 「元のセッションで話す」は下書きを入れるだけでセッションを起こさないので、対象にしない
+ *   (対象にすると、押しても今の会話のままで、新しい worktree へ切り出す手段も消える)
+ * - 記録は最後の 1 件だけなので、何度か始めたTODOは最後に始めた先へ移動する
+ */
+export function todoStartedSessionPath(
+  todo: Pick<Todo, "doneAt" | "worktreePath" | "startedWorktreePath">,
+  hasSession: (worktreePath: string) => boolean
+): string | null {
+  const path = todo.startedWorktreePath;
+  if (todo.doneAt !== null || path === null) return null;
+  if (path === todo.worktreePath) return null;
+  return hasSession(path) ? path : null;
 }

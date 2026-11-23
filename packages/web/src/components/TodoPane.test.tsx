@@ -201,16 +201,98 @@ describe("TodoPane", () => {
     ).toBeNull();
   });
 
-  it("始めた先があれば「→ <名前>で始めた」を出し、押すとそのworktreeを開く", () => {
+  const startedProps = {
+    worktreeLabel: (p: string) =>
+      p === "/w/a" ? "a" : p === "/w/c" ? "todo-abc" : null,
+    onStartHere: vi.fn(),
+    onStartInNewWorktree: vi.fn(),
+  };
+  const startButtons = () =>
+    container.querySelectorAll(
+      '[aria-label="元のセッションで話す"], [aria-label="新しいworktreeで話す"]'
+    ).length;
+
+  it("始めた先のセッションがあれば、始めるボタンの代わりに黄色の「<名前> へ移動」を出し、押すとそこを開く", () => {
     const onOpenWorktree = vi.fn();
     mount({
+      ...startedProps,
       todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
-      worktreeLabel: (p: string) =>
-        p === "/w/a" ? "a" : p === "/w/c" ? "todo-abc" : null,
       onOpenWorktree,
     });
-    const link = byText("button", "→ todo-abcで始めた");
-    click(link);
+    const jump = byText("button", "todo-abc へ移動");
+    expect(jump?.className).toContain("amber");
+    expect(startButtons()).toBe(0);
+    expect(container.textContent).not.toContain("で始めた");
+    click(jump);
+    expect(onOpenWorktree).toHaveBeenCalledWith("/w/c");
+    expect(startedProps.onStartInNewWorktree).not.toHaveBeenCalled();
+  });
+
+  it("onOpenStarted があれば、「へ移動」は onOpenWorktree ではなくそちらを呼ぶ", () => {
+    const onOpenWorktree = vi.fn();
+    const onOpenStarted = vi.fn();
+    mount({
+      ...startedProps,
+      todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
+      onOpenWorktree,
+      onOpenStarted,
+    });
+    click(byText("button", "todo-abc へ移動"));
+    expect(onOpenStarted).toHaveBeenCalledWith("/w/c");
+    expect(onOpenWorktree).not.toHaveBeenCalled();
+  });
+
+  it("行き先のリポジトリを持つ行も、始めた先のセッションがあれば「へ移動」だけを出す", () => {
+    mount({
+      ...startedProps,
+      todos: [
+        base({
+          id: "1",
+          repoPath: "/dev/acme/app",
+          startedWorktreePath: "/w/c",
+          startedAt: 5,
+        }),
+      ],
+      onOpenWorktree: vi.fn(),
+    });
+    expect(byText("button", "todo-abc へ移動")).toBeDefined();
+    expect(byText("button", "app で始める")).toBeUndefined();
+  });
+
+  it("始めた先のセッションが無くなったら、始めるボタンに戻る", () => {
+    mount({
+      ...startedProps,
+      todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
+      onOpenWorktree: vi.fn(),
+      canOpenWorktree: (p: string) => p !== "/w/c",
+    });
+    expect(byText("button", "へ移動")).toBeUndefined();
+    expect(startButtons()).toBe(2);
+    expect(container.textContent).toContain("→ todo-abcで始めた");
+  });
+
+  it("元のセッションで始めた行は、始めるボタンのままにする", () => {
+    mount({
+      ...startedProps,
+      todos: [base({ id: "1", startedWorktreePath: "/w/a", startedAt: 5 })],
+      onOpenWorktree: vi.fn(),
+    });
+    expect(byText("button", "へ移動")).toBeUndefined();
+    expect(startButtons()).toBe(2);
+  });
+
+  it("完了した行は「へ移動」にせず、「→ <名前>で始めた」を出し、押すとそのworktreeを開く", () => {
+    const onOpenWorktree = vi.fn();
+    mount({
+      ...startedProps,
+      todos: [
+        base({ id: "1", doneAt: 9, startedWorktreePath: "/w/c", startedAt: 5 }),
+      ],
+      onOpenWorktree,
+    });
+    click(byText("button", "完了 (1)"));
+    expect(byText("button", "へ移動")).toBeUndefined();
+    click(byText("button", "→ todo-abcで始めた"));
     expect(onOpenWorktree).toHaveBeenCalledWith("/w/c");
   });
 
