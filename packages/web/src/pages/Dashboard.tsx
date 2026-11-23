@@ -1052,9 +1052,13 @@ export default function Dashboard() {
   };
 
   // TODOから始めたセッションがある行を完了にする (TodoPane で確認済み)。
-  // TODOを完了にしてから、始めた先のセッションを消す (worktreeはサーバーの session:stop が消す)
-  const handleFinishStartedTodo = (todo: Todo, startedWorktreePath: string) => {
-    todos.setDone(todo.id, true);
+  // TODOを完了にしてから、始めた先のセッションを消す (worktreeはサーバーの session:stop が消す)。
+  // 完了にできなければ始めた先は残す (TODOが未完了のまま始めた先だけが消えないように)
+  const handleFinishStartedTodo = async (
+    todo: Todo,
+    startedWorktreePath: string
+  ) => {
+    if (!(await todos.setDone(todo.id, true))) return;
     const sessionId = findSessionIdByWorktreePath(
       sessions.values(),
       startedWorktreePath
