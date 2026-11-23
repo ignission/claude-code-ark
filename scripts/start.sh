@@ -14,7 +14,7 @@
 #   3. 前提の道具 (tmux / ttyd) を調べて起動する (packages/server/src/start.ts)
 #
 # 利用者が用意するのは Node.js と tmux だけ。pnpm は無ければここで調達する。
-# pm2 で常駐させる本番の更新は deploy.sh が行う。
+# pm2 で常駐させる本番の更新は .claude/skills/build-deploy/scripts/deploy.sh が行う。
 #
 # macOS の bash 3.2 でも動く書き方にしている (連想配列や空配列の展開を避ける)。
 #

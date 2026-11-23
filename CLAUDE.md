@@ -76,20 +76,9 @@ CodeRabbitの指摘への対応:
 
 ## デプロイ
 
-mainをpullしたあとは、`build-deploy` スキル (`.claude/skills/build-deploy/SKILL.md`) の手順で行う。順番は次のとおりで、入れ替えない。
+`build-deploy` スキル (`.claude/skills/build-deploy/SKILL.md`) で行う。手順の正本はスキルに同梱した `scripts/deploy.sh` で、pnpmやpm2のコマンドを手で打たない (ttydのkillの位置、pm2のデーモンとsystemdのユニット、保存envの汚染など、外すと本番が壊れる細部をスクリプトが持つ)。
 
-```bash
-pnpm install --frozen-lockfile   # 同梱claudeの更新はinstallで初めて反映される
-pnpm build
-pkill -x ttyd                    # 再起動の直前に
-pm2 restart claude-code-ark
-```
-
-ttydはセッションごとの独立したプロセスで、残したままサーバーを再起動すると、同じポート (7680〜) を取れずに `EADDRINUSE` になり、ターミナルが表示されなくなる。そのため再起動の直前に必ずkillする。
-
-各手順の理由、pnpmが入らないときの対処、pm2のenv汚染の確かめ方はスキルに書いてある。
-
-PRのブランチを動作確認に出すときも同じ手順で行う。配信元のチェックアウトをPRのコミットに切り替えてからinstallする。配信元は `pm2 describe claude-code-ark` のscript pathが属するチェックアウト (`git -C <script pathのディレクトリ> rev-parse --show-toplevel`) で、exec cwdではない (cwdは `.env.production` を読むためにmainのチェックアウトを指す)。切り替える前に、そのチェックアウトの `git rev-parse HEAD` を見る。別のPRのコミットを指していたら、別のセッションが確認に出している最中なので、上書きする前にユーザーに確かめる。PRをマージしたら、mainに戻して出し直す。
+PRのブランチを動作確認に出すときも同じスキルで行う。配信元のチェックアウトをPRのコミットに切り替えてから実行し、PRをマージしたら、mainに戻して出し直す。配信元の見つけ方と、別のセッションが出している版を上書きしない確認はスキルにある。
 
 ## 一般規約
 
