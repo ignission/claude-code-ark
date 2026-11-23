@@ -59,7 +59,6 @@ describe("parsePrView", () => {
           url: "https://github.com/o/r/pull/550",
           state: "OPEN",
           isDraft: false,
-          headRefOid: "abc",
           statusCheckRollup: [checkRun("COMPLETED", "SUCCESS")],
         })
       )
@@ -69,7 +68,6 @@ describe("parsePrView", () => {
       state: "OPEN",
       isDraft: false,
       checks: "passed",
-      headRefOid: "abc",
     });
   });
 
@@ -98,7 +96,6 @@ describe("PrStatusCollector", () => {
             url: "u",
             state: "OPEN",
             isDraft: false,
-            headRefOid: "h",
             statusCheckRollup: [context("FAILURE")],
           }),
         };
@@ -126,7 +123,6 @@ describe("PrStatusCollector の読み取りの失敗", () => {
           url: "u",
           state: "OPEN",
           isDraft: false,
-          headRefOid: "h",
           statusCheckRollup: [context("PENDING")],
         }),
       },
@@ -180,7 +176,6 @@ describe("PrStatusCollector の複数アカウント", () => {
     url: "u",
     state: "OPEN",
     isDraft: false,
-    headRefOid: "h",
     statusCheckRollup: [],
   });
   /** login と見えるworktreeの組で、ghの応答を作る */

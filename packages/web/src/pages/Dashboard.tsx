@@ -18,7 +18,6 @@ import {
   type SessionSubView,
 } from "@/components/MobileLayout";
 import { NewTaskDialog, type NewTaskInitial } from "@/components/NewTaskDialog";
-import { NotificationPermissionButton } from "@/components/NotificationPermissionButton";
 import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { ScreenManagerDialog } from "@/components/ScreenManagerDialog";
@@ -57,7 +56,6 @@ import {
 import { useFileTabs } from "@/hooks/useFileTabs";
 import { useHostMetrics } from "@/hooks/useHostMetrics";
 import { useIsMobile } from "@/hooks/useMobile";
-import { useSessionNotifications } from "@/hooks/useSessionNotifications";
 import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
 import { useTodos } from "@/hooks/useTodos";
@@ -80,11 +78,6 @@ import {
   parseScreenSelection,
   screenSelectionId,
 } from "@/lib/screen-selection";
-import {
-  createSessionNotificationEnabledChangeHandler,
-  isNotificationEnabledForSession,
-  normalizeSessionNotificationSettings,
-} from "@/lib/session-notifications";
 import {
   closeSessionTab,
   normalizeSessionTabs,
@@ -109,7 +102,6 @@ import {
 
 export default function Dashboard() {
   const {
-    settings,
     isLoading: isSettingsLoading,
     getSetting,
     setSetting,
@@ -196,8 +188,6 @@ export default function Dashboard() {
     unsubscribeGrid,
     sessionStatuses,
     sessionLastUpdatedAt,
-    sessionStatusSignals,
-    sessionAuqSignals,
     readFile,
     fileContent,
     screens,
@@ -276,15 +266,7 @@ export default function Dashboard() {
   // selectedSessionId とは独立。セルクリックで selectedSessionId に切替えてターミナル表示に潜る
   const [gridRepoPath, setGridRepoPath] = useState<string | null>(null);
 
-  const sessionNotificationSettings = useMemo(
-    () =>
-      normalizeSessionNotificationSettings(
-        settings["sessionNotifications.enabledBySession"]
-      ),
-    [settings]
-  );
-
-  const sessionNotificationLabels = useMemo(() => {
+  const sessionLabels = useMemo(() => {
     const labels = new Map<string, string>();
     for (const session of sessions.values()) {
       const worktree = worktrees.find(item => item.id === session.worktreeId);
@@ -302,22 +284,22 @@ export default function Dashboard() {
   // 分岐TODO。全セッションぶんを 1 回だけ購読し、各ペインへ配る
   const todos = useTodos(socket);
 
-  // TODO の見出しの表示名。セッションがあればサイドバーと通知と同じ出所 (sessionNotificationLabels)、
+  // TODO の見出しの表示名。セッションがあればサイドバーと同じ出所 (sessionLabels)、
   // セッションを止めただけで worktree が残っていれば自分で付けた名前かブランチ名。
   // worktree 自体が無い (消した) ときだけ null
   const worktreeLabelOf = useCallback(
     (worktreePath: string): string | null => {
       for (const session of sessions.values()) {
         if (session.worktreePath === worktreePath) {
-          return sessionNotificationLabels.get(session.id) ?? null;
+          return sessionLabels.get(session.id) ?? null;
         }
       }
       return todoWorktreeLabel(worktreePath, worktrees, worktreeDisplayNames);
     },
-    [sessions, sessionNotificationLabels, worktrees, worktreeDisplayNames]
+    [sessions, sessionLabels, worktrees, worktreeDisplayNames]
   );
 
-  const handleOpenSessionFromNotification = useCallback(
+  const showSession = useCallback(
     (sessionId: string) => {
       setGridRepoPath(null);
       setSelectedSessionId(sessionId);
@@ -327,35 +309,6 @@ export default function Dashboard() {
       }
     },
     [isMobile]
-  );
-
-  const sessionNotifications = useSessionNotifications({
-    statusSignals: sessionStatusSignals,
-    auqSignals: sessionAuqSignals,
-    prStatuses: sessionPrStatuses,
-    sessionLabels: sessionNotificationLabels,
-    enabledBySession: sessionNotificationSettings,
-    onOpenSession: handleOpenSessionFromNotification,
-  });
-
-  const isSessionNotificationEnabled = useCallback(
-    (sessionId: string) =>
-      isNotificationEnabledForSession(sessionNotificationSettings, sessionId),
-    [sessionNotificationSettings]
-  );
-
-  const handleSessionNotificationEnabledChange = useMemo(
-    () => createSessionNotificationEnabledChangeHandler(getSetting, setSetting),
-    [getSetting, setSetting]
-  );
-
-  const notificationControl = (
-    <NotificationPermissionButton
-      supported={sessionNotifications.supported}
-      permission={sessionNotifications.permission}
-      onRequestPermission={sessionNotifications.requestPermission}
-      className={isMobile ? "h-12 w-12" : "h-8 w-8"}
-    />
   );
 
   /** リポジトリヘッダクリック時: グリッドビューを開く */
@@ -586,7 +539,7 @@ export default function Dashboard() {
     }
   }, [sessionTabs, setSetting]);
 
-  // セッションが選ばれたらタブに加える。一覧、通知、グリッド、自動選択、復元の
+  // セッションが選ばれたらタブに加える。一覧、TODO、グリッド、自動選択、復元の
   // どの経路で選ばれても同じに扱うため、選ぶ側ではなく選択の変化を見る
   useEffect(() => {
     if (selectedSessionId && sessions.has(selectedSessionId)) {
@@ -812,10 +765,10 @@ export default function Dashboard() {
   // 選ぶだけでよく、モバイルは会話モードへ切り替える
   const openSessionForTodo = useCallback(
     (sessionId: string) => {
-      handleOpenSessionFromNotification(sessionId);
+      showSession(sessionId);
       setChatViewRequest(prev => createChatViewRequest(prev, sessionId));
     },
-    [handleOpenSessionFromNotification]
+    [showSession]
   );
 
   // TODO の黄色の「へ移動」から、始めた先のセッションを開いて会話を見せる
@@ -1283,16 +1236,10 @@ export default function Dashboard() {
           onSetWorktreeDisplayName={setWorktreeDisplayName}
           onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
           onRemoveRepo={handleRemoveRepo}
-          notificationControl={notificationControl}
           home={homeRow}
           homeWorktreePath={homeWorktreePath}
           onSetHome={setHomeWorktreePath}
           onOpenHome={homeWorktreePath ? handleOpenHome : undefined}
-          notificationsSupported={sessionNotifications.supported}
-          isSessionNotificationEnabled={isSessionNotificationEnabled}
-          onSessionNotificationEnabledChange={
-            handleSessionNotificationEnabledChange
-          }
         />
       ) : (
         <SidebarMainLayout
@@ -1308,17 +1255,12 @@ export default function Dashboard() {
               sessionTodoCounts={sessionTodoCounts}
               selectedSessionId={selectedSessionId}
               worktreeDisplayNames={worktreeDisplayNames}
-              notificationsSupported={sessionNotifications.supported}
-              isSessionNotificationEnabled={isSessionNotificationEnabled}
               onOpenSession={handleSelectSession}
               onStartSession={handleStartSession}
               onDeleteSession={handleDeleteSession}
               onRestartSession={handleRestartSession}
               onSetSessionRested={setSessionRested}
               onSetWorktreeDisplayName={setWorktreeDisplayName}
-              onSessionNotificationEnabledChange={
-                handleSessionNotificationEnabledChange
-              }
               onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
               onSelectRepoGrid={handleSelectRepoGrid}
               onRemoveRepo={handleRemoveRepo}
@@ -1329,7 +1271,6 @@ export default function Dashboard() {
               onCollapse={() => changeSidebarCollapsed(true)}
               onYourTurnCountChange={setYourTurnCount}
               metrics={hostMetrics}
-              notificationControl={notificationControl}
               home={homeRow}
               homeWorktreePath={homeWorktreePath}
               onSetHome={setHomeWorktreePath}
@@ -1354,9 +1295,7 @@ export default function Dashboard() {
               {homeWorktreePath ? (
                 awayFromHomeSessionId && (
                   <HomeBackBar
-                    label={
-                      sessionNotificationLabels.get(awayFromHomeSessionId) ?? ""
-                    }
+                    label={sessionLabels.get(awayFromHomeSessionId) ?? ""}
                     onBack={handleOpenHome}
                   />
                 )
@@ -1430,7 +1369,7 @@ export default function Dashboard() {
                   const isActive = selectedSessionId === session.id;
                   const wt = worktrees.find(w => w.id === session.worktreeId);
                   const rn = repoNameOfSession(session);
-                  // サイドバー (SessionSectionList) と通知の文言と同じ出所
+                  // サイドバー (SessionSectionList) と同じ出所
                   const displayName =
                     worktreeDisplayNames.get(
                       wt?.path ?? session.worktreePath
@@ -1465,15 +1404,6 @@ export default function Dashboard() {
                     onCreateShortcut: createShortcut,
                     onUpdateShortcut: updateShortcut,
                     onDeleteShortcut: deleteShortcut,
-                    notificationsSupported: sessionNotifications.supported,
-                    notificationsEnabled: isSessionNotificationEnabled(
-                      session.id
-                    ),
-                    onNotificationsEnabledChange: (enabled: boolean) =>
-                      handleSessionNotificationEnabledChange(
-                        session.id,
-                        enabled
-                      ),
                   };
                   return (
                     <div

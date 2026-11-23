@@ -2,7 +2,7 @@
  * PR Status Collector
  *
  * セッションのブランチに紐づくGitHubのPRと、そのチェックの集計を定期的に読む。
- * 一覧の行に通った / 落ちた / 待ちを出し、落ちたら通知するために使う
+ * 一覧の行に通った / 落ちた / 待ちを出すために使う
  * (「完了」だけでは成功と失敗が分からないので、CIの結果で外から補う)。
  *
  * - 読むだけで、PRやブランチには何も書かない。Auto-fixやAuto-mergeは持たない
@@ -13,7 +13,7 @@
  *   読めたアカウントはworktreeごとに覚え、どのアカウントでも読めないworktreeは null にして、
  *   ログインしているアカウントの顔ぶれが変わるまで読まない
  * - それ以外の失敗 (タイムアウト、認証やネットワークの一時的な失敗) では前の値を残す。
- *   null にすると、次に読めた「落ちた」が初めて見た値になり、通知を取りこぼす
+ *   null にすると、一時的な失敗のたびに行のPRの表示が消えて戻る
  * - ghが見つからなければ、この機能だけを無効にする (起動時に1行だけ知らせる)
  * - セッションは直列に読む。間隔は60秒。10セッションでも1時間に600回で、
  *   GitHub APIの上限 (5,000回/時) に収まる
@@ -27,7 +27,7 @@ import type { SessionPrStatus } from "@ark/shared";
 
 export const PR_STATUS_INTERVAL_MS = 60_000;
 const GH_TIMEOUT_MS = 20_000;
-const GH_FIELDS = "number,url,state,isDraft,headRefOid,statusCheckRollup";
+const GH_FIELDS = "number,url,state,isDraft,statusCheckRollup";
 
 /** 落ちたとみなすチェックの結論 (CheckRunのconclusion / StatusContextのstate) */
 const FAILED = new Set([
@@ -79,7 +79,7 @@ export function parsePrView(stdout: string): SessionPrStatus | null {
     return null;
   }
   if (!obj || typeof obj !== "object") return null;
-  const { number, url, state, isDraft, headRefOid } = obj;
+  const { number, url, state, isDraft } = obj;
   if (
     typeof number !== "number" ||
     typeof url !== "string" ||
@@ -93,7 +93,6 @@ export function parsePrView(stdout: string): SessionPrStatus | null {
     state,
     isDraft: isDraft === true,
     checks: summarizeChecks(obj.statusCheckRollup),
-    headRefOid: typeof headRefOid === "string" ? headRefOid : "",
   };
 }
 

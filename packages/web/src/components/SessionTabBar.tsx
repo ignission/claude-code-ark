@@ -39,7 +39,7 @@ export function SessionTabBar({
 }: SessionTabBarProps) {
   const activeRef = useRef<HTMLDivElement | null>(null);
 
-  // 一覧や通知から選ばれたタブが、横スクロールの外にあっても見えるようにする
+  // 一覧などから選ばれたタブが、横スクロールの外にあっても見えるようにする
   // biome-ignore lint/correctness/useExhaustiveDependencies: 選択が替わるたびに位置を合わせる
   useEffect(() => {
     activeRef.current?.scrollIntoView?.({

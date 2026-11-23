@@ -1469,7 +1469,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
   });
 
   it("出す項目が削除だけのときは、`…` の先頭に区切り線を残さない", () => {
-    // 通知APIの無い環境 (iOS Safari 等) で、かつ再起動を出せないセッション
+    // 再起動を出せないセッション
     const container = mount(<MobileSessionView {...makeProps()} />);
 
     openDropdown(
@@ -1481,26 +1481,6 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     const menu = document.body.querySelector('[role="menu"]');
     expect(menu?.textContent).toContain("セッションを削除");
     expect(menu?.querySelectorAll('[role="separator"]')).toHaveLength(0);
-  });
-
-  it("再起動を出せない環境では、`…` の区切り線が2本並ばない", () => {
-    const container = mount(
-      <MobileSessionView
-        {...makeProps({
-          notificationsSupported: true,
-          onNotificationsEnabledChange: vi.fn(),
-        })}
-      />
-    );
-
-    openDropdown(
-      container
-        .querySelector("header")
-        ?.querySelector('button[aria-label="その他の操作"]')
-    );
-
-    const menu = document.body.querySelector('[role="menu"]');
-    expect(menu?.querySelectorAll('[role="separator"]')).toHaveLength(1);
   });
 });
 

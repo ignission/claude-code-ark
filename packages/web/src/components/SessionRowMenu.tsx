@@ -8,8 +8,6 @@
  */
 
 import {
-  Bell,
-  BellOff,
   CornerLeftUp,
   EyeOff,
   GitBranchPlus,
@@ -53,8 +51,6 @@ export interface SessionRowMenuProps {
   onSetHome?: () => void;
   /** 表示名の編集を始める */
   onStartRename?: () => void;
-  /** このセッションの通知。ブラウザが通知に対応していなければundefined */
-  notifications?: { enabled: boolean; onChange: (enabled: boolean) => void };
   /** 手動の休止。rested は今手動で休止にしているか (server の session-rest.ts) */
   rest?: { rested: boolean; onChange: (rested: boolean) => void };
   /** 再起動の確認を開く */
@@ -98,7 +94,6 @@ export function SessionRowMenu({
   onOpenParent,
   onSetHome,
   onStartRename,
-  notifications,
   rest,
   onRestart,
   onCreateWorktree,
@@ -141,16 +136,6 @@ export function SessionRowMenu({
           <Menu.Item onSelect={onStartRename}>
             <Pencil />
             {m.session.menu.rename}
-          </Menu.Item>
-        )}
-        {notifications && (
-          <Menu.Item
-            onSelect={() => notifications.onChange(!notifications.enabled)}
-          >
-            {notifications.enabled ? <BellOff /> : <Bell />}
-            {notifications.enabled
-              ? m.session.menu.muteNotifications
-              : m.session.menu.unmuteNotifications}
           </Menu.Item>
         )}
         {rest && (

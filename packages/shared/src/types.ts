@@ -128,8 +128,6 @@ export interface SessionPrStatus {
    * すべて通れば passed、チェックが1つも無ければ none
    */
   checks: "none" | "pending" | "passed" | "failed";
-  /** PRの先頭のコミット。同じ失敗を二度通知しないために使う */
-  headRefOid: string;
 }
 
 /**

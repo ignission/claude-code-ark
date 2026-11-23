@@ -176,19 +176,12 @@ interface MobileLayoutProps {
   /** 行メニューの「リポジトリ」の操作 */
   onCreateWorktreeForRepo?: (repoPath: string) => void;
   onRemoveRepo?: (repoPath: string) => void;
-  notificationControl?: ReactNode;
   /** 一覧の上に固定で出すホームの行と、ホームの worktree のパス (lib/home-session.ts) */
   home?: ReactNode;
   homeWorktreePath?: string | null;
   onSetHome?: (worktreePath: string) => void;
   /** ホームの会話を開く。ホームを決めていなければ無い */
   onOpenHome?: () => void;
-  notificationsSupported?: boolean;
-  isSessionNotificationEnabled?: (sessionId: string) => boolean;
-  onSessionNotificationEnabledChange?: (
-    sessionId: string,
-    enabled: boolean
-  ) => void;
 }
 
 export function MobileLayout({
@@ -248,14 +241,10 @@ export function MobileLayout({
   onSetWorktreeDisplayName,
   onCreateWorktreeForRepo,
   onRemoveRepo,
-  notificationControl,
   home,
   homeWorktreePath,
   onSetHome,
   onOpenHome,
-  notificationsSupported = false,
-  isSessionNotificationEnabled,
-  onSessionNotificationEnabledChange,
 }: MobileLayoutProps) {
   const [openedSessions, setOpenedSessions] = useState<Set<string>>(() =>
     selectedSessionId ? new Set([selectedSessionId]) : new Set()
@@ -418,8 +407,6 @@ export function MobileLayout({
           sessionPrStatuses={sessionPrStatuses}
           sessionTodoCounts={sessionTodoCounts}
           worktreeDisplayNames={worktreeDisplayNames}
-          notificationsSupported={notificationsSupported}
-          isSessionNotificationEnabled={isSessionNotificationEnabled}
           onOpenSession={handleOpenSession}
           onStartSession={onStartSession}
           onDeleteSession={onDeleteSession}
@@ -427,15 +414,11 @@ export function MobileLayout({
           onRestartSession={onRestartSession}
           onSetSessionRested={onSetSessionRested}
           onSetWorktreeDisplayName={onSetWorktreeDisplayName}
-          onSessionNotificationEnabledChange={
-            onSessionNotificationEnabledChange
-          }
           onCreateWorktreeForRepo={onCreateWorktreeForRepo}
           onRemoveRepo={onRemoveRepo}
           onNewSession={onNewSession}
           onNewTask={onNewTask}
           onSplitTask={onSplitTask}
-          notificationControl={notificationControl}
           home={home}
           homeWorktreePath={homeWorktreePath}
           onSetHome={onSetHome}
@@ -484,16 +467,6 @@ export function MobileLayout({
                   worktreeDisplayNames.get(
                     worktree?.path ?? session.worktreePath
                   ) ?? null
-                }
-                notificationsSupported={notificationsSupported}
-                notificationsEnabled={
-                  isSessionNotificationEnabled?.(sessionId) ?? true
-                }
-                onNotificationsEnabledChange={
-                  onSessionNotificationEnabledChange
-                    ? enabled =>
-                        onSessionNotificationEnabledChange(sessionId, enabled)
-                    : undefined
                 }
                 onBack={handleBack}
                 onOpenHome={

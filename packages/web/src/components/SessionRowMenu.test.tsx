@@ -131,7 +131,6 @@ function fullMenuProps(): Omit<SessionRowMenuProps, "variant"> {
     entry: entryOf(),
     onOpen: vi.fn(),
     onStartRename: vi.fn(),
-    notifications: { enabled: true, onChange: vi.fn() },
     onRestart: vi.fn(),
     onCreateWorktree: vi.fn(),
     onOpenRepoGrid: vi.fn(),
@@ -152,7 +151,7 @@ afterEach(() => {
 });
 
 describe("SessionRowMenu", () => {
-  it("セッションのある行: 開く・表示名・通知・再起動、リポジトリの操作、最下段に赤い削除を並べる", () => {
+  it("セッションのある行: 開く・表示名・再起動、リポジトリの操作、最下段に赤い削除を並べる", () => {
     const container = mount(
       <SessionRowMenu variant="dropdown" {...fullMenuProps()} />
     );
@@ -160,7 +159,6 @@ describe("SessionRowMenu", () => {
     expect(itemLabels(container)).toEqual([
       "開く",
       "表示名を変更",
-      "通知をオフにする",
       "再起動",
       "新規worktreeを作成",
       "このリポジトリの全セッションを並べて見る",
@@ -184,7 +182,6 @@ describe("SessionRowMenu", () => {
     expect(itemLabels(container)).toEqual([
       "開く",
       "表示名を変更",
-      "通知をオフにする",
       "再起動",
       "新規worktreeを作成",
       "このリポジトリの全セッションを並べて見る",
@@ -227,7 +224,6 @@ describe("SessionRowMenu", () => {
     const container = mount(<SessionRowMenu variant="dropdown" {...props} />);
 
     clickItem(container, "表示名を変更");
-    clickItem(container, "通知をオフにする");
     clickItem(container, "再起動");
     clickItem(container, "新規worktreeを作成");
     clickItem(container, "このリポジトリの全セッションを並べて見る");
@@ -235,7 +231,6 @@ describe("SessionRowMenu", () => {
     clickItem(container, "セッションを削除");
 
     expect(props.onStartRename).toHaveBeenCalledTimes(1);
-    expect(props.notifications?.onChange).toHaveBeenCalledWith(false);
     expect(props.onRestart).toHaveBeenCalledTimes(1);
     expect(props.onCreateWorktree).toHaveBeenCalledTimes(1);
     expect(props.onOpenRepoGrid).toHaveBeenCalledTimes(1);
