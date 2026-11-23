@@ -113,13 +113,13 @@ export const chat = {
   },
   quickActions: {
     label: {
-      diagram: "ボードに図解させる",
+      diagram: "ボードに漫画で図解させる",
       todo: "TODOに残させる",
     },
     prompt: {
       diagram: {
-        alone: "直前の説明をボードに図解して。",
-        withText: "これをボードに図解して。",
+        alone: "直前の説明を、コマ割りと吹き出しの漫画にしてボードに描いて。",
+        withText: "これを、コマ割りと吹き出しの漫画にしてボードに描いて。",
       },
       todo: {
         alone: "この会話で保留にした話題をTODOに残して。",

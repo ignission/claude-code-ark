@@ -59,6 +59,8 @@ Press an image on a board (`<img>` or `<svg>`) to enlarge it to nearly the whole
 
 You can draw on a board by hand. Press "Draw" at the bottom right, then circle things or draw arrows over the diagram with an Apple Pencil or a mouse (fingers still scroll). The eraser removes strokes. "Show Claude" turns what is on screen, diagram included, into one picture and attaches it to the chat input.
 
+The copy button at the top of the board copies the whole board to the clipboard as one image. Where the clipboard cannot be written (for example over plain http), the image is saved as a PNG instead.
+
 ### You can review without leaving
 
 <p align="center">
@@ -177,7 +179,7 @@ Ark prints a QR code and a temporary `*.trycloudflare.com` URL protected by a ra
 
 ## Branch TODOs
 
-Topics set aside mid-conversation are kept as TODOs. Press the TODO button to the left of the chat input, and Claude writes down the topics it put off in this conversation with the MCP tool `todo_add`. Type something first, and that text becomes the TODO. The diagram button next to it works the same way: it asks Claude to draw the last explanation (or the text you typed) on the board.
+Topics set aside mid-conversation are kept as TODOs. Press the TODO button to the left of the chat input, and Claude writes down the topics it put off in this conversation with the MCP tool `todo_add`. Type something first, and that text becomes the TODO. The diagram button next to it works the same way: it asks Claude to draw the last explanation (or the text you typed) on the board as a comic, with panels and speech bubbles.
 
 TODOs show in the right pane's TODO tab, as counts in the sidebar, and in the mobile TODO view. Claude cannot complete or delete a TODO.
 

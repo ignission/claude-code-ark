@@ -43,6 +43,13 @@ export const board: Messages["board"] = {
     failed: "Could not turn the drawing into a picture",
     uploadFailed: (reason: string) => `Could not attach the drawing: ${reason}`,
   },
+  copyImage: {
+    label: "Copy the board as an image",
+    copying: "Making the image...",
+    copied: "Copied the board as an image",
+    downloaded: "Could not write to the clipboard, so the image was saved",
+    failed: "Could not turn the board into an image",
+  },
   imageZoom: {
     label: "Enlarged image",
     close: "Close",
