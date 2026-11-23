@@ -16,11 +16,7 @@ export const session = {
     ready: "待機",
     stopped: "停止",
     notStarted: "未起動",
-  },
-  sections: {
-    yourTurn: "あなたの番",
-    working: "作業中",
-    resting: "休止中",
+    rested: "休止",
   },
   /** PCの画面の上に並べる、開いたセッションのタブ */
   tabs: {
@@ -122,6 +118,8 @@ export const session = {
     removeRepoBody: (repoName: string) =>
       `「${repoName}」をサイドバー一覧から非表示にします。Worktreeやセッション、リポジトリ自体は削除されません。再度リポジトリを選択すれば復元できます。`,
     removeRepoAction: "除外",
+    reorderRepo: (repoName: string) =>
+      `${repoName}の位置を動かす (ドラッグか上下キー)`,
   },
   /** ホーム (入口にするセッション。決まりは web の lib/home-session.ts) */
   home: {

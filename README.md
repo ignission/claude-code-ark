@@ -43,7 +43,7 @@ You need to be logged in to Claude Code. If Claude Code has never run on the mac
 
 ### You can tell where every session stands without opening it
 
-The sidebar sorts sessions into "Your turn", "Working" and "Inactive". When Claude asks a question, Ark opens the terminal so you can answer Claude Code's own prompt there.
+The sidebar groups sessions by repository, and you can drag repositories into the order you like. Each row's icon shows whether it is your turn, Claude is working, or the session is inactive. When Claude asks a question, Ark opens the terminal so you can answer Claude Code's own prompt there.
 
 If a session's branch has a GitHub pull request, its row shows the PR number and the check result (✓ / ✕ / pending, merged, closed); clicking it opens the PR. Ark reads this with the [GitHub CLI](https://cli.github.com/) (`gh`) once a minute.
 

@@ -8,11 +8,13 @@ import type { RepoGroup } from "@/hooks/useGroupedWorktreeItems";
 import {
   buildSessionEntries,
   countChildren,
+  groupByRepo,
+  moveRepo,
   nestChildEntries,
+  normalizeRepoOrder,
+  orderRepoPaths,
+  resolveDropIndex,
   type SessionListEntry,
-  sectionize,
-  sortSessionEntries,
-  toListRows,
 } from "./session-sections";
 
 function worktree(id: string, path: string): Worktree {
@@ -55,7 +57,7 @@ describe("buildSessionEntries", () => {
       ],
     ]);
     const statuses = new Map<string, BridgeSessionStatus>([["s1", "IDLE"]]);
-    const entries = buildSessionEntries(groups, statuses, new Map([["s1", 5]]));
+    const entries = buildSessionEntries(groups, statuses);
     expect(
       entries.map(e => [
         e.key,
@@ -71,7 +73,7 @@ describe("buildSessionEntries", () => {
     ]);
   });
 
-  it("手動で休止にしたセッションは状態に関係なく休止中に置く", () => {
+  it("手動で休止にしたセッションは状態に関係なく札を休止にし、あなたの番から外す", () => {
     const groups = new Map<string, RepoGroup>([
       [
         "/r/app",
@@ -93,57 +95,20 @@ describe("buildSessionEntries", () => {
     ]);
     const entries = buildSessionEntries(groups, statuses);
     expect(
-      entries.map(e => [e.key, e.statusKey, e.section, e.manuallyRested])
+      entries.map(e => [e.key, e.statusKey, e.yourTurn, e.manuallyRested])
     ).toEqual([
-      ["wt:w1", "AWAITING", "resting", true],
-      ["wt:w2", "IDLE", "your-turn", false],
-    ]);
-  });
-
-  it("最終更新はセッションのものを引き当て、無ければ不明 (null) にする", () => {
-    const groups = new Map<string, RepoGroup>([
-      [
-        "/r/app",
-        group("app", [
-          {
-            worktree: worktree("w1", "/r/app"),
-            session: session("s1", "w1", "/r/app"),
-          },
-          // 未起動の worktree は会話そのものが無いので不明
-          { worktree: worktree("w2", "/r/app-x"), session: null },
-        ]),
-      ],
-    ]);
-    const entries = buildSessionEntries(
-      groups,
-      new Map<string, BridgeSessionStatus>([["s1", "IDLE"]]),
-      new Map([["s1", 1_700_000_000_000]])
-    );
-    expect(entries.map(e => [e.key, e.lastUpdatedAt])).toEqual([
-      ["wt:w1", 1_700_000_000_000],
-      ["wt:w2", null],
+      ["wt:w1", "RESTED", false, true],
+      ["wt:w2", "IDLE", true, false],
     ]);
   });
 });
 
-describe("sortSessionEntries", () => {
+describe("リポジトリの並び順", () => {
   const groups = new Map<string, RepoGroup>([
-    [
-      "/b/zeta",
-      group("zeta", [
-        {
-          worktree: worktree("z1", "/b/zeta"),
-          session: session("sz1", "z1", "/b/zeta"),
-        },
-      ]),
-    ],
+    // useGroupedWorktreeItems はリポジトリ名 → パスの順で渡す
     [
       "/a/alpha",
       group("alpha", [
-        {
-          worktree: worktree("a2", "/a/alpha-2"),
-          session: session("sa2", "a2", "/a/alpha-2"),
-        },
         {
           worktree: worktree("a1", "/a/alpha"),
           session: session("sa1", "a1", "/a/alpha"),
@@ -151,202 +116,94 @@ describe("sortSessionEntries", () => {
         { worktree: null, session: session("sa9", "x", "/a/alpha-0") },
       ]),
     ],
+    [
+      "/b/beta",
+      group("beta", [{ worktree: worktree("b1", "/b/beta"), session: null }]),
+    ],
+    [
+      "/c/gamma",
+      group("gamma", [
+        {
+          worktree: worktree("g1", "/c/gamma"),
+          session: session("sg1", "g1", "/c/gamma"),
+        },
+      ]),
+    ],
   ]);
 
-  const allIdle = new Map<string, BridgeSessionStatus>([
-    ["sz1", "IDLE"],
-    ["sa1", "IDLE"],
-    ["sa2", "IDLE"],
-    ["sa9", "IDLE"],
-  ]);
-
-  function sortWith(
-    statuses: Map<string, BridgeSessionStatus>,
-    lastUpdatedAt: Map<string, number>
-  ) {
-    return sortSessionEntries(
-      buildSessionEntries(groups, statuses, lastUpdatedAt)
-    ).map(e => e.key);
-  }
-
-  it("あなたの番は最終更新の新しい順に並べる", () => {
-    // 上から順に片付ける列なので、最後に動いた会話を先頭に置く
-    expect(
-      sortWith(
-        allIdle,
-        new Map([
-          ["sa1", 100],
-          ["sz1", 200],
-          ["sa2", 300],
-          ["sa9", 50],
-        ])
-      )
-    ).toEqual(["wt:a2", "wt:z1", "wt:a1", "s:sa9"]);
-  });
-
-  it("あなたの番で最終更新が不明な行は、そのセクションの最後に既存のキーの順で並べる", () => {
-    // 未起動や会話の無い行。並べる根拠が無いので下げる
-    expect(sortWith(allIdle, new Map([["sz1", 200]]))).toEqual([
-      "wt:z1",
-      "wt:a1", // 以下は不明どうし: 状態の優先度 → リポジトリ名 → パス
-      "wt:a2",
-      "s:sa9", // worktreeの無いセッションは後ろ
-    ]);
-  });
-
-  it("最終更新が同着なら、既存のキーの順に落ちる (並びが毎秒揺れない)", () => {
-    // 状態の優先度 → リポジトリ名 → リポジトリの絶対パス → worktreeのパス
-    const sameMoment = new Map([
-      ["sz1", 1000],
-      ["sa1", 1000],
-      ["sa2", 1000],
-      ["sa9", 1000],
-    ]);
+  it("保存した順が無ければ、渡された順 (リポジトリ名順) のまま、状態では動かさない", () => {
     const statuses = new Map<string, BridgeSessionStatus>([
-      ["sz1", "AWAITING"],
-      ["sa1", "IDLE"],
-      ["sa2", "IDLE"],
-      ["sa9", "IDLE"],
+      ["sa1", "TOOL"],
+      ["sa9", "READY"],
+      ["sg1", "AWAITING"],
     ]);
-    expect(sortWith(statuses, sameMoment)).toEqual([
-      "wt:z1", // 確認待ちが入力待ちより先
-      "wt:a1",
-      "wt:a2",
-      "s:sa9",
-    ]);
-  });
-
-  it("最終更新が新しくてもセクションはまたがない", () => {
-    // 作業中の会話はいま動いているので必ず新しい。それでも「あなたの番」より前には出さない
-    const statuses = new Map<string, BridgeSessionStatus>([
-      ["sz1", "TOOL"],
-      ["sa1", "IDLE"],
-      ["sa2", "STOP"],
-      ["sa9", "IDLE"],
-    ]);
-    expect(
-      sortWith(
-        statuses,
-        new Map([
-          ["sz1", 900],
-          ["sa1", 100],
-          ["sa2", 800],
-          ["sa9", 200],
-        ])
-      )
-    ).toEqual([
-      "s:sa9", // あなたの番 (新しい順)
-      "wt:a1",
-      "wt:z1", // 作業中
-      "wt:a2", // 休止中
+    const sections = groupByRepo(buildSessionEntries(groups, statuses), []);
+    expect(sections.map(s => [s.repoPath, s.entries.map(e => e.key)])).toEqual([
+      ["/a/alpha", ["wt:a1", "s:sa9"]],
+      ["/b/beta", ["wt:b1"]],
+      ["/c/gamma", ["wt:g1"]],
     ]);
   });
 
-  it("最終更新の新しい入力待ちは、古い確認待ちより先に来る", () => {
-    // 状態の優先度はセクションの中では tiebreaker に下がり、最終更新が先に効く
-    const statuses = new Map<string, BridgeSessionStatus>([
-      ["sz1", "AWAITING"],
-      ["sa1", "IDLE"],
-      ["sa2", "IDLE"],
-      ["sa9", "IDLE"],
+  it("保存した順を先に置き、そこに無いリポジトリは既定の順で後ろに足す", () => {
+    const sections = groupByRepo(buildSessionEntries(groups, new Map()), [
+      "/c/gamma",
+      "/gone/repo", // いま見えていないパスは無視する
+      "/a/alpha",
     ]);
-    expect(
-      sortWith(
-        statuses,
-        new Map([
-          ["sz1", 100],
-          ["sa1", 300],
-          ["sa2", 200],
-          ["sa9", 50],
-        ])
-      )
-    ).toEqual(["wt:a1", "wt:a2", "wt:z1", "s:sa9"]);
-  });
-
-  it("最終更新で並べ替えるのはあなたの番だけで、作業中・休止中は既存のキーの順のまま", () => {
-    // あなたの番は上から順に片付ける列なので新しい順が要る。
-    // 他のセクションは眺めるだけなので、会話が動くたびに場所が変わらない方がよい
-    const statuses = new Map<string, BridgeSessionStatus>([
-      ["sz1", "IDLE"], // あなたの番
-      ["sa1", "IDLE"], // あなたの番
-      ["sa2", "READY"], // 休止中
-      ["sa9", "READY"], // 休止中
-    ]);
-    expect(
-      sortWith(
-        statuses,
-        new Map([
-          ["sz1", 400], // あなたの番: 新しい方が先 (リポジトリ名では alpha が先)
-          ["sa1", 300],
-          ["sa9", 900], // 休止中: 最終更新が最も新しくても順番は動かない
-          ["sa2", 100],
-        ])
-      )
-    ).toEqual([
-      "wt:z1", // あなたの番は最終更新の降順
-      "wt:a1",
-      "wt:a2", // 休止中は従来どおり リポジトリ名 → パス (worktreeの無いセッションは後ろ)
-      "s:sa9",
+    expect(sections.map(s => s.repoPath)).toEqual([
+      "/c/gamma",
+      "/a/alpha",
+      "/b/beta",
     ]);
   });
 
-  it("元の配列を書き換えない", () => {
-    const entries = buildSessionEntries(groups, new Map(), new Map());
-    const before = entries.map(e => e.key);
-    sortSessionEntries(entries);
-    expect(entries.map(e => e.key)).toEqual(before);
-  });
-});
-
-describe("sectionize と toListRows", () => {
-  it("sectionizeは空のセクションを出さず、toListRowsは空のセクションも件数0の見出しで出す", () => {
-    const groups = new Map<string, RepoGroup>([
-      [
-        "/a/alpha",
-        group("alpha", [
-          {
-            worktree: worktree("a1", "/a/alpha"),
-            session: session("sa1", "a1", "/a/alpha"),
-          },
-          {
-            worktree: worktree("a2", "/a/alpha-2"),
-            session: session("sa2", "a2", "/a/alpha-2"),
-          },
-        ]),
-      ],
-    ]);
-    const statuses = new Map<string, BridgeSessionStatus>([
-      ["sa1", "IDLE"],
-      ["sa2", "AWAITING"],
-    ]);
-    const sections = sectionize(
-      sortSessionEntries(buildSessionEntries(groups, statuses))
+  it("行の無いリポジトリは出さない", () => {
+    const entries = buildSessionEntries(groups, new Map()).filter(
+      e => e.repoPath !== "/b/beta"
     );
-    expect(sections.map(s => [s.section, s.entries.length])).toEqual([
-      ["your-turn", 2],
+    expect(groupByRepo(entries, []).map(s => s.repoPath)).toEqual([
+      "/a/alpha",
+      "/c/gamma",
     ]);
+  });
 
-    // 保留中にセクションが空になっても見出しのkeyが消えないよう、3つの見出しを常に出す
-    const rows = toListRows(sections);
-    expect(rows.map(r => r.key)).toEqual([
-      "section:your-turn",
-      "wt:a2",
-      "wt:a1",
-      "section:working",
-      "section:resting",
+  it("orderRepoPaths は保存順に無いものの既定の順を保つ", () => {
+    expect(orderRepoPaths(["/a", "/b", "/c", "/d"], ["/c", "/a"])).toEqual([
+      "/c",
+      "/a",
+      "/b",
+      "/d",
     ]);
-    expect(rows[0]).toEqual({
-      kind: "section",
-      key: "section:your-turn",
-      section: "your-turn",
-      count: 2,
-    });
-    expect(rows[3]).toEqual({
-      kind: "section",
-      key: "section:working",
-      section: "working",
-      count: 0,
-    });
+  });
+
+  it("moveRepo は動かした結果に、見えていない保存済みのパスを後ろへ残す", () => {
+    expect(
+      moveRepo(["/a", "/b", "/c"], ["/hidden", "/b", "/a"], "/c", 0)
+    ).toEqual(["/c", "/a", "/b", "/hidden"]);
+    // toIndex は動かすものを抜いた列での位置。範囲の外は端に寄せる
+    expect(moveRepo(["/a", "/b", "/c"], [], "/a", 2)).toEqual([
+      "/b",
+      "/c",
+      "/a",
+    ]);
+    expect(moveRepo(["/a", "/b", "/c"], [], "/b", 99)).toEqual([
+      "/a",
+      "/c",
+      "/b",
+    ]);
+  });
+
+  it("resolveDropIndex はポインタより上にある中心の数を挿入位置にする", () => {
+    expect(resolveDropIndex(5, [10, 30])).toBe(0);
+    expect(resolveDropIndex(20, [10, 30])).toBe(1);
+    expect(resolveDropIndex(99, [10, 30])).toBe(2);
+  });
+
+  it("normalizeRepoOrder は壊れた値を空にし、文字列以外と重複を落とす", () => {
+    expect(normalizeRepoOrder(null)).toEqual([]);
+    expect(normalizeRepoOrder("/a")).toEqual([]);
+    expect(normalizeRepoOrder(["/a", 1, "", "/b", "/a"])).toEqual(["/a", "/b"]);
   });
 });
 
@@ -389,17 +246,15 @@ describe("親子の並び (task_start で起こした子)", () => {
     ],
   ]);
 
-  it("同じセクションの子は親の直後に寄せ、字下げの印を付ける", () => {
+  it("同じリポジトリの子は、状態に関係なく親の直後に寄せ、字下げの印を付ける", () => {
     const statuses = new Map<string, BridgeSessionStatus>([
       ["sp", "IDLE"],
       ["sa", "IDLE"],
-      ["sc1", "IDLE"],
+      ["sc1", "TOOL"],
       ["sc2", "IDLE"],
     ]);
-    const [yourTurn] = sectionize(
-      sortSessionEntries(buildSessionEntries(groups, statuses))
-    );
-    expect(yourTurn?.entries.map(e => [e.key, e.nested])).toEqual([
+    const [app] = groupByRepo(buildSessionEntries(groups, statuses), []);
+    expect(app?.entries.map(e => [e.key, e.nested])).toEqual([
       ["wt:p", false],
       ["wt:c1", true],
       ["wt:c2", true],
@@ -407,32 +262,29 @@ describe("親子の並び (task_start で起こした子)", () => {
     ]);
   });
 
-  it("親と別のセクションの子は、自分のセクションに字下げせずに残る", () => {
-    const statuses = new Map<string, BridgeSessionStatus>([
-      ["sp", "IDLE"],
-      ["sa", "IDLE"],
-      ["sc1", "TOOL"],
-      ["sc2", "IDLE"],
-    ]);
-    const sections = sectionize(
-      sortSessionEntries(buildSessionEntries(groups, statuses))
-    );
-    expect(
-      sections.map(s => [s.section, s.entries.map(e => [e.key, e.nested])])
-    ).toEqual([
+  it("親と別のリポジトリの子は、自分のリポジトリに字下げせずに残る", () => {
+    const crossRepo = new Map<string, RepoGroup>([
+      ...groups,
       [
-        "your-turn",
-        [
-          ["wt:p", false],
-          ["wt:c2", true],
-          ["wt:a", false],
-        ],
+        "/r/lib",
+        group("lib", [
+          {
+            worktree: null,
+            session: childSession("sx", "x", "/r/lib-x", "/r/app"),
+          },
+        ]),
       ],
-      ["working", [["wt:c1", false]]],
     ]);
+    const sections = groupByRepo(buildSessionEntries(crossRepo, new Map()), []);
+    expect(sections.at(-1)?.entries.map(e => [e.key, e.nested])).toEqual([
+      ["s:sx", false],
+    ]);
+    expect(countChildren(buildSessionEntries(crossRepo, new Map()))).toEqual(
+      new Map([["/r/app", 3]])
+    );
   });
 
-  it("子の数はセクションをまたいで数える", () => {
+  it("子の数を親の worktree のパスごとに数える", () => {
     const entries = buildSessionEntries(groups, new Map());
     expect(countChildren(entries)).toEqual(new Map([["/r/app", 2]]));
   });
