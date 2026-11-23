@@ -11,6 +11,9 @@
  * 本文の下に出す (判定は todo-start.ts の todoStartedSessionPath)。押すとそのセッションを開き、
  * 新しくは始めない (同じTODOからセッションを二重に作らないため)。右には「完了」を並べ、
  * 始めた先で片付いた行をその場で完了にできるようにする (左のチェックボックスと同じ操作)。
+ * この行を完了にすると、確認のダイアログを出してから、始めた先のセッションとworktreeを
+ * 消して完了にする (onFinishStarted)。worktreeの削除は未コミットの変更も消すので、確認を挟む。
+ * キャンセルしたら何もしない。onFinishStarted が無ければ、確認せずに完了の印だけを付ける。
  * 「完了」は黄色と同じ濃さの緑にする。黄色は GitRefLabels の
  * タグと同じ配色。行のアイコンは PC ではホバーするまで見えないので、色を付けるのではなく
  * 常に見える文字のボタンにする。セッションを消すと、行は元の始めるボタンに戻る
@@ -31,6 +34,16 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { m } from "@/lib/i18n";
 import { todoStartedSessionPath } from "@/lib/todo-start";
 import { cn } from "@/lib/utils";
@@ -41,6 +54,11 @@ interface TodoPaneProps {
   worktreePath: string;
   error: string | null;
   onSetDone: (id: string, done: boolean) => void;
+  /**
+   * 始めた先のセッションがある行を、確認のあとで完了にする。始めた先のセッションと
+   * worktreeを消し、TODOを完了にするのは渡す側。省略時は onSetDone だけを呼ぶ
+   */
+  onFinishStarted?: (todo: Todo, startedWorktreePath: string) => void;
   onRemove: (id: string) => void;
   /** worktree の表示名。セッションが無い (worktree を消した) ときは null */
   worktreeLabel: (worktreePath: string) => string | null;
@@ -63,6 +81,13 @@ interface TodoPaneProps {
 
 type Scope = "session" | "all";
 
+/** 完了の確認を待っている行と、その始めた先 */
+interface FinishTarget {
+  todo: Todo;
+  path: string;
+  label: string;
+}
+
 type RowProps = Pick<
   TodoPaneProps,
   | "onSetDone"
@@ -74,7 +99,10 @@ type RowProps = Pick<
   | "onStartHere"
   | "onStartInNewWorktree"
   | "canStartInNewWorktree"
->;
+> & {
+  /** 始めた先のセッションがある行を完了にしようとした (確認のダイアログを開く) */
+  onRequestFinish?: (target: FinishTarget) => void;
+};
 
 const ROW_ICON_BUTTON =
   "inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 [@media(hover:none)]:opacity-100 hover:bg-background hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100";
@@ -123,6 +151,18 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
         );
   const startedLabel =
     startedPath === null ? null : props.worktreeLabel(startedPath);
+  // 始めた先のセッションがある行の完了は、確認してから始めた先ごと片付ける
+  const finish = () => {
+    if (
+      startedPath !== null &&
+      startedLabel !== null &&
+      props.onRequestFinish
+    ) {
+      props.onRequestFinish({ todo, path: startedPath, label: startedLabel });
+      return;
+    }
+    onSetDone(todo.id, true);
+  };
   // 始められるのは未完了で、元のworktreeが残っていて、始めた先のセッションが無い行だけ
   const canStart =
     !done &&
@@ -138,7 +178,7 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
       <button
         type="button"
         aria-label={done ? m.todo.markUndone : m.todo.markDone}
-        onClick={() => onSetDone(todo.id, !done)}
+        onClick={() => (done ? onSetDone(todo.id, false) : finish())}
         className={cn(
           "mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded border",
           done
@@ -174,7 +214,7 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
             </button>
             <button
               type="button"
-              onClick={() => onSetDone(todo.id, true)}
+              onClick={finish}
               className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md border border-emerald-500/50 bg-emerald-500/15 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-500/25 dark:text-emerald-300"
             >
               <Check className="size-3.5" aria-hidden="true" />
@@ -235,6 +275,8 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
 export function TodoPane(props: TodoPaneProps) {
   const [scope, setScope] = useState<Scope>("session");
   const [showDone, setShowDone] = useState(false);
+  const [finishTarget, setFinishTarget] = useState<FinishTarget | null>(null);
+  const onFinishStarted = props.onFinishStarted;
 
   const own = useMemo(
     () => props.todos.filter(t => t.worktreePath === props.worktreePath),
@@ -271,6 +313,7 @@ export function TodoPane(props: TodoPaneProps) {
     onStartHere: props.onStartHere,
     onStartInNewWorktree: props.onStartInNewWorktree,
     canStartInNewWorktree: props.canStartInNewWorktree,
+    onRequestFinish: onFinishStarted ? setFinishTarget : undefined,
   };
 
   return (
@@ -366,6 +409,41 @@ export function TodoPane(props: TodoPaneProps) {
           })
         )}
       </div>
+      <AlertDialog
+        open={finishTarget !== null}
+        onOpenChange={open => {
+          if (!open) setFinishTarget(null);
+        }}
+      >
+        <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md mx-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {m.todo.finishStartedConfirmTitle}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {finishTarget
+                ? m.todo.finishStartedConfirm(finishTarget.label)
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+            <AlertDialogCancel className="h-12 md:h-10">
+              {m.common.cancel}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
+              onClick={() => {
+                if (finishTarget) {
+                  onFinishStarted?.(finishTarget.todo, finishTarget.path);
+                }
+                setFinishTarget(null);
+              }}
+            >
+              {m.todo.finishStartedConfirmAction}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

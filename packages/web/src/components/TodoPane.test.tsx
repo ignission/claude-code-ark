@@ -258,6 +258,63 @@ describe("TodoPane", () => {
     expect(props.onSetDone).toHaveBeenCalledWith("1", true);
   });
 
+  // 確認のダイアログは body 直下のポータルに出る
+  const dialogButton = (text: string) =>
+    [
+      ...document.body.querySelectorAll<HTMLElement>(
+        '[role="alertdialog"] button'
+      ),
+    ].find(el => el.textContent === text);
+
+  it("onFinishStarted があれば、緑の「完了」は確認してから始めた先ごと完了にする", () => {
+    const onFinishStarted = vi.fn();
+    const todo = base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 });
+    const props = mount({
+      ...startedProps,
+      todos: [todo],
+      onOpenWorktree: vi.fn(),
+      onFinishStarted,
+    });
+    click(
+      [...container.querySelectorAll("button")].find(
+        el => el.textContent === "完了"
+      )
+    );
+    expect(document.body.textContent).toContain(
+      "todo-abc のセッションとworktreeを削除して"
+    );
+    expect(onFinishStarted).not.toHaveBeenCalled();
+    click(dialogButton("削除して完了"));
+    expect(onFinishStarted).toHaveBeenCalledWith(todo, "/w/c");
+    expect(props.onSetDone).not.toHaveBeenCalled();
+  });
+
+  it("始めた先のセッションがある行は、チェックボックスでも確認を出し、キャンセルなら何もしない", () => {
+    const onFinishStarted = vi.fn();
+    const props = mount({
+      ...startedProps,
+      todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
+      onOpenWorktree: vi.fn(),
+      onFinishStarted,
+    });
+    click(container.querySelector('[aria-label="完了にする"]'));
+    click(dialogButton("キャンセル"));
+    expect(onFinishStarted).not.toHaveBeenCalled();
+    expect(props.onSetDone).not.toHaveBeenCalled();
+  });
+
+  it("始めた先のセッションが無い行は、onFinishStarted があっても確認せずに完了にする", () => {
+    const onFinishStarted = vi.fn();
+    const props = mount({
+      todos: [base({ id: "1" })],
+      onFinishStarted,
+    });
+    click(container.querySelector('[aria-label="完了にする"]'));
+    expect(props.onSetDone).toHaveBeenCalledWith("1", true);
+    expect(onFinishStarted).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
   it("行き先のリポジトリを持つ行も、始めた先のセッションがあれば「へ移動」だけを出す", () => {
     mount({
       ...startedProps,

@@ -12,6 +12,11 @@ export const todo = {
   openStarted: (label: string) => `${label} へ移動`,
   /** 「へ移動」の右に並べる、その行を完了にするボタン */
   finishStarted: "完了",
+  /** 始めた先のセッションがある行を完了にするときの確認。label は始めた先の表示名 */
+  finishStartedConfirmTitle: "TODOを完了にする",
+  finishStartedConfirm: (label: string) =>
+    `${label} のセッションとworktreeを削除して、このTODOを完了にしますか？コミットしていない変更は失われます。`,
+  finishStartedConfirmAction: "削除して完了",
   remove: "TODO を消す",
   startedHere: "このセッションで始めた",
   /** label は始めた先の worktree の表示名。worktree を消していれば null */
