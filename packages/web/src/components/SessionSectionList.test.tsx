@@ -74,7 +74,7 @@ function makeSession(worktree: Worktree, repo = repoPath): ManagedSession {
   };
 }
 
-const worktrees = ["a", "b", "c"].map(makeWorktree);
+const worktrees = ["a", "b", "c"].map(id => makeWorktree(id));
 const sessions = new Map(
   worktrees.map(worktree => {
     const session = makeSession(worktree);
@@ -341,6 +341,33 @@ describe("SessionSectionListの並べ方", () => {
       repoPath,
       "/work/hidden",
     ]);
+  });
+
+  it("ドラッグで並べ替えを描いたあと、外れたポインタキャプチャを取り直す", () => {
+    const { container } = mountList(
+      twoRepoProps({ onRepoOrderChange: vi.fn() })
+    );
+    for (const group of container.querySelectorAll<HTMLElement>(
+      "[data-repo-group]"
+    )) {
+      const top = group.dataset.repoGroup === repoPath ? 0 : 100;
+      group.getBoundingClientRect = () =>
+        ({ top, height: 100, bottom: top + 100 }) as DOMRect;
+    }
+    const handle = handleOf(container, zetaRepoPath);
+    // かたまりのDOMが動くとキャプチャが外れる、というブラウザの振る舞いを真似る
+    const setPointerCapture = vi.fn();
+    handle.setPointerCapture = setPointerCapture;
+    handle.hasPointerCapture = () => false;
+
+    pointer(handle, "pointerdown", 150);
+    const capturesBeforeMove = setPointerCapture.mock.calls.length;
+    pointer(handle, "pointermove", 10);
+
+    expect(sequence(container)[0]).toBe("# zeta");
+    expect(setPointerCapture.mock.calls.length).toBeGreaterThan(
+      capturesBeforeMove
+    );
   });
 
   it("ドラッグを取り消したら保存せず、元の順に戻す", () => {

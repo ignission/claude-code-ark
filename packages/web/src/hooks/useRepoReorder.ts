@@ -5,6 +5,9 @@
  *   つまみに `touch-action: none` を付け、指で掴んでも一覧のスクロールと取り合わない
  * - ドラッグ中は並べ替えた順をその場で描き、指を離したときに1回だけ保存する。取り消し
  *   (pointercancel) では保存しない
+ * - ドラッグ中に並べ替えを描くと、つまんだかたまりのDOMが動き、つまみのポインタキャプチャが
+ *   外れることがある。外れると指を離しても pointerup が届かず保存されないので、描いたあとに
+ *   キャプチャを取り直す
  * - つまみはキーボードの上下キーでも1つずつ動かせる。動かしたあとはフォーカスをつまみに戻す
  *   (かたまりがDOMの中で動くと、ブラウザによってはフォーカスが外れる)
  * - 位置の計算は session-sections.ts の純関数 (moveRepo / resolveDropIndex) に任せる
@@ -15,6 +18,7 @@ import {
   type PointerEvent,
   type RefObject,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -23,6 +27,8 @@ import { moveRepo, resolveDropIndex } from "@/lib/session-sections";
 interface DragState {
   repoPath: string;
   pointerId: number;
+  /** つまんだつまみ。DOMが動いたあとにキャプチャを取り直すのに使う */
+  handle: HTMLElement;
   order: string[];
 }
 
@@ -68,6 +74,18 @@ export function useRepoReorder({
     setDrag(next);
   };
 
+  // 並べ替えを描いた直後 (次のポインタイベントより前) に、外れたキャプチャを取り直す
+  useLayoutEffect(() => {
+    const current = drag;
+    if (!current || !current.handle.isConnected) return;
+    if (current.handle.hasPointerCapture?.(current.pointerId) !== false) return;
+    try {
+      current.handle.setPointerCapture(current.pointerId);
+    } catch {
+      // ポインタがもう離れている (pointerup が先に来る) なら取り直せない
+    }
+  }, [drag]);
+
   const focusAfterMoveRef = useRef<string | null>(null);
   useEffect(() => {
     const repoPath = focusAfterMoveRef.current;
@@ -90,6 +108,7 @@ export function useRepoReorder({
       updateDrag({
         repoPath,
         pointerId: event.pointerId,
+        handle: event.currentTarget,
         order: [...visibleOrder],
       });
     },
