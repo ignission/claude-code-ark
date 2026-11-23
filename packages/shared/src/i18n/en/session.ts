@@ -103,16 +103,12 @@ export const session: Messages["session"] = {
     editDisplayName: "Edit display name",
     parentTitle: (parent: string) => `Parent: ${parent}`,
     openParentLabel: (parent: string) => `Open parent ${parent}`,
-    individualProfile: "custom",
     childTasks: (count: number) =>
       `${count} child ${plural(count, "task", "tasks")}`,
     openTodos: (count: number) =>
       `${count} open ${plural(count, "TODO", "TODOs")}`,
     menuLabel: (name: string, branch: string | null | undefined) =>
       branch ? `Menu for ${name} (${branch})` : `Menu for ${name}`,
-    staleProfile: "Outdated profile",
-    staleProfileHint:
-      "The profile assignment has changed. This session is still running with the previous one.",
   },
   menu: {
     open: "Open",
@@ -125,16 +121,10 @@ export const session: Messages["session"] = {
     unmuteNotifications: "Turn on notifications",
     rest: "Move to resting",
     unrest: "Move back from resting",
-    worktreeProfile: "Profile for this worktree",
-    inheritRepoProfile: (profileName: string | null) =>
-      `Inherit from repository (${profileName ?? "default"})`,
     repository: "Repository",
     newWorktree: "New worktree",
     openRepoGrid: "View all sessions in this repository side by side",
-    repoDefaultProfile: "Default profile for repository",
-    defaultProfile: "Default (~/.claude)",
     removeFromSidebar: "Remove from sidebar",
-    openProfileManager: "Manage profiles...",
   },
   list: {
     empty: "No sessions",
@@ -183,10 +173,6 @@ export const session: Messages["session"] = {
     disconnected: "Socket is disconnected",
     notConnected: "Not connected to the server. Try again in a moment.",
     shortcutFailed: (message: string) => `Shortcut action failed: ${message}`,
-    usageStarted: "Fetching usage. This takes a few dozen seconds.",
-    usageDone: (okCount: number, total: number) =>
-      `Usage fetched: ${okCount}/${total} ${plural(total, "profile", "profiles")}`,
-    usageFailed: (message: string) => `Couldn't fetch usage: ${message}`,
     listDirectoryTimeout: "Timed out listing the directory",
     listDirectoryFailed: "Failed to list the directory",
     listDiagramsTimeout: "Timed out listing boards",

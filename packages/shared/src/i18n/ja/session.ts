@@ -112,14 +112,10 @@ export const session = {
     editDisplayName: "表示名を編集",
     parentTitle: (parent: string) => `親: ${parent}`,
     openParentLabel: (parent: string) => `親 ${parent} を開く`,
-    individualProfile: "個別",
     childTasks: (count: number) => `子のタスク ${count} 件`,
     openTodos: (count: number) => `未完了の TODO ${count} 件`,
     menuLabel: (name: string, branch: string | null | undefined) =>
       branch ? `${name} (${branch}) のメニュー` : `${name}のメニュー`,
-    staleProfile: "古い設定",
-    staleProfileHint:
-      "プロファイルの割り当てが変わりました。このセッションは元の設定で動いています",
   },
   /** 行のメニュー */
   menu: {
@@ -133,16 +129,10 @@ export const session = {
     unmuteNotifications: "通知をオンにする",
     rest: "休止にする",
     unrest: "休止から戻す",
-    worktreeProfile: "このworktreeのプロファイル",
-    inheritRepoProfile: (profileName: string | null) =>
-      `リポジトリの設定を継承 (${profileName ?? "既定"})`,
     repository: "リポジトリ",
     newWorktree: "新規worktreeを作成",
     openRepoGrid: "このリポジトリの全セッションを並べて見る",
-    repoDefaultProfile: "リポジトリの既定プロファイル",
-    defaultProfile: "既定 (~/.claude)",
     removeFromSidebar: "サイドバーから除外",
-    openProfileManager: "プロファイル管理を開く...",
   },
   /** 一覧と、その確認ダイアログ */
   list: {
@@ -195,10 +185,6 @@ export const session = {
     notConnected:
       "サーバーに接続されていません。少し待ってから再試行してください",
     shortcutFailed: (message: string) => `ショートカット操作に失敗: ${message}`,
-    usageStarted: "Usage取得を開始しました（数十秒かかります）",
-    usageDone: (okCount: number, total: number) =>
-      `Usage取得完了: ${okCount}/${total} プロファイル`,
-    usageFailed: (message: string) => `Usage取得に失敗: ${message}`,
     listDirectoryTimeout: "ディレクトリ取得がタイムアウトしました",
     listDirectoryFailed: "ディレクトリ取得に失敗しました",
     listDiagramsTimeout: "図一覧の取得がタイムアウトしました",

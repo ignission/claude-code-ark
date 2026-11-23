@@ -11,7 +11,7 @@ import path from "node:path";
 
 /**
  * セッションごとに CLAUDE_CONFIG_DIR が異なるため、明示的に渡せる形にする。
- * プロファイル未設定なら ~/.claude/projects/ がデフォルト。
+ * 未指定なら ~/.claude/projects/ がデフォルト。
  */
 export function projectsDirFor(configDir?: string | null): string {
   const base = configDir ?? path.join(os.homedir(), ".claude");

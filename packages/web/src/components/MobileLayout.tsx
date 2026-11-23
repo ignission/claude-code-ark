@@ -17,14 +17,12 @@ import type {
   ManagedSession,
   MessageShortcut,
   PlanLimits,
-  Profile,
   Screen,
   ScreenCredentialsResult,
   ScreenPasteResult,
   ServerToClientEvents,
   SessionPrStatus,
   SpecialKey,
-  SystemCapabilities,
   Worktree,
 } from "@ark/shared";
 import { ChevronLeft } from "lucide-react";
@@ -175,17 +173,6 @@ interface MobileLayoutProps {
     worktreePath: string,
     displayName: string | null
   ) => void;
-  /** プロファイル切替 (Linux限定) */
-  capabilities?: SystemCapabilities;
-  profiles?: Profile[];
-  repoProfileLinks?: Map<string, string>;
-  worktreeProfileLinks?: Map<string, string>;
-  onSetRepoProfile?: (repoPath: string, profileId: string | null) => void;
-  onSetWorktreeProfile?: (
-    worktreePath: string,
-    profileId: string | null
-  ) => void;
-  onOpenProfileManager?: () => void;
   /** 行メニューの「リポジトリ」の操作 */
   onCreateWorktreeForRepo?: (repoPath: string) => void;
   onRemoveRepo?: (repoPath: string) => void;
@@ -259,13 +246,6 @@ export function MobileLayout({
   renderTodoPane,
   worktreeDisplayNames,
   onSetWorktreeDisplayName,
-  capabilities,
-  profiles,
-  repoProfileLinks,
-  worktreeProfileLinks,
-  onSetRepoProfile,
-  onSetWorktreeProfile,
-  onOpenProfileManager,
   onCreateWorktreeForRepo,
   onRemoveRepo,
   notificationControl,
@@ -438,10 +418,6 @@ export function MobileLayout({
           sessionPrStatuses={sessionPrStatuses}
           sessionTodoCounts={sessionTodoCounts}
           worktreeDisplayNames={worktreeDisplayNames}
-          capabilities={capabilities}
-          profiles={profiles}
-          repoProfileLinks={repoProfileLinks}
-          worktreeProfileLinks={worktreeProfileLinks}
           notificationsSupported={notificationsSupported}
           isSessionNotificationEnabled={isSessionNotificationEnabled}
           onOpenSession={handleOpenSession}
@@ -456,9 +432,6 @@ export function MobileLayout({
           }
           onCreateWorktreeForRepo={onCreateWorktreeForRepo}
           onRemoveRepo={onRemoveRepo}
-          onSetRepoProfile={onSetRepoProfile}
-          onSetWorktreeProfile={onSetWorktreeProfile}
-          onOpenProfileManager={onOpenProfileManager}
           onNewSession={onNewSession}
           onNewTask={onNewTask}
           onSplitTask={onSplitTask}

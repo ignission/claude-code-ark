@@ -164,9 +164,6 @@ vi.mock("@/components/CreateWorktreeDialog", () => ({
 vi.mock("@/components/NotificationPermissionButton", () => ({
   NotificationPermissionButton: () => null,
 }));
-vi.mock("@/components/ProfileManagerDialog", () => ({
-  ProfileManagerDialog: () => null,
-}));
 vi.mock("@/components/RepoGridView", () => ({ RepoGridView: () => null }));
 vi.mock("@/components/RepoSelectDialog", () => ({
   RepoSelectDialog: () => null,
@@ -305,18 +302,9 @@ function socketState(session: ManagedSession): Record<string, unknown> {
       kind: "unregistered",
     }),
     setScreenClipboard: vi.fn().mockResolvedValue({ ok: true }),
-    profiles: [],
-    repoProfileLinks: new Map(),
-    worktreeProfileLinks: new Map(),
-    capabilities: { multiProfileSupported: false },
-    createProfile: fn,
-    updateProfile: fn,
-    deleteProfile: fn,
-    setRepoProfile: fn,
-    setWorktreeProfile: fn,
     worktreeDisplayNames: new Map(),
     setWorktreeDisplayName: fn,
-    restartSessionWithProfile: fn,
+    restartSession: fn,
     messageShortcuts: [],
     createShortcut: fn,
     updateShortcut: fn,
@@ -587,7 +575,7 @@ describe("Dashboardのモバイル一覧の配線", () => {
     expect(testDoubles.hostMetricsEnabled).toHaveBeenLastCalledWith(false);
   });
 
-  it("状態・プレビュー・表示名・プロファイルと、リポジトリの操作をMobileLayoutへ渡す", () => {
+  it("状態・プレビュー・表示名と、リポジトリの操作をMobileLayoutへ渡す", () => {
     testDoubles.isMobile = true;
     mount(<Dashboard />);
 
@@ -597,13 +585,6 @@ describe("Dashboardのモバイル一覧の配線", () => {
     expect(layout.sessionPreviews).toBe(state.sessionPreviews);
     expect(layout.worktreeDisplayNames).toBe(state.worktreeDisplayNames);
     expect(layout.onSetWorktreeDisplayName).toBe(state.setWorktreeDisplayName);
-    expect(layout.capabilities).toBe(state.capabilities);
-    expect(layout.profiles).toBe(state.profiles);
-    expect(layout.repoProfileLinks).toBe(state.repoProfileLinks);
-    expect(layout.worktreeProfileLinks).toBe(state.worktreeProfileLinks);
-    expect(layout.onSetRepoProfile).toBe(state.setRepoProfile);
-    expect(layout.onSetWorktreeProfile).toBe(state.setWorktreeProfile);
-    expect(layout.onOpenProfileManager).toBeTypeOf("function");
     expect(layout.onCreateWorktreeForRepo).toBeTypeOf("function");
     expect(layout.onRemoveRepo).toBeTypeOf("function");
   });

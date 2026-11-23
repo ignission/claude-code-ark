@@ -12,9 +12,7 @@
 import type {
   BridgeSessionStatus,
   ManagedSession,
-  Profile,
   SessionPrStatus,
-  SystemCapabilities,
   Worktree,
 } from "@ark/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -45,7 +43,7 @@ import { SECTION_LABELS, TONE_CLASSES } from "@/lib/status-tone";
 import { collectActiveSessionIds } from "@/lib/unlisted-active-sessions";
 import { cn } from "@/lib/utils";
 import { getBaseName } from "@/utils/pathUtils";
-import { resolveSessionRowProfile, SessionListRow } from "./SessionListRow";
+import { SessionListRow } from "./SessionListRow";
 import type { SessionRowMenuProps } from "./SessionRowMenu";
 
 /** 行メニューの「子タスクを分離」で渡すもの (分離元の worktree) */
@@ -78,11 +76,6 @@ export interface SessionSectionListProps {
   selectedSessionId: string | null;
   /** worktreePath → 表示名 */
   worktreeDisplayNames?: Map<string, string>;
-  capabilities?: SystemCapabilities;
-  profiles?: Profile[];
-  repoProfileLinks?: Map<string, string>;
-  /** worktreePath → profileIdの個別の上書き */
-  worktreeProfileLinks?: Map<string, string>;
   notificationsSupported?: boolean;
   isSessionNotificationEnabled?: (sessionId: string) => boolean;
   onOpenSession: (sessionId: string) => void;
@@ -109,12 +102,6 @@ export interface SessionSectionListProps {
   /** リポジトリの全セッションを並べて見る (RepoGridView)。PCだけ渡す */
   onSelectRepoGrid?: (repoPath: string) => void;
   onRemoveRepo?: (repoPath: string) => void;
-  onSetRepoProfile?: (repoPath: string, profileId: string | null) => void;
-  onSetWorktreeProfile?: (
-    worktreePath: string,
-    profileId: string | null
-  ) => void;
-  onOpenProfileManager?: () => void;
   /** 「あなたの番」の件数が変わるたびに呼ぶ (畳んだサイドバーの帯に出す) */
   onYourTurnCountChange?: (count: number) => void;
   /**
@@ -129,8 +116,6 @@ export interface SessionSectionListProps {
 type DeleteTarget =
   | { kind: "session"; sessionId: string; worktree: Worktree | undefined }
   | { kind: "worktree"; worktree: Worktree };
-
-const NO_PROFILES: Profile[] = [];
 
 /** 休止の付け外しがサーバーから届かなかったときに、保留へ戻すまでの時間 */
 const PENDING_REST_TIMEOUT_MS = 5000;
@@ -172,10 +157,6 @@ export function SessionSectionList({
   sessionTodoCounts,
   selectedSessionId,
   worktreeDisplayNames,
-  capabilities,
-  profiles,
-  repoProfileLinks,
-  worktreeProfileLinks,
   notificationsSupported = false,
   isSessionNotificationEnabled,
   onOpenSession,
@@ -190,9 +171,6 @@ export function SessionSectionList({
   onSplitTask,
   onSelectRepoGrid,
   onRemoveRepo,
-  onSetRepoProfile,
-  onSetWorktreeProfile,
-  onOpenProfileManager,
   onYourTurnCountChange,
   homeWorktreePath = null,
   onSetHome,
@@ -291,25 +269,11 @@ export function SessionSectionList({
   const [restartSessionId, setRestartSessionId] = useState<string | null>(null);
   const [removeRepoPath, setRemoveRepoPath] = useState<string | null>(null);
 
-  const profileList = profiles ?? NO_PROFILES;
-  const profileById = useMemo(
-    () => new Map(profileList.map(profile => [profile.id, profile])),
-    [profileList]
-  );
-  const multiProfileEnabled = capabilities?.multiProfileSupported === true;
-  // プロファイルの項目は今と同じく、Linuxで管理ダイアログを開けるときだけ出す
-  const canManageProfiles =
-    multiProfileEnabled && onOpenProfileManager !== undefined;
-
   const buildMenu = (
     entry: SessionListEntry
   ): Omit<SessionRowMenuProps, "variant" | "entry"> => {
     const { session, worktree, repoPath } = entry;
     const worktreePath = worktreePathOf(entry);
-    const worktreeProfileId = worktreePath
-      ? (worktreeProfileLinks?.get(worktreePath) ?? null)
-      : null;
-    const repoProfileId = repoProfileLinks?.get(repoPath) ?? null;
 
     let onDelete: (() => void) | undefined;
     if (session) {
@@ -380,34 +344,11 @@ export function SessionSectionList({
         session && onRestartSession
           ? () => setRestartSessionId(session.id)
           : undefined,
-      worktreeProfile:
-        canManageProfiles && onSetWorktreeProfile && worktreePath
-          ? {
-              profiles: profileList,
-              currentProfileId: worktreeProfileId,
-              inheritedProfileName: repoProfileId
-                ? (profileById.get(repoProfileId)?.name ?? null)
-                : null,
-              onSelect: profileId =>
-                onSetWorktreeProfile(worktreePath, profileId),
-            }
-          : undefined,
       onCreateWorktree: onCreateWorktreeForRepo
         ? () => onCreateWorktreeForRepo(repoPath)
         : undefined,
       onOpenRepoGrid: onSelectRepoGrid
         ? () => onSelectRepoGrid(repoPath)
-        : undefined,
-      repoProfile:
-        canManageProfiles && onSetRepoProfile
-          ? {
-              profiles: profileList,
-              currentProfileId: repoProfileId,
-              onSelect: profileId => onSetRepoProfile(repoPath, profileId),
-            }
-          : undefined,
-      onOpenProfileManager: canManageProfiles
-        ? onOpenProfileManager
         : undefined,
       onRemoveRepo: onRemoveRepo
         ? () => setRemoveRepoPath(repoPath)
@@ -486,17 +427,6 @@ export function SessionSectionList({
         }
         previewText={
           entry.session ? (sessionPreviews.get(entry.session.id) ?? "") : ""
-        }
-        profile={resolveSessionRowProfile({
-          enabled: multiProfileEnabled,
-          worktreePath,
-          repoPath: entry.repoPath,
-          profileById,
-          repoProfileLinks,
-          worktreeProfileLinks,
-        })}
-        staleProfile={
-          multiProfileEnabled && entry.session?.staleProfile === true
         }
         selected={
           entry.session !== null && entry.session.id === selectedSessionId

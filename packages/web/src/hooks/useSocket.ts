@@ -15,7 +15,6 @@ import type {
   ManagedSession,
   MessageShortcut,
   PlanLimits,
-  Profile,
   RepoInfo,
   Screen,
   ScreenCredentialsResult,
@@ -26,11 +25,8 @@ import type {
   SessionGridSnapshot,
   SessionPrStatus,
   SpecialKey,
-  SystemCapabilities,
   TaskStartRequest,
   TaskStartResponse,
-  UsageProgress,
-  UsageReport,
   Worktree,
 } from "@ark/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -223,34 +219,18 @@ interface UseSocketReturn {
   sessionPrStatuses: Map<string, SessionPrStatus>;
 
   /**
-   * sessionId → セッションのプロファイルのプランの使用量。session:previews ペイロードから派生。
+   * sessionId → セッションのプランの使用量。session:previews ペイロードから派生。
    * 読めていないセッションはエントリ自体が無い
    */
   sessionPlanLimits: Map<string, PlanLimits>;
 
-  // プロファイル切替 (Linux限定)
-  profiles: Profile[];
-  /** repoPath → profileId のマップ (リポジトリのデフォルト) */
-  repoProfileLinks: Map<string, string>;
-  /** worktreePath → profileId のマップ (個別override、worktree個別が優先) */
-  worktreeProfileLinks: Map<string, string>;
-  capabilities: SystemCapabilities;
-  loadProfiles: () => void;
-  createProfile: (name: string, configDir: string) => void;
-  updateProfile: (
-    id: string,
-    patch: { name?: string; configDir?: string }
-  ) => void;
-  deleteProfile: (id: string) => void;
-  setRepoProfile: (repoPath: string, profileId: string | null) => void;
-  setWorktreeProfile: (worktreePath: string, profileId: string | null) => void;
   /** worktreePath → カスタム表示名 のマップ。未設定の worktree は branch にフォールバック */
   worktreeDisplayNames: Map<string, string>;
   setWorktreeDisplayName: (
     worktreePath: string,
     displayName: string | null
   ) => void;
-  restartSessionWithProfile: (sessionId: string) => void;
+  restartSession: (sessionId: string) => void;
   /** 手動で休止にする / 休止から戻す */
   setSessionRested: (sessionId: string, rested: boolean) => void;
 
@@ -277,20 +257,6 @@ interface UseSocketReturn {
     patch: { message?: string; sortOrder?: number }
   ) => void;
   deleteShortcut: (id: string) => void;
-
-  // Usage取得 (Linux + multiProfileSupported 限定)
-  /** /usage 取得が進行中か（全クライアント横断ではなく、自身が依頼中の状態） */
-  usageRequesting: boolean;
-  /** 直近の取得進捗（取得開始まで null） */
-  usageProgress: UsageProgress | null;
-  /** 直近の取得結果（成功時のみ更新） */
-  usageReport: UsageReport | null;
-  /** 直近の usage:error メッセージ */
-  usageError: string | null;
-  /** Usage取得を要求する */
-  requestUsage: () => void;
-  /** UI側で表示済みのusageErrorをクリア */
-  clearUsageError: () => void;
 }
 
 /**
@@ -424,22 +390,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     Map<string, PlanLimits>
   >(new Map());
 
-  // プロファイル切替 (Linux限定)
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [repoProfileLinks, setRepoProfileLinks] = useState<Map<string, string>>(
-    new Map()
-  );
-  const [worktreeProfileLinks, setWorktreeProfileLinks] = useState<
-    Map<string, string>
-  >(new Map());
-  // worktreePath → カスタム表示名。プロファイル機能とは独立 (capabilities 不要)。
+  // worktreePath → カスタム表示名
   const [worktreeDisplayNames, setWorktreeDisplayNames] = useState<
     Map<string, string>
   >(new Map());
-  const [capabilities, setCapabilities] = useState<SystemCapabilities>({
-    multiProfileSupported: false,
-  });
-
   // リモート画面
   const [screens, setScreens] = useState<Screen[]>([]);
   // 「一覧を一度でも受け取ったか」だけを表す状態。再接続を跨いで true のまま維持し、
@@ -450,14 +404,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [messageShortcuts, setMessageShortcuts] = useState<MessageShortcut[]>(
     []
   );
-
-  // Usage取得
-  const [usageRequesting, setUsageRequesting] = useState(false);
-  const [usageProgress, setUsageProgress] = useState<UsageProgress | null>(
-    null
-  );
-  const [usageReport, setUsageReport] = useState<UsageReport | null>(null);
-  const [usageError, setUsageError] = useState<string | null>(null);
 
   // repoPathRefをrepoPathの変化に同期させる
   useEffect(() => {
@@ -623,11 +569,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socket.on("disconnect", () => {
       console.log("Socket disconnected");
       setIsConnected(false);
-      // 切断中に usage:complete/usage:error を受け損ねるとボタンが永遠に
-      // disabled になるため、進行中フラグもリセットする。
-      // (再接続後に再度 requestUsage を呼べる状態に戻す)
-      setUsageRequesting(false);
-      setUsageProgress(null);
       // 切断中は previews が届かず、枠がリセットされても古い使用率が残る。
       // 再接続して届くまで出さない
       setSessionPlanLimits(new Map());
@@ -991,39 +932,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       });
     });
 
-    // プロファイル切替 (Linux限定) ----------------------------------
-    socket.on("system:capabilities", caps => {
-      setCapabilities(caps);
-      // 機能利用可能ならプロファイル一覧を初回取得
-      if (caps.multiProfileSupported) {
-        socket.emit("profile:list");
-      }
-    });
-
-    socket.on("profile:list", list => {
-      setProfiles(list);
-    });
-
-    socket.on("profile:created", profile => {
-      // サーバー側でも profile:list を再emitするが、即時反映のため楽観更新
-      setProfiles(prev =>
-        prev.some(p => p.id === profile.id) ? prev : [...prev, profile]
-      );
-    });
-
-    socket.on("profile:updated", profile => {
-      setProfiles(prev => prev.map(p => (p.id === profile.id ? profile : p)));
-    });
-
-    socket.on("profile:deleted", ({ id }) => {
-      setProfiles(prev => prev.filter(p => p.id !== id));
-    });
-
-    socket.on("profile:error", ({ message, code }) => {
-      console.error("[Socket] Profile error:", message, code);
-      toast.error(message);
-    });
-
     // リモート画面 ---------------------------------------------------
     socket.on("screen:list", list => {
       setScreens(list);
@@ -1043,43 +951,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socket.on("screen:error", ({ message, code }) => {
       console.error("[Socket] Screen error:", message, code);
       toast.error(message);
-    });
-
-    socket.on("repo:profile-changed", ({ repoPath, profileId }) => {
-      setRepoProfileLinks(prev => {
-        const next = new Map(prev);
-        if (profileId) {
-          next.set(repoPath, profileId);
-        } else {
-          next.delete(repoPath);
-        }
-        return next;
-      });
-    });
-
-    // 初期同期: 接続時に全紐付けをまとめて受信 (リロード時のバッジ復元用)
-    socket.on("repo:profile-links", links => {
-      const next = new Map<string, string>();
-      for (const link of links) next.set(link.repoPath, link.profileId);
-      setRepoProfileLinks(next);
-    });
-
-    socket.on("worktree:profile-changed", ({ worktreePath, profileId }) => {
-      setWorktreeProfileLinks(prev => {
-        const next = new Map(prev);
-        if (profileId) {
-          next.set(worktreePath, profileId);
-        } else {
-          next.delete(worktreePath);
-        }
-        return next;
-      });
-    });
-
-    socket.on("worktree:profile-links", links => {
-      const next = new Map<string, string>();
-      for (const link of links) next.set(link.worktreePath, link.profileId);
-      setWorktreeProfileLinks(next);
     });
 
     // worktree カスタム表示名 ----------------------------------
@@ -1130,36 +1001,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       toast.error(m.session.socket.shortcutFailed(message));
     });
 
-    // Usage取得イベント
-    socket.on("usage:progress", progress => {
-      setUsageProgress(progress);
-    });
-
-    socket.on("usage:complete", report => {
-      setUsageReport(report);
-      setUsageProgress(null);
-      // 完了 toast は要求元クライアントだけに出す。
-      // server は io.emit でブロードキャストしているため、別タブ/別デバイス
-      // にも届くが、それらは usageRequesting=false なので toast を出さない。
-      // (functional setState で前値を読み取り、true→false 遷移時のみ通知)
-      setUsageRequesting(prev => {
-        if (prev) {
-          const okCount = report.entries.filter(e => e.status === "ok").length;
-          toast.success(
-            m.session.socket.usageDone(okCount, report.entries.length)
-          );
-        }
-        return false;
-      });
-    });
-
-    socket.on("usage:error", ({ message }) => {
-      setUsageError(message);
-      setUsageRequesting(false);
-      setUsageProgress(null);
-      toast.error(m.session.socket.usageFailed(message));
-    });
-
     // Cleanup on unmount
     return () => {
       socket.off("ports:list");
@@ -1172,9 +1013,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("screen:updated");
       socket.off("screen:deleted");
       socket.off("screen:error");
-      socket.off("usage:progress");
-      socket.off("usage:complete");
-      socket.off("usage:error");
       document.removeEventListener("visibilitychange", handleWake);
       window.removeEventListener("pageshow", handleWake);
       window.removeEventListener("online", handleWake);
@@ -1469,26 +1307,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
-  // プロファイル切替 (Linux限定) actions
-  const loadProfiles = useCallback(() => {
-    socketRef.current?.emit("profile:list");
-  }, []);
-
-  const createProfile = useCallback((name: string, configDir: string) => {
-    socketRef.current?.emit("profile:create", { name, configDir });
-  }, []);
-
-  const updateProfile = useCallback(
-    (id: string, patch: { name?: string; configDir?: string }) => {
-      socketRef.current?.emit("profile:update", { id, ...patch });
-    },
-    []
-  );
-
-  const deleteProfile = useCallback((id: string) => {
-    socketRef.current?.emit("profile:delete", { id });
-  }, []);
-
   // リモート画面 actions
   const createScreen = useCallback((input: ScreenInput) => {
     socketRef.current?.emit("screen:create", input);
@@ -1547,26 +1365,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
-  const setRepoProfile = useCallback(
-    (repoPath: string, profileId: string | null) => {
-      socketRef.current?.emit("repo:set-profile", {
-        repoPath,
-        profileId,
-      });
-    },
-    []
-  );
-
-  const setWorktreeProfile = useCallback(
-    (worktreePath: string, profileId: string | null) => {
-      socketRef.current?.emit("worktree:set-profile", {
-        worktreePath,
-        profileId,
-      });
-    },
-    []
-  );
-
   const setWorktreeDisplayName = useCallback(
     (worktreePath: string, displayName: string | null) => {
       socketRef.current?.emit("worktree:set-display-name", {
@@ -1577,8 +1375,8 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
-  const restartSessionWithProfile = useCallback((sessionId: string) => {
-    socketRef.current?.emit("session:restart-with-profile", { sessionId });
+  const restartSession = useCallback((sessionId: string) => {
+    socketRef.current?.emit("session:restart", { sessionId });
   }, []);
 
   const setSessionRested = useCallback((sessionId: string, rested: boolean) => {
@@ -1603,26 +1401,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
   const deleteShortcut = useCallback((id: string) => {
     socketRef.current?.emit("shortcut:delete", { id });
-  }, []);
-
-  // Usage取得
-  const requestUsage = useCallback(() => {
-    if (usageRequesting) return;
-    // 未接続でemitすると永遠に応答が返らず、ボタンがリロードまでdisabledになる。
-    // socket未確立 or 切断中なら何もせずユーザに通知する。
-    if (!socketRef.current?.connected) {
-      toast.error(m.session.socket.notConnected);
-      return;
-    }
-    setUsageError(null);
-    setUsageRequesting(true);
-    setUsageProgress(null);
-    socketRef.current.emit("usage:request");
-    toast.info(m.session.socket.usageStarted);
-  }, [usageRequesting]);
-
-  const clearUsageError = useCallback(() => {
-    setUsageError(null);
   }, []);
 
   // Repo Grid View 購読
@@ -1701,20 +1479,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     unsubscribeGrid,
     sessionStatuses,
     sessionLastUpdatedAt,
-    // プロファイル切替 (Linux限定)
-    profiles,
-    repoProfileLinks,
-    worktreeProfileLinks,
-    capabilities,
-    loadProfiles,
-    createProfile,
-    updateProfile,
-    deleteProfile,
-    setRepoProfile,
-    setWorktreeProfile,
     worktreeDisplayNames,
     setWorktreeDisplayName,
-    restartSessionWithProfile,
+    restartSession,
     setSessionRested,
     // リモート画面
     screens,
@@ -1729,12 +1496,5 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     createShortcut,
     updateShortcut,
     deleteShortcut,
-    // Usage取得
-    usageRequesting,
-    usageProgress,
-    usageReport,
-    usageError,
-    requestUsage,
-    clearUsageError,
   };
 }

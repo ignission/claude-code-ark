@@ -1,20 +1,19 @@
 /**
  * Plan Limits Collector
  *
- * セッションのプロファイルのプランの使用量 (5時間枠と週枠) を定期的に読む。
+ * セッションのプランの使用量 (5時間枠と週枠) を定期的に読む。
  * 会話の入力欄の横に出し、枠を使い切る前に気づけるようにする。
  *
- * - Claude Code の `/usage` と同じAPI (`/api/oauth/usage`) を、プロファイルの
+ * - Claude Code の `/usage` と同じAPI (`/api/oauth/usage`) を、セッションの設定ディレクトリの
  *   `<configDir>/.credentials.json` のアクセストークンで読む。公開のAPIではないので、
  *   形が変わったら黙ってその枠を null にするだけにする
  * - トークンの更新はしない。リフレッシュトークンは1回しか使えず、claudeと奪い合うと
  *   セッションの認証が切れる。期限切れのトークンでは読まず、前の値を残す
  *   (claudeが動けば更新され、次の巡回で読める)
- * - 読むのはセッションがあるプロファイルだけ。プロファイルは直列に読み、間隔は2分
+ * - 読むのはセッションがある設定ディレクトリだけ。直列に読み、間隔は2分
  * - 失敗 (ネットワーク、401など) では前の値を残す。リセット時刻を過ぎた枠は出さない
  *   (古い値が残ったまま枠が替わると、使っていない枠を使ったと見せてしまう)
- * - 画面は読まない (`usage-collector.ts` はtmuxで `/usage` を開いて読むが、
- *   こちらは常に出すので、セッションを起動しない方法で読む)
+ * - 画面は読まない。常に出すので、セッションを起動しない方法で読む
  */
 
 import { readFile } from "node:fs/promises";
@@ -47,7 +46,7 @@ export const fetchUsage: UsageFetcher = async token => {
   }
 };
 
-/** プロファイル未指定のセッションが使う設定ディレクトリ */
+/** セッションが既定で使う設定ディレクトリ */
 export function defaultConfigDir(): string {
   return path.join(os.homedir(), ".claude");
 }
@@ -118,7 +117,7 @@ export class PlanLimitsCollector {
 
   constructor(
     private readonly fetcher: UsageFetcher,
-    /** セッションがあるプロファイルの設定ディレクトリ */
+    /** セッションがある設定ディレクトリ */
     private readonly configDirs: () => string[],
     private readonly now: () => number = Date.now
   ) {}
@@ -144,7 +143,7 @@ export class PlanLimitsCollector {
     this.timer = null;
   }
 
-  /** 全プロファイルを1巡読む。前の巡回が終わっていなければ何もしない */
+  /** 全設定ディレクトリを1巡読む。前の巡回が終わっていなければ何もしない */
   async collect(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -174,7 +173,7 @@ export class PlanLimitsCollector {
     }
   }
 
-  /** 1つのプロファイルを読む。読めたら null、読めなければ理由 */
+  /** 1つの設定ディレクトリを読む。読めたら null、読めなければ理由 */
   private async read(configDir: string): Promise<string | null> {
     const credential = await readAccessToken(configDir, this.now());
     if ("skip" in credential) return credential.skip;

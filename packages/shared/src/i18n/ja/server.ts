@@ -27,33 +27,10 @@ export const server = {
     validSessionRequired: "有効なセッションが必要です",
     invalidPath: "不正なパスです",
   },
-  profile: {
-    unsupported: "プロファイル切替機能は Linux + claude CLI 必須です",
-    configDirRequired: "configDir は必須です",
-    configDirNotAbsolute: "configDir は絶対パスで指定してください",
-    configDirInvalidChars: "configDir に使用できない文字が含まれています",
-    configDirForbidden: (forbiddenPath: string) =>
-      `configDir に禁止パス (${forbiddenPath}) は使用できません`,
-    nameRequired: "name は必須です",
-    nameEmpty: "name は空にできません",
-    repoPathRequired: "repoPath は必須です",
-    repoPathUnresolvable: "リポジトリパスが解決できません",
-    repoNotAllowed: "リポジトリが許可リストに含まれていません",
-    notGitRepository: "リポジトリパスが有効なgitリポジトリではありません",
-    worktreePathRequired: "worktreePath は必須です",
-    worktreePathUnresolvable: "worktreeパスが解決できません",
-    notGitWorkingTree: "worktreeパスがgit working treeではありません",
-  },
   shortcut: {
     messageLength: (max: number) =>
       `message は 1〜${max} 文字で入力してください`,
     sortOrderNotInteger: "sortOrder は整数で指定してください",
     emptyPatch: "更新する項目を指定してください",
-  },
-  usage: {
-    unavailable: "この環境ではプロファイル機能が使えません",
-    inProgress: "Usage取得が既に進行中です",
-    defaultProfileName: "デフォルト",
-    noProfiles: "プロファイルが登録されていません",
   },
 };

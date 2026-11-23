@@ -27,32 +27,9 @@ export const server: Messages["server"] = {
     validSessionRequired: "A valid session is required",
     invalidPath: "Invalid path",
   },
-  profile: {
-    unsupported: "Profile switching requires Linux and the claude CLI",
-    configDirRequired: "configDir is required",
-    configDirNotAbsolute: "configDir must be an absolute path",
-    configDirInvalidChars: "configDir contains invalid characters",
-    configDirForbidden: forbiddenPath =>
-      `configDir cannot be under a forbidden path (${forbiddenPath})`,
-    nameRequired: "name is required",
-    nameEmpty: "name cannot be empty",
-    repoPathRequired: "repoPath is required",
-    repoPathUnresolvable: "Could not resolve the repository path",
-    repoNotAllowed: "Repository is not in the allowed list",
-    notGitRepository: "The repository path is not a valid git repository",
-    worktreePathRequired: "worktreePath is required",
-    worktreePathUnresolvable: "Could not resolve the worktree path",
-    notGitWorkingTree: "The worktree path is not a git working tree",
-  },
   shortcut: {
     messageLength: max => `message must be 1 to ${max} characters long`,
     sortOrderNotInteger: "sortOrder must be an integer",
     emptyPatch: "Specify at least one field to update",
-  },
-  usage: {
-    unavailable: "Profiles are not available in this environment",
-    inProgress: "Usage collection is already in progress",
-    defaultProfileName: "Default",
-    noProfiles: "No profiles are registered",
   },
 };

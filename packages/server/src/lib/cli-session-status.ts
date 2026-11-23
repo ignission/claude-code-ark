@@ -38,11 +38,10 @@
  * 確かめられないので **機構ごと無効にする** (常に null を返し、Ark は従来どおり
  * 画面だけで判定する)。
  *
- * ## プロファイル切替との関係
+ * ## 設定ディレクトリとの関係
  *
  * 状態ファイルはセッションの `CLAUDE_CONFIG_DIR` 配下に書かれるため、
- * プロファイルを使うセッションでは `<configDir>/sessions/` を見る必要がある
- * (実測: `~/.claude-knowbe1/sessions/` に同じ形のファイルがあった)。
+ * 既定以外の設定ディレクトリで動くセッションでは `<configDir>/sessions/` を見る必要がある。
  * configDir が渡されなければ `~/.claude/sessions/` を見る。
  */
 
@@ -232,7 +231,7 @@ export class CliSessionStatusReader {
     try {
       entries = this.io.readDir(dir);
     } catch {
-      // ディレクトリが無いのは古い CLI / 未使用のプロファイルでは普通のこと。
+      // ディレクトリが無いのは古い CLI / 未使用の設定ディレクトリでは普通のこと。
       // 警告は出さず、空として扱う
       this.forgetWarningsUnder(dir);
       return records;

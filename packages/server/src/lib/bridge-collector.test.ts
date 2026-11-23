@@ -18,7 +18,10 @@ vi.mock("./database.js", () => ({
 }));
 
 vi.mock("./session-orchestrator.js", () => ({
-  sessionOrchestrator: { getAllSessions: vi.fn(() => []) },
+  sessionOrchestrator: {
+    getAllSessions: vi.fn(() => []),
+    getSessionConfigDir: vi.fn(() => null),
+  },
 }));
 
 vi.mock("./tmux-manager.js", () => ({
@@ -101,9 +104,6 @@ const managedSession = {
   tmuxSessionName: "ark-sess-1",
   ttydPort: null,
   ttydUrl: null,
-  profileId: null,
-  profileConfigDir: null,
-  staleProfile: false,
   lastDiagramPath: null,
 };
 
@@ -112,6 +112,8 @@ describe("bridge-collector - tmux 読み取り失敗 (#393)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedOrchestrator.getSessionConfigDir.mockReset();
+    mockedOrchestrator.getSessionConfigDir.mockReturnValue(null);
     mockedOrchestrator.getAllSessions.mockReturnValue([
       managedSession as never,
     ]);
@@ -192,6 +194,8 @@ describe("bridge-collector - tmux 読み取り失敗 (#393)", () => {
 describe("bridge-collector - CLI の状態ファイルによる格上げ", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedOrchestrator.getSessionConfigDir.mockReset();
+    mockedOrchestrator.getSessionConfigDir.mockReturnValue(null);
     mockedOrchestrator.getAllSessions.mockReturnValue([
       { ...managedSession, id: "sess-cli" } as never,
     ]);
@@ -241,15 +245,14 @@ describe("bridge-collector - CLI の状態ファイルによる格上げ", () =>
     }
   });
 
-  it("tmux セッション名・worktree・プロファイルの configDir で引く", () => {
+  it("tmux セッション名・worktree・セッションの configDir で引く", () => {
     mockedTmux.capturePaneVisible.mockReturnValue(idleScreen);
     mockedOrchestrator.getAllSessions.mockReturnValue([
-      {
-        ...managedSession,
-        id: "sess-cli",
-        profileConfigDir: "/home/tester/.claude-alt",
-      } as never,
+      { ...managedSession, id: "sess-cli" } as never,
     ]);
+    mockedOrchestrator.getSessionConfigDir.mockImplementation(id =>
+      id === "sess-cli" ? "/home/tester/.claude-alt" : null
+    );
     collectBridgeSessions();
     expect(mockedCliStatus.recordFor).toHaveBeenCalledWith({
       tmuxSessionName: "ark-sess-1",
@@ -380,6 +383,8 @@ describe("bridge-collector - /clear 直後を待機にする", () => {
 describe("bridge-collector - collector も transcript を見る", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedOrchestrator.getSessionConfigDir.mockReset();
+    mockedOrchestrator.getSessionConfigDir.mockReturnValue(null);
     mockedOrchestrator.getAllSessions.mockReturnValue([
       managedSession as never,
     ]);
@@ -406,11 +411,14 @@ describe("bridge-collector - collector も transcript を見る", () => {
     expect(collectGridSnapshots()[0]?.status).toBe("IDLE");
   });
 
-  it("worktree とプロファイルの configDir で引く", () => {
+  it("worktree とセッションの configDir で引く", () => {
     mockedTranscript.readTranscriptConversationState.mockReturnValue("unknown");
     mockedOrchestrator.getAllSessions.mockReturnValue([
-      { ...managedSession, profileConfigDir: "/home/tester/.claude-alt" },
+      managedSession,
     ] as never);
+    mockedOrchestrator.getSessionConfigDir.mockReturnValue(
+      "/home/tester/.claude-alt"
+    );
     collectBridgeSessions();
     expect(
       mockedTranscript.readTranscriptConversationState

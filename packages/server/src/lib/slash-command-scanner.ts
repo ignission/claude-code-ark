@@ -1,7 +1,7 @@
 /**
  * Slash command 候補を以下の情報源から収集する:
  *   - 組み込みコマンド (ハードコード)
- *   - `<configDir>/commands/*.md` (グローバル / プロファイル毎)
+ *   - `<configDir>/commands/*.md` (グローバル)
  *   - `<worktreePath>/.claude/commands/*.md` (プロジェクト固有)
  *
  * 各 .md ファイル名 (拡張子除く) が `/<name>` になる。frontmatter の

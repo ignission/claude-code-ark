@@ -25,8 +25,6 @@ import {
   MESSAGE_SHORTCUT_MAX_LENGTH,
   type ServerToClientEvents,
   type SessionGridSnapshot,
-  type SystemCapabilities,
-  type UsageProgress,
 } from "@ark/shared";
 import httpProxy from "http-proxy";
 import { Server } from "socket.io";
@@ -137,14 +135,14 @@ import {
   REVALIDATE_CACHE_CONTROL,
   staticCacheControl,
 } from "./lib/static-cache.js";
-import { detectMultiProfileSupported, resolveGhPath } from "./lib/system.js";
+import { resolveGhPath } from "./lib/system.js";
 import { resolveTaskRepo } from "./lib/task-repo.js";
 import {
   describeDelivery,
   startTask,
   type TaskStartDeps,
 } from "./lib/task-start.js";
-import { TMUX_BINARY_PATH, tmuxManager } from "./lib/tmux-manager.js";
+import { tmuxManager } from "./lib/tmux-manager.js";
 import { describeTmuxReadFailure } from "./lib/tmux-read-result.js";
 import {
   createTodoHandlers,
@@ -152,7 +150,6 @@ import {
 } from "./lib/todo-handlers.js";
 import { hasConversationSince } from "./lib/transcript-conversation-since.js";
 import { TunnelManager } from "./lib/tunnel.js";
-import { UsageCollector } from "./lib/usage-collector.js";
 import { formatVoiceDiagnostic } from "./lib/voice-diagnostic.js";
 import { WorktreeHeadWatcher } from "./lib/worktree-head-watcher.js";
 
@@ -351,7 +348,7 @@ export async function startServer(
   }
 
   /**
-   * diagram:subscribe / linkWorktreeProfile 共通の worktree 検証（trust boundary）+
+   * diagram:subscribe などの worktree 検証（trust boundary）+
    * realpath 正規化。`/repo`・`/repo/.`・`/repo/./.` 等の表記揺れを同一の
    * 実パスへ畳み込み、DB 主キー・キャッシュキー・room 名を worktree ごとに
    * 一意化する（正規化しないと表記違いで別 DB 行が作られ、行単位のサイズ上限
@@ -362,7 +359,7 @@ export async function startServer(
    * (2) git worktree であること（`.git` ファイル/ディレクトリの存在で判定）
    *     任意ディレクトリへの読み書きを防ぐ
    * (3) allowedRepos 設定時は、そこから導出した repoPath が許可リストに
-   *     含まれること（socket 側 worktree:set-profile と同じ防御を維持する）
+   *     含まれること（socket 側 worktree:set-display-name と同じ防御を維持する）
    * 戻り値: 検証成功時は正規化済みの実パス、失敗時は null。
    */
   function resolveManagedWorktreeDetailed(
@@ -404,14 +401,6 @@ export async function startServer(
     );
   }
 
-  // ===== プロファイル切替機能 (Linux限定) =====
-  const capabilities: SystemCapabilities = {
-    multiProfileSupported: detectMultiProfileSupported(),
-  };
-  console.log(
-    `[Capabilities] multiProfileSupported = ${capabilities.multiProfileSupported}`
-  );
-
   // ===== PRとCIの状態 =====
   // ghが無ければ機能ごと無効にする。previews の prStatus は null のまま
   const ghPath = resolveGhPath();
@@ -431,9 +420,7 @@ export async function startServer(
   const configDirOf = (sessionId: string) =>
     sessionOrchestrator.getSessionConfigDir(sessionId) ?? defaultConfigDir();
   const planLimitsCollector = new PlanLimitsCollector(fetchUsage, () =>
-    sessionOrchestrator
-      .getAllSessions()
-      .map(session => session.profileConfigDir ?? defaultConfigDir())
+    sessionOrchestrator.getAllSessions().map(session => configDirOf(session.id))
   );
   planLimitsCollector.start();
 
@@ -477,11 +464,6 @@ export async function startServer(
       planLimits: planLimitsCollector.get(configDirOf(preview.sessionId)),
     }));
   };
-
-  // ===== Usage取得 =====
-  const usageCollector = new UsageCollector();
-  // 全クライアント横断で同時実行を1件に制限する
-  let usageInFlight = false;
 
   // Create proxy for ttyd WebSocket connections
   const ttydProxy = httpProxy.createProxyServer({
@@ -1049,7 +1031,7 @@ export async function startServer(
 
     const transcriptPaths = await listTranscriptPathsForWorktree(
       session.worktreePath,
-      session.profileConfigDir ?? null
+      sessionOrchestrator.getSessionConfigDir(session.id)
     );
     if (transcriptPaths.length === 0) {
       res.status(404).json({ error: "Transcript not found" });
@@ -1637,9 +1619,6 @@ export async function startServer(
     // このソケット接続で選択中のリポジトリパス
     let currentRepoPath: string | null = null;
 
-    // プロファイル切替機能のサポート状況を最初に通知
-    socket.emit("system:capabilities", capabilities);
-
     // リモート画面の一覧 (機能フラグに依らず常に送る)
     try {
       socket.emit("screen:list", db.listScreens());
@@ -1657,8 +1636,7 @@ export async function startServer(
       socket.emit("shortcut:error", { message: getErrorMessage(e) });
     }
 
-    // worktree表示名（カスタム名）の一覧を初期同期。
-    // プロファイル機能と独立した汎用機能のため capabilities に依存しない。
+    // worktree表示名（カスタム名）の一覧を初期同期
     try {
       socket.emit("worktree:display-names", db.listWorktreeDisplayNames());
     } catch (e) {
@@ -2245,7 +2223,7 @@ export async function startServer(
         return;
       }
       const worktreePath = session.worktreePath;
-      const configDir = session.profileConfigDir ?? null;
+      const configDir = sessionOrchestrator.getSessionConfigDir(sessionId);
 
       try {
         // 購読 (offset 確定) と snapshot を原子的に行う。別々に行うと
@@ -2299,7 +2277,7 @@ export async function startServer(
     });
 
     // ===== Slash command 候補列挙 =====
-    // チャットビュー入力欄の `/` 補完用。worktree + プロファイル configDir の
+    // チャットビュー入力欄の `/` 補完用。worktree + セッションの configDir の
     // `.claude/commands/*.md` を集約して返す。callback パターン (1 回限り)。
     // ack callback は外部入力なので関数であることを検証してから呼ぶ
     socket.on("slash:list", async (sessionId: unknown, callback: unknown) => {
@@ -2320,7 +2298,7 @@ export async function startServer(
         }
         const commands = await listSlashCommands(
           session.worktreePath,
-          session.profileConfigDir ?? null
+          sessionOrchestrator.getSessionConfigDir(sessionId)
         );
         reply({ commands });
       } catch (err) {
@@ -2362,7 +2340,7 @@ export async function startServer(
       const session = sessionOrchestrator.getSession(sessionId);
       if (!session) return;
       const worktreePath = session.worktreePath;
-      const configDir = session.profileConfigDir ?? null;
+      const configDir = sessionOrchestrator.getSessionConfigDir(sessionId);
       try {
         // クライアント指定の limit をそのまま fs 読みに使わないようガード
         const capped = Math.max(1, Math.min(Number(d.limit) || 0, 2000));
@@ -2655,254 +2633,6 @@ export async function startServer(
       }
     });
 
-    // ===== Profile Commands (Linux限定) =====
-
-    /** プロファイル切替機能未サポート時の共通レスポンス */
-    const emitUnsupported = () => {
-      socket.emit("profile:error", {
-        message: m().server.profile.unsupported,
-        code: "unsupported",
-      });
-    };
-
-    /**
-     * link.repoPath が session.repoPath と論理的に一致するか判定する。
-     * 新規保存は canonical 形式に揃えているが、旧データ (symlink path で
-     * 保存されているもの) が DB に残っているケースを realpath fallback で救済。
-     */
-    const repoPathMatchesSession = (
-      linkPath: string,
-      sessionRepoPath: string | undefined
-    ): boolean => {
-      if (!sessionRepoPath) return false;
-      if (sessionRepoPath === linkPath) return true;
-      try {
-        return fs.realpathSync(linkPath) === sessionRepoPath;
-      } catch {
-        return false;
-      }
-    };
-
-    /**
-     * link.worktreePath が session.worktreePath と論理的に一致するか判定する。
-     * 新規保存は canonical 形式に揃えているが、symlink 経由で異なる文字列に
-     * なっているケースを realpath fallback で救済。
-     */
-    const worktreePathMatchesSession = (
-      linkPath: string,
-      sessionWorktreePath: string | undefined
-    ): boolean => {
-      if (!sessionWorktreePath) return false;
-      if (sessionWorktreePath === linkPath) return true;
-      try {
-        return fs.realpathSync(linkPath) === sessionWorktreePath;
-      } catch {
-        return false;
-      }
-    };
-
-    /**
-     * configDir のバリデーション。
-     * @returns 正規化済み configDir、または null（エラーは socket に emit 済み）
-     */
-    const validateConfigDir = (configDir: string): string | null => {
-      if (typeof configDir !== "string" || configDir.trim().length === 0) {
-        socket.emit("profile:error", {
-          message: m().server.profile.configDirRequired,
-          code: "invalid_path",
-        });
-        return null;
-      }
-      // チルダ展開: 先頭の `~` を $HOME に置換
-      let expanded = configDir.trim();
-      if (expanded === "~" || expanded.startsWith("~/")) {
-        expanded = path.join(os.homedir(), expanded.slice(1));
-      }
-      // 絶対パス必須
-      if (!path.isAbsolute(expanded)) {
-        socket.emit("profile:error", {
-          message: m().server.profile.configDirNotAbsolute,
-          code: "invalid_path",
-        });
-        return null;
-      }
-      // 危険文字チェック (git.ts validatePath と同等)
-      if (/[;&|`$(){}[\]<>!"'\\]/.test(expanded)) {
-        socket.emit("profile:error", {
-          message: m().server.profile.configDirInvalidChars,
-          code: "invalid_path",
-        });
-        return null;
-      }
-      // 禁止パス: ルート/システムディレクトリ
-      const normalized = path.resolve(expanded);
-      const forbidden = ["/", "/etc", "/usr", "/var", "/bin", "/sbin"];
-      for (const f of forbidden) {
-        if (normalized === f || normalized.startsWith(`${f}/`)) {
-          socket.emit("profile:error", {
-            message: m().server.profile.configDirForbidden(f),
-            code: "forbidden_path",
-          });
-          return null;
-        }
-      }
-      return normalized;
-    };
-
-    socket.on("profile:list", () => {
-      if (!capabilities.multiProfileSupported) {
-        emitUnsupported();
-        return;
-      }
-      try {
-        socket.emit("profile:list", db.listProfiles());
-        // リポジトリ / worktree 紐付けも同梱送信（リロード時の初期同期用）
-        socket.emit("repo:profile-links", db.listRepoProfileLinks());
-        socket.emit("worktree:profile-links", db.listWorktreeProfileLinks());
-      } catch (e) {
-        socket.emit("profile:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    socket.on("profile:create", ({ name, configDir }) => {
-      if (!capabilities.multiProfileSupported) {
-        emitUnsupported();
-        return;
-      }
-      if (typeof name !== "string" || name.trim().length === 0) {
-        socket.emit("profile:error", {
-          message: m().server.profile.nameRequired,
-          code: "invalid_name",
-        });
-        return;
-      }
-      const normalized = validateConfigDir(configDir);
-      if (!normalized) return;
-      try {
-        const profile = db.createProfile({
-          name: name.trim(),
-          configDir: normalized,
-        });
-        io.emit("profile:created", profile);
-        io.emit("profile:list", db.listProfiles());
-      } catch (e) {
-        socket.emit("profile:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    socket.on("profile:update", ({ id, name, configDir }) => {
-      if (!capabilities.multiProfileSupported) {
-        emitUnsupported();
-        return;
-      }
-      if (typeof id !== "string" || id.length === 0) {
-        socket.emit("profile:error", {
-          message: m().server.idRequired,
-          code: "invalid_id",
-        });
-        return;
-      }
-      const patch: { name?: string; configDir?: string } = {};
-      if (name !== undefined) {
-        if (typeof name !== "string" || name.trim().length === 0) {
-          socket.emit("profile:error", {
-            message: m().server.profile.nameEmpty,
-            code: "invalid_name",
-          });
-          return;
-        }
-        patch.name = name.trim();
-      }
-      if (configDir !== undefined) {
-        const normalized = validateConfigDir(configDir);
-        if (!normalized) return;
-        patch.configDir = normalized;
-      }
-      try {
-        const profile = db.updateProfile(id, patch);
-        io.emit("profile:updated", profile);
-        io.emit("profile:list", db.listProfiles());
-
-        // configDirが変わった場合、このプロファイルを使っている稼働中セッションは
-        // 古いCLAUDE_CONFIG_DIRで動作している → staleProfile を再計算して通知。
-        // (nameのみ変更でも稼働セッションには影響しないが、副作用は無害なので
-        //  常に再計算する。configDir差分判定はprofileSnapshotsEqualが行う)
-        const affectedRepoPaths = db
-          .listRepoProfileLinks()
-          .filter(link => link.profileId === id)
-          .map(link => link.repoPath);
-        const affectedWorktreePaths = db
-          .listWorktreeProfileLinks()
-          .filter(link => link.profileId === id)
-          .map(link => link.worktreePath);
-        for (const sess of sessionOrchestrator.getAllSessions()) {
-          const repoMatches = affectedRepoPaths.some(p =>
-            repoPathMatchesSession(p, sess.repoPath)
-          );
-          const wtMatches = affectedWorktreePaths.some(p =>
-            worktreePathMatchesSession(p, sess.worktreePath)
-          );
-          if (repoMatches || wtMatches) {
-            io.emit("session:updated", sess);
-          }
-        }
-      } catch (e) {
-        socket.emit("profile:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    socket.on("profile:delete", ({ id }) => {
-      if (!capabilities.multiProfileSupported) {
-        emitUnsupported();
-        return;
-      }
-      try {
-        // 削除前に該当紐付け一覧をスナップショット (CASCADE でDB上は消えるため)
-        const affectedRepoPaths = db
-          .listRepoProfileLinks()
-          .filter(link => link.profileId === id)
-          .map(link => link.repoPath);
-        const affectedWorktreePaths = db
-          .listWorktreeProfileLinks()
-          .filter(link => link.profileId === id)
-          .map(link => link.worktreePath);
-
-        db.deleteProfile(id);
-        io.emit("profile:deleted", { id });
-        io.emit("profile:list", db.listProfiles());
-
-        // 紐付けが切れた各リポジトリについて、クライアントのバッジ + 稼働中
-        // セッションの staleProfile を更新する
-        for (const repoPath of affectedRepoPaths) {
-          io.emit("repo:profile-changed", {
-            repoPath,
-            profileId: null,
-          });
-        }
-        for (const worktreePath of affectedWorktreePaths) {
-          io.emit("worktree:profile-changed", {
-            worktreePath,
-            profileId: null,
-          });
-        }
-        // 稼働中セッションを再emit。worktree個別 / repoデフォルト どちらか
-        // 一方でも該当すれば staleProfile が変化し得るため両方を見る。
-        for (const sess of sessionOrchestrator.getAllSessions()) {
-          const repoMatches = affectedRepoPaths.some(p =>
-            repoPathMatchesSession(p, sess.repoPath)
-          );
-          const wtMatches = affectedWorktreePaths.some(p =>
-            worktreePathMatchesSession(p, sess.worktreePath)
-          );
-          if (repoMatches || wtMatches) {
-            io.emit("session:updated", sess);
-          }
-        }
-      } catch (e) {
-        socket.emit("profile:error", { message: getErrorMessage(e) });
-      }
-    });
-
     // ===== Remote Screen Commands =====
 
     socket.on("screen:list", () => {
@@ -3052,8 +2782,6 @@ export async function startServer(
     // - 認可境界は接続レベルの token 認証 (server/lib/auth.ts) が担っている。
     //   トンネル越しのアクセスはトークン必須、ローカル / プライベート IP はスキップ。
     //   つまり「同じ開発者の複数デバイスからの並行接続」しか到達しない。
-    // - マルチアカウント機能 (CLAUDE_CONFIG_DIR profile) はあくまで Claude CLI の
-    //   プロセス分離 / 認証情報分離が目的で、UI 状態の共有とは独立。
     // - 将来複数ユーザー運用に切り替える場合は、ここに加えて auth.ts のトークン
     //   モデル自体を再設計する必要がある (per-user token / session scope)。
     socket.on("shortcut:create", payload => {
@@ -3177,173 +2905,6 @@ export async function startServer(
       }
     });
 
-    socket.on("repo:set-profile", async ({ repoPath, profileId }) => {
-      if (!capabilities.multiProfileSupported) {
-        emitUnsupported();
-        return;
-      }
-      if (typeof repoPath !== "string" || repoPath.length === 0) {
-        socket.emit("profile:error", {
-          message: m().server.profile.repoPathRequired,
-          code: "invalid_repo",
-        });
-        return;
-      }
-      // 全レイヤーで repoPath を canonical (realpath) に統一する。
-      // ManagedSession.repoPath は git rev-parse 由来で常に canonical なので、
-      // ここを揃えることで client 側の repoProfileLinks Map と
-      // session.repoPath を直接比較できる (lookup の不整合を防ぐ)。
-      let canonicalRepoPath: string;
-      try {
-        canonicalRepoPath = fs.realpathSync(repoPath);
-      } catch {
-        socket.emit("profile:error", {
-          message: m().server.profile.repoPathUnresolvable,
-          code: "invalid_repo",
-        });
-        return;
-      }
-      // repo:select と同等の境界検証: 任意のpathへの書き込みを防ぐ。
-      // allowedRepos が指定されている場合のみ「元 path / canonical path」
-      // どちらかが含まれているかを確認する。
-      if (
-        allowedRepos.length > 0 &&
-        !allowedRepos.includes(repoPath) &&
-        !allowedRepos.includes(canonicalRepoPath)
-      ) {
-        socket.emit("profile:error", {
-          message: m().server.profile.repoNotAllowed,
-          code: "repo_not_allowed",
-        });
-        return;
-      }
-      try {
-        if (!(await isGitRepository(canonicalRepoPath))) {
-          socket.emit("profile:error", {
-            message: m().server.profile.notGitRepository,
-            code: "invalid_repo",
-          });
-          return;
-        }
-        if (profileId === null) {
-          db.removeRepoProfileLink(canonicalRepoPath);
-        } else {
-          db.setRepoProfileLink(canonicalRepoPath, profileId);
-        }
-        // broadcast も canonical で送る (クライアントの Map キーが canonical で
-        // 揃うため、SessionSidebar の lookup と整合する)
-        io.emit("repo:profile-changed", {
-          repoPath: canonicalRepoPath,
-          profileId,
-        });
-
-        // 該当 repoPath 配下の稼働中セッションを再emit
-        // (session.repoPath は canonical なので canonicalRepoPath で直接比較可能)
-        // worktree個別の紐付けがあるセッションは resolveProfileForWorktree が
-        // worktree側を優先するため、staleProfile が変化しないことを期待する
-        // (toManagedSession 内で再評価されるので別途分岐は不要)
-        for (const session of sessionOrchestrator.getAllSessions()) {
-          if (session.repoPath === canonicalRepoPath) {
-            io.emit("session:updated", session);
-          }
-        }
-      } catch (e) {
-        socket.emit("profile:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    socket.on("worktree:set-profile", async ({ worktreePath, profileId }) => {
-      if (!capabilities.multiProfileSupported) {
-        emitUnsupported();
-        return;
-      }
-      if (typeof worktreePath !== "string" || worktreePath.length === 0) {
-        socket.emit("profile:error", {
-          message: m().server.profile.worktreePathRequired,
-          code: "invalid_worktree",
-        });
-        return;
-      }
-      // ManagedSession.worktreePath は tmux 起動時の引数を保存しているため、
-      // 必ずしも canonical ではない。そこで保存も lookup も canonical に揃える。
-      let canonicalWorktreePath: string;
-      try {
-        canonicalWorktreePath = fs.realpathSync(worktreePath);
-      } catch {
-        socket.emit("profile:error", {
-          message: m().server.profile.worktreePathUnresolvable,
-          code: "invalid_worktree",
-        });
-        return;
-      }
-      try {
-        if (!(await isGitRepository(canonicalWorktreePath))) {
-          socket.emit("profile:error", {
-            message: m().server.profile.notGitWorkingTree,
-            code: "invalid_worktree",
-          });
-          return;
-        }
-
-        // 境界検証: worktree が属する repoPath を導出し、allowedRepos に
-        // 含まれているか確認。任意 path への書き込みを防ぐ。
-        if (allowedRepos.length > 0) {
-          let derivedRepoPath: string | undefined;
-          try {
-            const { stdout } = await execAsync(
-              `git -C "${canonicalWorktreePath}" rev-parse --path-format=absolute --git-common-dir`
-            );
-            const gitCommonDir = stdout.trim();
-            derivedRepoPath =
-              gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
-          } catch {
-            // 導出失敗 → 許可リストありなら拒否
-          }
-          const allowedMatch = (() => {
-            if (!derivedRepoPath) return false;
-            if (allowedRepos.includes(derivedRepoPath)) return true;
-            try {
-              const real = fs.realpathSync(derivedRepoPath);
-              return allowedRepos.includes(real);
-            } catch {
-              return false;
-            }
-          })();
-          if (!allowedMatch) {
-            socket.emit("profile:error", {
-              message: m().server.profile.repoNotAllowed,
-              code: "repo_not_allowed",
-            });
-            return;
-          }
-        }
-
-        if (profileId === null) {
-          db.removeWorktreeProfileLink(canonicalWorktreePath);
-        } else {
-          db.setWorktreeProfileLink(canonicalWorktreePath, profileId);
-        }
-        io.emit("worktree:profile-changed", {
-          worktreePath: canonicalWorktreePath,
-          profileId,
-        });
-
-        // 該当worktreeの稼働中セッションを再emit (staleProfile再評価)
-        for (const session of sessionOrchestrator.getAllSessions()) {
-          if (
-            worktreePathMatchesSession(
-              canonicalWorktreePath,
-              session.worktreePath
-            )
-          ) {
-            io.emit("session:updated", session);
-          }
-        }
-      } catch (e) {
-        socket.emit("profile:error", { message: getErrorMessage(e) });
-      }
-    });
-
     socket.on(
       "worktree:set-display-name",
       async ({ worktreePath, displayName }) => {
@@ -3366,7 +2927,7 @@ export async function startServer(
         }
 
         // 境界検証: allowedRepos が指定されていれば、worktree の親 repo が
-        // 含まれているかチェック。worktree:set-profile と同じ防御。
+        // 含まれているかチェック。
         if (allowedRepos.length > 0) {
           let derivedRepoPath: string | undefined;
           try {
@@ -3420,10 +2981,7 @@ export async function startServer(
       }
     );
 
-    // 再起動は profile 機能に依存しない汎用操作 (restartSession 内の
-    // profile 再解決は、profile 未対応環境では env 無しに解決されるだけ)
-    // のため、multiProfileSupported では gate しない
-    socket.on("session:restart-with-profile", async ({ sessionId }) => {
+    socket.on("session:restart", async ({ sessionId }) => {
       try {
         // restartSession 自身が orchestrator 経由で
         // session:created → session:restarted → session:stopped を発行し、
@@ -3445,92 +3003,6 @@ export async function startServer(
         handleSessionRest(data, sessionRestDeps);
       } catch (err) {
         console.error("[Rest] Failed to update rest:", getErrorMessage(err));
-      }
-    });
-
-    socket.on("usage:request", async () => {
-      if (!capabilities.multiProfileSupported) {
-        socket.emit("usage:error", {
-          message: m().server.usage.unavailable,
-        });
-        return;
-      }
-      if (usageInFlight) {
-        socket.emit("usage:error", {
-          message: m().server.usage.inProgress,
-        });
-        return;
-      }
-      const registeredProfiles = db.listProfiles();
-      // デフォルトアカウント (CLAUDE_CONFIG_DIR を設定しないときの ~/.claude) も
-      // 集計対象に含める。configDir 空文字 = デフォルト指定として UsageCollector
-      // 側で「CLAUDE_CONFIG_DIR を渡さない」分岐を選ぶ。
-      // 注: ユーザが ~/.claude を明示プロファイル登録している場合、そのまま
-      // CLAUDE_CONFIG_DIR=~/.claude で起動するとオンボーディング画面に詰まるため
-      // (UsageCollector のコメント参照)、ここで configDir を空に正規化する。
-      // 比較は fs.realpathSync で canonical 化して symlink / bind mount 経由で
-      // 同じ実体を指す経路でも検出できるようにする。
-      const defaultConfigDir = path.join(os.homedir(), ".claude");
-      let canonicalDefaultDir = defaultConfigDir;
-      try {
-        canonicalDefaultDir = fs.realpathSync(defaultConfigDir);
-      } catch {
-        // ~/.claude が無い環境ではそのまま使う (どのプロファイルとも一致しない)
-      }
-      const isDefaultPath = (configDir: string): boolean => {
-        if (configDir === defaultConfigDir) return true;
-        try {
-          return fs.realpathSync(configDir) === canonicalDefaultDir;
-        } catch {
-          return false;
-        }
-      };
-      const normalizedRegistered = registeredProfiles.map(p =>
-        isDefaultPath(p.configDir) ? { ...p, configDir: "" } : p
-      );
-      const hasDefaultProfile = normalizedRegistered.some(
-        p => p.configDir === ""
-      );
-      const profiles = hasDefaultProfile
-        ? normalizedRegistered
-        : [
-            {
-              id: "__default__",
-              name: m().server.usage.defaultProfileName,
-              configDir: "",
-              createdAt: 0,
-              updatedAt: 0,
-            },
-            ...normalizedRegistered,
-          ];
-
-      if (profiles.length === 0) {
-        socket.emit("usage:error", {
-          message: m().server.usage.noProfiles,
-        });
-        return;
-      }
-
-      usageInFlight = true;
-      const onProgress = (data: UsageProgress) => {
-        io.emit("usage:progress", data);
-      };
-      usageCollector.on("usage:progress", onProgress);
-      console.log(
-        `[UsageCollector] Started: ${profiles.length} profiles (requested by: ${socket.id})`
-      );
-
-      try {
-        const report = await usageCollector.collect(profiles);
-        io.emit("usage:complete", report);
-        console.log(
-          `[UsageCollector] Done: ok=${report.entries.filter(e => e.status === "ok").length}/${report.entries.length}`
-        );
-      } catch (e) {
-        socket.emit("usage:error", { message: getErrorMessage(e) });
-      } finally {
-        usageCollector.off("usage:progress", onProgress);
-        usageInFlight = false;
       }
     });
 

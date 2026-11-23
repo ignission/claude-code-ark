@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { ManagedSession, Profile, Worktree } from "@ark/shared";
+import type { ManagedSession, Worktree } from "@ark/shared";
 import {
   act,
   type ComponentProps,
@@ -11,7 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionListEntry } from "@/lib/session-sections";
 import { presentStatus } from "@/lib/status-tone";
-import { resolveSessionRowProfile, SessionListRow } from "./SessionListRow";
+import { SessionListRow } from "./SessionListRow";
 
 const testDoubles = vi.hoisted(() => ({
   rowMenuVariants: vi.fn(),
@@ -85,23 +85,6 @@ const session: ManagedSession = {
   ttydPort: 7680,
   ttydUrl: "/ttyd/session-1/",
 };
-const profiles: Profile[] = [
-  {
-    id: "p-work",
-    name: "仕事",
-    configDir: "/home/me/.claude-work",
-    createdAt: 0,
-    updatedAt: 0,
-  },
-  {
-    id: "p-home",
-    name: "個人",
-    configDir: "/home/me/.claude-home",
-    createdAt: 0,
-    updatedAt: 0,
-  },
-];
-
 function entryOf(overrides: Partial<SessionListEntry> = {}): SessionListEntry {
   return {
     key: "wt:wt-1",
@@ -124,8 +107,6 @@ function rowProps(
     displayName: null,
     previewText: "テストを実行しています",
     prStatus: null,
-    profile: null,
-    staleProfile: false,
     selected: false,
     editing: false,
     onEditingChange: vi.fn(),
@@ -241,57 +222,6 @@ describe("SessionListRowの中身", () => {
     expect(
       openArea.querySelector('[data-testid="session-row-detail"]')?.textContent
     ).toBe("appwork·feature/login·テストを実行しています");
-  });
-
-  it("プロファイルは未割り当てならチップを出さず、割り当てがあれば名前を、個別の上書きには「個別」を添える", () => {
-    const none = openAreaOf(mount(<SessionListRow {...rowProps()} />));
-    expect(
-      none.querySelector('[data-testid="session-row-profile"]')
-    ).toBeNull();
-
-    const inherited = openAreaOf(
-      mount(
-        <SessionListRow
-          {...rowProps({ profile: { name: "仕事", individual: false } })}
-        />
-      )
-    );
-    expect(
-      inherited.querySelector('[data-testid="session-row-profile"]')
-        ?.textContent
-    ).toBe("仕事");
-
-    mountedRoots.splice(0).forEach(({ root, container }) => {
-      act(() => root.unmount());
-      container.remove();
-    });
-    const individual = openAreaOf(
-      mount(
-        <SessionListRow
-          {...rowProps({ profile: { name: "仕事", individual: true } })}
-        />
-      )
-    );
-    expect(
-      individual.querySelector('[data-testid="session-row-profile"]')
-        ?.textContent
-    ).toBe("仕事個別");
-  });
-
-  it("古い設定の警告と再起動を出し、再起動は行メニューと同じ操作を呼ぶ", () => {
-    const menu = { onOpen: vi.fn(), onRestart: vi.fn() };
-    const container = mount(
-      <SessionListRow {...rowProps({ staleProfile: true, menu })} />
-    );
-
-    expect(container.textContent).toContain("古い設定");
-    const restart = Array.from(container.querySelectorAll("button")).find(
-      button => button.textContent === "再起動"
-    );
-    act(() => restart?.click());
-
-    expect(menu.onRestart).toHaveBeenCalledTimes(1);
-    expect(menu.onOpen).not.toHaveBeenCalled();
   });
 
   it("行を押すかEnterで開く操作を呼ぶ", () => {
@@ -492,68 +422,5 @@ describe("SessionListRowの表示名の編集", () => {
 
     act(() => input.blur());
     expect(props.onSaveDisplayName).toHaveBeenCalledWith("ろぐいん");
-  });
-});
-
-describe("resolveSessionRowProfile", () => {
-  const profileById = new Map(profiles.map(profile => [profile.id, profile]));
-  const worktreePath = worktree.path;
-
-  it("プロファイル機能が無効ならnull", () => {
-    expect(
-      resolveSessionRowProfile({
-        enabled: false,
-        worktreePath,
-        repoPath: "/work/app",
-        profileById,
-        repoProfileLinks: new Map([["/work/app", "p-work"]]),
-      })
-    ).toBeNull();
-  });
-
-  it("worktree個別の上書きを優先し、個別であることを返す", () => {
-    expect(
-      resolveSessionRowProfile({
-        enabled: true,
-        worktreePath,
-        repoPath: "/work/app",
-        profileById,
-        repoProfileLinks: new Map([["/work/app", "p-work"]]),
-        worktreeProfileLinks: new Map([[worktreePath, "p-home"]]),
-      })
-    ).toEqual({ name: "個人", individual: true });
-  });
-
-  it("個別が無ければリポジトリの既定を継承する", () => {
-    expect(
-      resolveSessionRowProfile({
-        enabled: true,
-        worktreePath,
-        repoPath: "/work/app",
-        profileById,
-        repoProfileLinks: new Map([["/work/app", "p-work"]]),
-        worktreeProfileLinks: new Map(),
-      })
-    ).toEqual({ name: "仕事", individual: false });
-  });
-
-  it("どちらも未割り当て、または削除済みのプロファイルならnull", () => {
-    expect(
-      resolveSessionRowProfile({
-        enabled: true,
-        worktreePath,
-        repoPath: "/work/app",
-        profileById,
-      })
-    ).toBeNull();
-    expect(
-      resolveSessionRowProfile({
-        enabled: true,
-        worktreePath,
-        repoPath: "/work/app",
-        profileById,
-        repoProfileLinks: new Map([["/work/app", "p-deleted"]]),
-      })
-    ).toBeNull();
   });
 });

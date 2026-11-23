@@ -239,9 +239,9 @@ describe("CliSessionStatusReader.stateFor", () => {
     expect(reader.stateFor(target)).toBeNull();
   });
 
-  it("プロファイルの configDir が指定されればそちらの sessions を読む", () => {
-    const profileDir = "/home/tester/.claude-alt/sessions";
-    const world = worldWith(sessionFile(), { dir: profileDir });
+  it("既定以外の configDir が指定されればそちらの sessions を読む", () => {
+    const altDir = "/home/tester/.claude-alt/sessions";
+    const world = worldWith(sessionFile(), { dir: altDir });
     const reader = new CliSessionStatusReader(makeIo(world));
     expect(reader.stateFor(target)).toBeNull();
     expect(

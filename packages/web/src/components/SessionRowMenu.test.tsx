@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { ManagedSession, Profile, Worktree } from "@ark/shared";
+import type { ManagedSession, Worktree } from "@ark/shared";
 import { act, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,23 +11,6 @@ import { SessionRowMenu, type SessionRowMenuProps } from "./SessionRowMenu";
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuGroup: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
-  ),
-  DropdownMenuSub: ({ children }: { children?: ReactNode }) => (
-    <div>{children}</div>
-  ),
-  DropdownMenuSubContent: ({
-    children,
-    className,
-  }: {
-    children?: ReactNode;
-    className?: string;
-  }) => (
-    <div data-menu-sub-content="" className={className}>
-      {children}
-    </div>
-  ),
-  DropdownMenuSubTrigger: ({ children }: { children?: ReactNode }) => (
-    <div data-menu-sub-trigger="">{children}</div>
   ),
   DropdownMenuLabel: ({ children }: { children?: ReactNode }) => (
     <div data-menu-label="">{children}</div>
@@ -58,23 +41,6 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 vi.mock("@/components/ui/context-menu", () => ({
   ContextMenuGroup: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
-  ),
-  ContextMenuSub: ({ children }: { children?: ReactNode }) => (
-    <div>{children}</div>
-  ),
-  ContextMenuSubContent: ({
-    children,
-    className,
-  }: {
-    children?: ReactNode;
-    className?: string;
-  }) => (
-    <div data-menu-sub-content="" className={className}>
-      {children}
-    </div>
-  ),
-  ContextMenuSubTrigger: ({ children }: { children?: ReactNode }) => (
-    <div data-menu-sub-trigger="">{children}</div>
   ),
   ContextMenuLabel: ({ children }: { children?: ReactNode }) => (
     <div data-menu-label="">{children}</div>
@@ -122,23 +88,6 @@ const session: ManagedSession = {
   ttydPort: 7680,
   ttydUrl: "/ttyd/session-1/",
 };
-const profiles: Profile[] = [
-  {
-    id: "p-work",
-    name: "仕事",
-    configDir: "/home/me/.claude-work",
-    createdAt: 0,
-    updatedAt: 0,
-  },
-  {
-    id: "p-home",
-    name: "個人",
-    configDir: "/home/me/.claude-home",
-    createdAt: 0,
-    updatedAt: 0,
-  },
-];
-
 function entryOf(overrides: Partial<SessionListEntry> = {}): SessionListEntry {
   return {
     key: `wt:${worktree.id}`,
@@ -319,74 +268,6 @@ describe("SessionRowMenu", () => {
     expect(onSplitTask).toHaveBeenCalledTimes(1);
     expect(onOpenParent).toHaveBeenCalledTimes(1);
   });
-
-  it("このworktreeのプロファイル: 個別の選択と「リポジトリの設定を継承」を出す", () => {
-    const onSelect = vi.fn();
-    const onOpenProfileManager = vi.fn();
-    const container = mount(
-      <SessionRowMenu
-        variant="dropdown"
-        entry={entryOf()}
-        onOpen={vi.fn()}
-        worktreeProfile={{
-          profiles,
-          currentProfileId: "p-home",
-          inheritedProfileName: "仕事",
-          onSelect,
-        }}
-        onOpenProfileManager={onOpenProfileManager}
-      />
-    );
-
-    expect(
-      container.querySelector("[data-menu-sub-trigger]")?.textContent
-    ).toBe("このworktreeのプロファイル");
-    expect(itemLabels(container)).toEqual([
-      "開く",
-      "仕事",
-      "個人",
-      "リポジトリの設定を継承 (仕事)",
-      "プロファイル管理を開く...",
-    ]);
-    expect(
-      container.querySelector('[data-menu-item][data-current="true"]')
-        ?.textContent
-    ).toBe("個人");
-
-    clickItem(container, "リポジトリの設定を継承 (仕事)");
-    clickItem(container, "仕事");
-    clickItem(container, "プロファイル管理を開く...");
-
-    expect(onSelect).toHaveBeenNthCalledWith(1, null);
-    expect(onSelect).toHaveBeenNthCalledWith(2, "p-work");
-    expect(onOpenProfileManager).toHaveBeenCalledTimes(1);
-  });
-
-  it("リポジトリの既定プロファイル: 「既定 (~/.claude)」で解除できる", () => {
-    const onSelect = vi.fn();
-    const container = mount(
-      <SessionRowMenu
-        variant="dropdown"
-        entry={entryOf()}
-        onOpen={vi.fn()}
-        repoProfile={{ profiles, currentProfileId: null, onSelect }}
-      />
-    );
-
-    expect(
-      container.querySelector("[data-menu-sub-trigger]")?.textContent
-    ).toBe("リポジトリの既定プロファイル");
-    expect(
-      container.querySelector('[data-menu-item][data-current="true"]')
-        ?.textContent
-    ).toBe("既定 (~/.claude)");
-
-    clickItem(container, "個人");
-    clickItem(container, "既定 (~/.claude)");
-
-    expect(onSelect).toHaveBeenNthCalledWith(1, "p-home");
-    expect(onSelect).toHaveBeenNthCalledWith(2, null);
-  });
 });
 
 describe("SessionRowMenuの休止の項目", () => {
@@ -417,40 +298,4 @@ describe("SessionRowMenuの休止の項目", () => {
     expect(onChange).toHaveBeenNthCalledWith(1, true);
     expect(onChange).toHaveBeenNthCalledWith(2, false);
   });
-});
-
-describe("SessionRowMenuのサブメニューの高さ", () => {
-  it.each([
-    ["dropdown", "dropdown-menu"],
-    ["context", "context-menu"],
-  ] as const)(
-    "%sのプロファイルのサブメニューは画面の高さに収め、はみ出す分はスクロールさせる",
-    (variant, radixName) => {
-      const container = mount(
-        <SessionRowMenu
-          variant={variant}
-          entry={entryOf()}
-          onOpen={vi.fn()}
-          worktreeProfile={{
-            profiles,
-            currentProfileId: null,
-            inheritedProfileName: null,
-            onSelect: vi.fn(),
-          }}
-          repoProfile={{ profiles, currentProfileId: null, onSelect: vi.fn() }}
-        />
-      );
-
-      const subContents = Array.from(
-        container.querySelectorAll("[data-menu-sub-content]")
-      );
-      expect(subContents).toHaveLength(2);
-      for (const subContent of subContents) {
-        expect(subContent.classList).toContain(
-          `max-h-(--radix-${radixName}-content-available-height)`
-        );
-        expect(subContent.classList).toContain("overflow-y-auto");
-      }
-    }
-  );
 });

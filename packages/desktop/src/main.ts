@@ -362,24 +362,6 @@ async function bootstrap(): Promise<void> {
   // 絶対パスで起動されるため、ユーザーへの追加 install (Node bundle + npm install)
   // は不要になった。配布物不整合の早期検知は bootstrap 冒頭の claude binary verify で実施。
 
-  // F6: Keychain プロファイル bridge 初期化 (skeleton)
-  // 現状 skeleton のため "unsupported" モードで動作。F0:B-3 検証結果次第で
-  // passthrough / bridge モードに分岐する想定 (F6-followup)。
-  // F6-followup: server (or socket handler) から bridge を呼び出せるように
-  // (profile:create / profile:update / profile:delete / repo:set-profile /
-  // session:restart-with-profile のハンドラから bridge を呼ぶ)。
-  try {
-    const { createKeychainProfileBridge } = await import(
-      "./keychain-profile-bridge.js"
-    );
-    const keychainBridge = createKeychainProfileBridge();
-    log.info("[Ark Desktop] keychain-bridge mode:", keychainBridge.mode);
-    // F6-followup: server に bridge を inject する (現状はインスタンス生成のみ)。
-    void keychainBridge;
-  } catch (err) {
-    log.error("[Ark Desktop] keychain-bridge init threw", err);
-  }
-
   if (isDev) {
     // dev mode: 別途 `pnpm dev:server` が 4001 で起動している前提。
     // useSocket.ts の dev 分岐が `http://localhost:4001` に hardcode で

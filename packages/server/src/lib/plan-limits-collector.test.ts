@@ -101,7 +101,7 @@ describe("readAccessToken", () => {
 });
 
 describe("PlanLimitsCollector", () => {
-  it("プロファイルごとに読み、設定ディレクトリで引ける", async () => {
+  it("設定ディレクトリごとに読み、設定ディレクトリで引ける", async () => {
     const dir = configDir(validCredentials);
     const fetcher = vi.fn<UsageFetcher>(async () => ({ ok: true, body }));
     const collector = new PlanLimitsCollector(
@@ -114,7 +114,7 @@ describe("PlanLimitsCollector", () => {
     expect(collector.get(dir)?.fiveHour?.percent).toBe(42);
   });
 
-  it("同じプロファイルのセッションが複数あっても1回だけ読む", async () => {
+  it("同じ設定ディレクトリのセッションが複数あっても1回だけ読む", async () => {
     const dir = configDir(validCredentials);
     const fetcher = vi.fn<UsageFetcher>(async () => ({ ok: true, body }));
     const collector = new PlanLimitsCollector(
@@ -159,7 +159,7 @@ describe("PlanLimitsCollector", () => {
     expect(collector.get(dir)).toBeNull();
   });
 
-  it("セッションが無くなったプロファイルの値を捨てる", async () => {
+  it("セッションが無くなった設定ディレクトリの値を捨てる", async () => {
     const dir = configDir(validCredentials);
     let dirs = [dir];
     const fetcher = vi.fn<UsageFetcher>(async () => ({ ok: true, body }));
