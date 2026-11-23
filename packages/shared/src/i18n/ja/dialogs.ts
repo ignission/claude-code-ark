@@ -49,33 +49,6 @@ export const dialogs = {
     starting: "起動中...",
     start: "起動する",
   },
-  profile: {
-    title: "プロファイル管理",
-    description:
-      "Claude CLI の設定ディレクトリ (CLAUDE_CONFIG_DIR) をリポジトリ単位で使い分けます。",
-    linuxOnly: "Linuxのみ",
-    unavailableOnOtherOs: "macOS/Windowsでは利用できません",
-    registered: (count: number) => `登録済みプロファイル (${count})`,
-    add: "新規追加",
-    empty: "プロファイルが未登録です。",
-    edit: "編集",
-    deleteTitle: "プロファイルを削除しますか？",
-    deleteDescription: (name: string) =>
-      `「${name}」を削除します。このプロファイルを紐付けたリポジトリは紐付けが解除されます。設定ディレクトリ自体は削除されません。`,
-    addTitle: "新規プロファイル追加",
-    editTitle: "プロファイル編集",
-    name: "名前",
-    namePlaceholder: "例: 仕事Max",
-    nameHint: "ダッシュボードに表示される名前です",
-    configDir: "設定ディレクトリ",
-    configDirHint: "設定の保存先。各プロファイルで別ディレクトリにする",
-    loginNotice:
-      "追加後、このプロファイルを紐付けたリポジトリでセッションを起動すると、 claude CLIが自動でログイン画面を表示します。",
-    submitAdd: "追加",
-    nameRequired: "名前を入力してください",
-    configDirRequired: "設定ディレクトリを入力してください",
-    absolutePathRequired: "絶対パス（/ または ~/ で始まる）を指定してください",
-  },
   repoSelect: {
     title: "リポジトリを選択",
     descriptionAllowlist:

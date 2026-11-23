@@ -52,34 +52,6 @@ export const dialogs: Messages["dialogs"] = {
     starting: "Starting...",
     start: "Start",
   },
-  profile: {
-    title: "Profiles",
-    description:
-      "Use a separate Claude CLI config directory (CLAUDE_CONFIG_DIR) for each repository.",
-    linuxOnly: "Linux only",
-    unavailableOnOtherOs: "Not available on macOS or Windows",
-    registered: (count: number) => `Profiles (${count})`,
-    add: "Add",
-    empty: "No profiles yet.",
-    edit: "Edit",
-    deleteTitle: "Delete this profile?",
-    deleteDescription: (name: string) =>
-      `Deletes "${name}". Repositories linked to this profile will be unlinked. The config directory itself is not deleted.`,
-    addTitle: "New profile",
-    editTitle: "Edit profile",
-    name: "Name",
-    namePlaceholder: "e.g. Work Max",
-    nameHint: "Shown on the dashboard",
-    configDir: "Config directory",
-    configDirHint:
-      "Where settings are stored. Use a different directory for each profile.",
-    loginNotice:
-      "After you add it, starting a session in a repository linked to this profile brings up the claude CLI login screen automatically.",
-    submitAdd: "Add",
-    nameRequired: "Enter a name",
-    configDirRequired: "Enter a config directory",
-    absolutePathRequired: "Enter an absolute path starting with / or ~/",
-  },
   repoSelect: {
     title: "Select repository",
     descriptionAllowlist:

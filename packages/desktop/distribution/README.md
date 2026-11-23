@@ -59,7 +59,7 @@ Intel mac はサポート対象外 (`depends_on arch: :arm64` で install を弾
 5. 別 repo `<user>/homebrew-tap` の `Casks/ark.rb` の `version` / `sha256` を更新
    (要 `HOMEBREW_TAP_TOKEN` secret)
 
-実 release tag は F4 (tmux/ttyd 同梱) / F5 (Claude CLI loader) / F6 (Keychain プロファイル)
+実 release tag は F4 (tmux/ttyd 同梱) / F5 (Claude CLI loader)
 完了後に打つ想定。それまでは `workflow_dispatch` で動作確認のみ。
 
 ## 関連ドキュメント

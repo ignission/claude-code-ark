@@ -122,7 +122,7 @@ export function collectBridgeSessions(): BridgeSession[] {
       status = resolveIdleStatus(analysis.status, previewText, () =>
         readTranscriptConversationState(
           ms.worktreePath,
-          ms.profileConfigDir ?? null,
+          sessionOrchestrator.getSessionConfigDir(ms.id),
           cliRecord?.sessionId ?? null
         )
       );
@@ -243,7 +243,7 @@ export function collectGridSnapshots(maxLines = 12): SessionGridSnapshot[] {
       status = resolveIdleStatus(analysis.status, previewText, () =>
         readTranscriptConversationState(
           ms.worktreePath,
-          ms.profileConfigDir ?? null,
+          sessionOrchestrator.getSessionConfigDir(ms.id),
           cliRecord?.sessionId ?? null
         )
       );
@@ -319,18 +319,18 @@ export function buildTunnelEntries(input: {
  * Claude Code CLI の状態ファイルから、そのセッションの状態を引く。
  *
  * 対応づけは tmux セッション名で行い、状態ファイルの cwd が Ark 側の worktree と
- * 一致することを確かめてから採用する (取り違え防止)。プロファイル切替を使う
- * セッションはファイルの置き場所も <configDir>/sessions になる。
+ * 一致することを確かめてから採用する (取り違え防止)。既定以外の設定ディレクトリで
+ * 動いているセッションは、ファイルの置き場所も <configDir>/sessions になる。
  */
 function readCliSessionRecord(ms: {
+  id: string;
   tmuxSessionName: string;
   worktreePath: string;
-  profileConfigDir?: string | null;
 }): CliSessionRecord | null {
   return cliSessionStatusReader.recordFor({
     tmuxSessionName: ms.tmuxSessionName,
     worktreePath: ms.worktreePath,
-    configDir: ms.profileConfigDir ?? null,
+    configDir: sessionOrchestrator.getSessionConfigDir(ms.id),
   });
 }
 

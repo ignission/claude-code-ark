@@ -75,17 +75,15 @@ export class SessionOrchestrator extends EventEmitter {
   private repoPathCache = new Map<string, string | undefined>();
 
   /**
-   * sessionId → 起動時に確定したプロファイルのスナップショット
+   * sessionId → 既定 (~/.claude) 以外の CLAUDE_CONFIG_DIR で動いているセッションの設定ディレクトリ
    *
-   * tmuxセッション自体はprofile情報を持たないため、SessionOrchestratorで
-   * セッションごとに記憶しておく。restartSession時の再解決や、
-   * staleProfile判定（プロファイル切替・configDir変更）に使う。
-   * 値がnullなら「プロファイル未紐付け」、未設定（mapにキーなし）も同義。
+   * Ark が起動するセッションは常に CLAUDE_CONFIG_DIR を unset して既定で動く。
+   * 値が入るのは、別の設定ディレクトリで起動されたまま tmux に残っているセッションを
+   * 復元したときだけ (restoreSessions が env から読む)。transcript (JSONL) と
+   * CLI の状態ファイルはその設定ディレクトリの下に書かれるので、読む側がここを引く。
+   * キーが無ければ既定。
    */
-  private sessionProfiles = new Map<
-    string,
-    { id: string; configDir: string } | null
-  >();
+  private sessionConfigDirs = new Map<string, string>();
 
   /**
    * getAllPreviews (1 秒間隔 polling) での capture-pane 失敗を、同じ内容なら
@@ -341,21 +339,12 @@ export class SessionOrchestrator extends EventEmitter {
         console.log(
           `[Orchestrator] Restored session: ${tmuxSession.tmuxSessionName} -> ${dbSession.id} (status: ${dbSession.status})`
         );
-        // 永続化されたprofileスナップショットを sessionProfiles Map に復元
-        // (サーバ再起動後でも staleProfile 判定が正しく動くため)
-        const restoredProfile =
-          dbSession.profileId && dbSession.profileConfigDir
-            ? { id: dbSession.profileId, configDir: dbSession.profileConfigDir }
-            : this.detectEnvProfile(tmuxSession);
-        this.sessionProfiles.set(dbSession.id, restoredProfile);
-      } else {
-        // DB に対応レコードなし (例: data dir を別パスに移行した直後)。
-        // env から CLAUDE_CONFIG_DIR を補完し、JsonlTailManager が正しい
-        // プロファイル配下の JSONL を見つけられるようにする。
-        const envProfile = this.detectEnvProfile(tmuxSession);
-        if (envProfile) {
-          this.sessionProfiles.set(tmuxSession.id, envProfile);
-        }
+      }
+      // 既定以外の設定ディレクトリで動いているなら、JsonlTailManager などが
+      // その下の JSONL を見つけられるように覚えておく
+      const envConfigDir = this.detectEnvConfigDir(tmuxSession);
+      if (envConfigDir) {
+        this.sessionConfigDirs.set(tmuxSession.id, envConfigDir);
       }
 
       // ttydも自動起動（起動完了後にクライアントへ通知）
@@ -414,18 +403,6 @@ export class SessionOrchestrator extends EventEmitter {
       db.updateSessionRepoPath(dbSession.id, derivedRepoPath);
     }
 
-    // 起動時に確定したプロファイルと、現在の (worktree個別 or repoデフォルト)
-    // 紐付けの解決結果を比較して staleProfile を判定する。
-    // - profileId 切替 (null↔id、id↔別id) → stale
-    // - 同一profileIdでも configDir が変わった場合も stale
-    //   (tmux env は起動時に固定されるため再起動しないと反映されない)
-    const current = this.sessionProfiles.get(tmuxSession.id) ?? null;
-    const { snapshot: desiredProfile } = this.resolveProfileForWorktree(
-      tmuxSession.worktreePath,
-      repoPath
-    );
-    const staleProfile = !this.profileSnapshotsEqual(current, desiredProfile);
-
     return {
       id: tmuxSession.id,
       worktreeId,
@@ -436,11 +413,6 @@ export class SessionOrchestrator extends EventEmitter {
       tmuxSessionName: tmuxSession.tmuxSessionName,
       ttydPort: ttydInstance?.port || null,
       ttydUrl: ttydInstance ? `/ttyd/${tmuxSession.id}/` : null,
-      profileId: current?.id ?? null,
-      // JSONL tail (チャットビュー) がプロファイル配下の
-      // <configDir>/projects を参照するために必要
-      profileConfigDir: current?.configDir ?? null,
-      staleProfile,
       // リロード後にクライアントが右ペインの図タブを復元するために必要
       // (board_open の度に db.updateSessionLastDiagram で更新される)
       lastDiagramPath: dbSession?.lastDiagramPath ?? null,
@@ -455,20 +427,17 @@ export class SessionOrchestrator extends EventEmitter {
   /**
    * 復元したセッションの「事実上の CLAUDE_CONFIG_DIR」を env から検出する。
    *
-   * DB にプロファイル記録が無い (または null の) セッションでも、
-   * - 旧コードで起動され tmux サーバー env から CLAUDE_CONFIG_DIR を継承した
-   * - data dir 移行で DB レコードが消えた
-   * 等で claude が別プロファイル配下に transcript を書いていることがある。
-   * その場合 JsonlTailManager がデフォルト ~/.claude/projects を見てしまい、
-   * チャットビューに会話が一切表示されない。
+   * 旧コードで別の設定ディレクトリを指定して起動された、または tmux サーバーの
+   * env から CLAUDE_CONFIG_DIR を継承したセッションは、claude が既定以外の
+   * 設定ディレクトリの下に transcript を書いている。そのまま既定の
+   * ~/.claude/projects を見ると、チャットビューに会話が一切表示されない。
    * tmux session env (`show-environment`) → pane プロセス environ (/proc) の
-   * 順で実際の値を探し、見つかれば configDir のみのダミープロファイルとして
-   * 反映する (profileId は管理 UI と紐付かない `__env__`)。
+   * 順で実際の値を探す。見つからなければ null (既定)。
    */
-  private detectEnvProfile(tmuxSession: {
+  private detectEnvConfigDir(tmuxSession: {
     id: string;
     tmuxSessionName: string;
-  }): { id: string; configDir: string } | null {
+  }): string | null {
     // tmux の失敗 (サーバー停止・セッション不在) と「変数が無い」を区別する。
     // 失敗なら理由を残したうえで次の情報源へフォールバックする (#393)
     const fromSessionEnv = tmuxManager.getEnv(
@@ -485,28 +454,15 @@ export class SessionOrchestrator extends EventEmitter {
       : tmuxManager.getPaneEnv(tmuxSession.id, "CLAUDE_CONFIG_DIR");
     if (!fromPaneEnv.ok && !isExpectedAbsence(fromPaneEnv)) {
       console.warn(
-        `[Orchestrator] ${tmuxSession.tmuxSessionName}: cannot read CLAUDE_CONFIG_DIR from the pane environ (${describeTmuxReadFailure(fromPaneEnv.failure)}). Restoring without a profile`
+        `[Orchestrator] ${tmuxSession.tmuxSessionName}: cannot read CLAUDE_CONFIG_DIR from the pane environ (${describeTmuxReadFailure(fromPaneEnv.failure)}). Restoring with the default config dir`
       );
     }
     if (!fromPaneEnv.ok || !fromPaneEnv.value) return null;
     const envConfigDir = fromPaneEnv.value;
     console.log(
-      `[Orchestrator] Restored profile from env: ${tmuxSession.tmuxSessionName} -> ${envConfigDir}`
+      `[Orchestrator] Restored config dir from env: ${tmuxSession.tmuxSessionName} -> ${envConfigDir}`
     );
-    return { id: "__env__", configDir: envConfigDir };
-  }
-
-  /**
-   * 起動時のプロファイルスナップショットと現在のプロファイルが一致するか。
-   * 両方null（紐付けなし）も一致とみなす。
-   */
-  private profileSnapshotsEqual(
-    current: { id: string; configDir: string } | null,
-    desired: { id: string; configDir: string } | null
-  ): boolean {
-    if (current === null && desired === null) return true;
-    if (current === null || desired === null) return false;
-    return current.id === desired.id && current.configDir === desired.configDir;
+    return envConfigDir;
   }
 
   /**
@@ -559,82 +515,6 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   /**
-   * 紐付けプロファイルから env / プロファイルスナップショットを解決する。
-   *
-   * 解決順序:
-   * 1. worktree_profile_links[worktreePath] (worktree個別の紐付けが優先)
-   * 2. repo_profile_links[repoPath] (リポジトリのデフォルト)
-   * 3. どちらも無ければ null env / null snapshot
-   *
-   * 紐付けはあるが profile が無い (削除済等) 場合も null 扱い。
-   * configDir/.credentials.json の存在チェックは行わない。claude CLI が
-   * 必要なら自動で /login を促す。
-   *
-   * lookup 戦略:
-   * - まず受信した path で lookup を試す
-   * - 見つからなければ fs.realpathSync で正規化したパスで再試行
-   *   (クライアントは symlink path で送ってくる場合と、git rev-parse 経由
-   *    で正規化した path で送ってくる場合の両方があり、保存と lookup の key
-   *    が食い違う可能性があるため)
-   */
-  private resolveProfileForWorktree(
-    worktreePath: string | undefined,
-    repoPath: string | undefined
-  ): {
-    env: Record<string, string> | undefined;
-    snapshot: { id: string; configDir: string } | null;
-  } {
-    // 1. worktree個別の紐付け
-    let profileId: string | null = null;
-    if (worktreePath) {
-      let wtLink = db.getWorktreeProfileLink(worktreePath);
-      if (!wtLink) {
-        try {
-          const real = fs.realpathSync(worktreePath);
-          if (real !== worktreePath) {
-            wtLink = db.getWorktreeProfileLink(real);
-          }
-        } catch {
-          // realpath 解決失敗 → 受信値のままで紐付けなし扱い
-        }
-      }
-      if (wtLink) {
-        profileId = wtLink.profileId;
-      }
-    }
-
-    // 2. リポジトリのデフォルト紐付け
-    if (!profileId && repoPath) {
-      let repoLink = db.getRepoProfileLink(repoPath);
-      if (!repoLink) {
-        try {
-          const real = fs.realpathSync(repoPath);
-          if (real !== repoPath) {
-            repoLink = db.getRepoProfileLink(real);
-          }
-        } catch {
-          // realpath 解決失敗 → 受信値のままで紐付けなし扱い
-        }
-      }
-      if (repoLink) {
-        profileId = repoLink.profileId;
-      }
-    }
-
-    if (!profileId) {
-      return { env: undefined, snapshot: null };
-    }
-    const profile = db.getProfile(profileId);
-    if (!profile) {
-      return { env: undefined, snapshot: null };
-    }
-    return {
-      env: { CLAUDE_CONFIG_DIR: profile.configDir },
-      snapshot: { id: profile.id, configDir: profile.configDir },
-    };
-  }
-
-  /**
    * 新規セッションを開始
    */
   async startSession(
@@ -679,33 +559,20 @@ export class SessionOrchestrator extends EventEmitter {
         );
       }
 
-      // toManagedSession 内で sessionProfiles と紐付けを比較して
-      // profileId / staleProfile を反映済み
       const managed = this.toManagedSession(existingTmux, worktreeId);
       this.emit("session:restored", managed);
       return managed;
     }
-
-    // 新規作成パス: 紐付けプロファイルから env / スナップショットを解決
-    // (worktree個別 → repoデフォルト の順で解決)
-    const { env, snapshot } = this.resolveProfileForWorktree(
-      worktreePath,
-      resolvedRepoPath
-    );
-    const sessionEnv = env;
 
     // board MCP (ark-board / board_write) 用の per-session token/config を用意する。
     // 未起動/未注入なら tmuxManager の --mcp-config 設定を null にリセットする
     // (tmuxManager は共有インスタンスのため、前回セッションの設定を持ち越さない)。
     const boardPrep = this.prepareBoardMcpConfig();
 
-    // 新規tmuxセッションを作成（envがあれば注入）
+    // 新規tmuxセッションを作成
     let tmuxSession: TmuxSession;
     try {
-      tmuxSession = await tmuxManager.createSession(
-        worktreePath,
-        sessionEnv ? { env: sessionEnv } : undefined
-      );
+      tmuxSession = await tmuxManager.createSession(worktreePath);
     } catch (e) {
       if (boardPrep) this.discardBoardMcpConfig(boardPrep.cfgPath);
       throw e;
@@ -744,8 +611,6 @@ export class SessionOrchestrator extends EventEmitter {
         worktreePath,
         repoPath: resolvedRepoPath,
         status: "active",
-        profileId: snapshot?.id ?? null,
-        profileConfigDir: snapshot?.configDir ?? null,
         // サーバー再起動後に token を registry へ復帰させるため、
         // mcp-config のパスを永続化する (token 自体は 0600 のファイル内のみ)
         boardMcpConfigPath: boardPrep?.cfgPath ?? null,
@@ -759,10 +624,6 @@ export class SessionOrchestrator extends EventEmitter {
       throw error;
     }
 
-    // プロファイルスナップショットをsession-id毎に記憶
-    // (restartSession / staleProfile判定用)
-    this.sessionProfiles.set(tmuxSession.id, snapshot);
-
     const managed: ManagedSession = {
       id: tmuxSession.id,
       worktreeId,
@@ -773,7 +634,6 @@ export class SessionOrchestrator extends EventEmitter {
       tmuxSessionName: tmuxSession.tmuxSessionName,
       ttydPort: ttydInstance.port,
       ttydUrl: `/ttyd/${tmuxSession.id}/`,
-      profileId: snapshot?.id ?? null,
       parentWorktreePath: options.parentWorktreePath ?? null,
       parentRepoPath,
     };
@@ -783,19 +643,19 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   /**
-   * 稼働中セッションを kill して、現在の紐付けで再起動する。
-   * staleProfile となったセッションをユーザが「再起動」した際に呼ぶ。
+   * 稼働中セッションを kill して、新しい claude で起動し直す。
+   * 再起動したセッションは既定の設定ディレクトリで動く。
    *
    * 失敗時の安全性: 旧 tmux/ttyd は新セッションが usable と確認できるまで
    * 停止しない。context を有効にしていた場合だけ、repo 所有権を渡すため旧 context は
    * 新 init より先に teardown する。新側で失敗しても旧 terminal process は残る。
    *
    * 内部処理:
-   * 1. プロファイル解決、旧 context teardown、新 context init
+   * 1. 旧 context teardown、新 context init
    * 2. 新tmuxセッションを **別ID** で作成 (旧と並走)
    * 3. 新ttydを起動。失敗時は新tmuxと新 context を teardown して throw
    * 4. DB を transaction で新セッションへ置換
-   * 5. 旧 ttyd 停止 / 旧 tmux kill / sessionProfiles/repoPathCache クリア
+   * 5. 旧 ttyd 停止 / 旧 tmux kill / sessionConfigDirs/repoPathCache クリア
    * 6. session:created → session:restarted → session:stopped を emit
    *
    * @throws sessionId に対応する tmux セッションが見つからない場合
@@ -832,19 +692,12 @@ export class SessionOrchestrator extends EventEmitter {
       dbSession?.repoPath ||
       (worktreePath ? this.deriveRepoPath(worktreePath) : undefined);
 
-    // 1. 新プロファイルを解決 (worktree個別 → repoデフォルト の順)
-    const { env, snapshot } = this.resolveProfileForWorktree(
-      worktreePath,
-      repoPath
-    );
-
     // context owner を旧セッションから解放してから新セッションを init する。
     // tmux env はサーバー再起動後も残るため、永続化を追加せず session ID を復元できる。
     // 撤去済み ark/context が注入したままの hook / deny を取り除く (#367 の移行)。
     // 永続 tmux セッションを持つ環境では teardown が走らないまま撤去されるため、
     // セッション起動のたびに冪等に掃除する。
     cleanupLegacyContextSettings(worktreePath);
-    const sessionEnv = env;
 
     // 2. board MCP 用の per-session token/config を用意してから、
     //    新tmuxセッションを別IDで作成する (失敗時は旧セッション無傷)。
@@ -852,10 +705,7 @@ export class SessionOrchestrator extends EventEmitter {
     const boardPrep = this.prepareBoardMcpConfig();
     let newTmux: TmuxSession;
     try {
-      newTmux = await tmuxManager.createSession(
-        worktreePath,
-        sessionEnv ? { env: sessionEnv } : undefined
-      );
+      newTmux = await tmuxManager.createSession(worktreePath);
     } catch (e) {
       if (boardPrep) this.discardBoardMcpConfig(boardPrep.cfgPath);
       throw e;
@@ -892,8 +742,6 @@ export class SessionOrchestrator extends EventEmitter {
         worktreePath,
         repoPath,
         status: "active" as const,
-        profileId: snapshot?.id ?? null,
-        profileConfigDir: snapshot?.configDir ?? null,
         boardMcpConfigPath: boardPrep?.cfgPath ?? null,
         // 再起動しても親子の表示を保つ
         parentWorktreePath: dbSession?.parentWorktreePath ?? null,
@@ -910,8 +758,7 @@ export class SessionOrchestrator extends EventEmitter {
       if (boardPrep) this.discardBoardMcpConfig(boardPrep.cfgPath);
       throw e;
     }
-    this.sessionProfiles.set(newTmux.id, snapshot);
-    this.sessionProfiles.delete(sessionId);
+    this.sessionConfigDirs.delete(sessionId);
     this.previewCaptureFailures.forget(sessionId);
     this.repoPathCache.delete(worktreePath);
     if (boardPrep) {
@@ -944,7 +791,6 @@ export class SessionOrchestrator extends EventEmitter {
       tmuxSessionName: newTmux.tmuxSessionName,
       ttydPort: newTtyd.port,
       ttydUrl: `/ttyd/${newTmux.id}/`,
-      profileId: snapshot?.id ?? null,
       parentWorktreePath: dbSession?.parentWorktreePath ?? null,
       parentRepoPath: dbSession?.parentRepoPath ?? null,
     };
@@ -955,29 +801,6 @@ export class SessionOrchestrator extends EventEmitter {
     });
     this.emit("session:stopped", sessionId);
     return managed;
-  }
-
-  /**
-   * 指定セッションの staleProfile を再評価する。
-   *
-   * `repo:set-profile` / `worktree:set-profile` 等で紐付けが変わった際に、
-   * 稼働中セッションの staleProfile を再計算してクライアントへ反映するための
-   * ヘルパー。
-   *
-   * @returns 現在 staleProfile かどうか（セッション不存在時は false）
-   */
-  recomputeStaleProfile(sessionId: string): boolean {
-    const tmuxSession = tmuxManager.getSession(sessionId);
-    if (!tmuxSession) return false;
-    const repoPath = tmuxSession.worktreePath
-      ? this.deriveRepoPath(tmuxSession.worktreePath)
-      : undefined;
-    const { snapshot: desired } = this.resolveProfileForWorktree(
-      tmuxSession.worktreePath,
-      repoPath
-    );
-    const current = this.sessionProfiles.get(sessionId) ?? null;
-    return !this.profileSnapshotsEqual(current, desired);
   }
 
   /**
@@ -1028,7 +851,7 @@ export class SessionOrchestrator extends EventEmitter {
     ttydManager.stopInstance(sessionId);
     tmuxManager.killSession(sessionId);
     db.deleteSession(sessionId);
-    this.sessionProfiles.delete(sessionId);
+    this.sessionConfigDirs.delete(sessionId);
     this.previewCaptureFailures.forget(sessionId);
     this.unregisterBoardToken(sessionId);
     if (worktreePath) {
@@ -1043,11 +866,11 @@ export class SessionOrchestrator extends EventEmitter {
    * IDでセッションを取得
    */
   /**
-   * セッションが起動時に使ったプロファイルの configDir。未紐付けは null。
+   * セッションの設定ディレクトリ。既定 (~/.claude) なら null。
    * 毎秒の previews で引くので、tmux と DB を読まずメモリだけで答える
    */
   getSessionConfigDir(sessionId: string): string | null {
-    return this.sessionProfiles.get(sessionId)?.configDir ?? null;
+    return this.sessionConfigDirs.get(sessionId) ?? null;
   }
 
   /** セッションの worktree のパス。毎秒の previews で引くので、メモリだけで答える */
@@ -1126,7 +949,7 @@ export class SessionOrchestrator extends EventEmitter {
         if (dbSession) {
           db.deleteSession(dbSession.id);
         }
-        this.sessionProfiles.delete(s.id);
+        this.sessionConfigDirs.delete(s.id);
         this.previewCaptureFailures.forget(s.id);
         this.repoPathCache.delete(s.worktreePath);
         this.emit("session:stopped", s.id);
@@ -1175,7 +998,7 @@ export class SessionOrchestrator extends EventEmitter {
     if (!session) return null;
     const captured = tmuxManager.capturePaneVisible(sessionId);
     if (!captured.ok) return null;
-    const configDir = this.sessionProfiles.get(sessionId)?.configDir ?? null;
+    const configDir = this.getSessionConfigDir(sessionId);
     const cliRecord = cliSessionStatusReader.recordFor({
       tmuxSessionName: session.tmuxSessionName,
       worktreePath: session.worktreePath,
@@ -1244,7 +1067,7 @@ export class SessionOrchestrator extends EventEmitter {
       const cliRecord = cliSessionStatusReader.recordFor({
         tmuxSessionName: session.tmuxSessionName,
         worktreePath: session.worktreePath,
-        configDir: this.sessionProfiles.get(session.id)?.configDir ?? null,
+        configDir: this.getSessionConfigDir(session.id),
       });
       // 画面が IDLE でも、現行 transcript に会話が 1 件も無ければ待機に倒す。
       // /clear 直後の画面は空にならない (起動バナー・お知らせ・打った `/clear` が
@@ -1256,7 +1079,7 @@ export class SessionOrchestrator extends EventEmitter {
         () =>
           readTranscriptConversationState(
             session.worktreePath,
-            this.sessionProfiles.get(session.id)?.configDir ?? null,
+            this.getSessionConfigDir(session.id),
             cliRecord?.sessionId ?? null
           )
       );
@@ -1424,12 +1247,12 @@ export class SessionOrchestrator extends EventEmitter {
       }
 
       // 一覧をセクションの中で最終更新の降順に並べるための値。
-      // configDir は toManagedSession の profileConfigDir と同じ出所を使い、
+      // configDir は JSONL tail (getSessionConfigDir) と同じ出所を使い、
       // チャットビューが映しているのと同じ JSONL の mtime を返す。
       // 読めなければ null (不明) になり、一覧では後ろへ回る
       const lastUpdatedAt = readTranscriptLastUpdatedAt(
         session.worktreePath,
-        this.sessionProfiles.get(session.id)?.configDir ?? null
+        this.getSessionConfigDir(session.id)
       );
 
       // 画面を取れたセッションでは状態に関係なく、画面末尾を添える (AUQ の「直前の画面」と同じ整形。解釈はしない)。

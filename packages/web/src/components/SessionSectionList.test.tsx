@@ -3,7 +3,6 @@
 import type {
   BridgeSessionStatus,
   ManagedSession,
-  Profile,
   Worktree,
 } from "@ark/shared";
 import { act, type ReactNode } from "react";
@@ -97,16 +96,6 @@ const sessions = new Map(
     return [session.id, session] as const;
   })
 );
-const profiles: Profile[] = [
-  {
-    id: "p-work",
-    name: "仕事",
-    configDir: "/home/me/.claude-work",
-    createdAt: 0,
-    updatedAt: 0,
-  },
-];
-
 function statusesOf(
   a: BridgeSessionStatus,
   b: BridgeSessionStatus,
@@ -781,49 +770,5 @@ describe("SessionSectionListの行メニューの配線", () => {
     testDoubles.menuProps.clear();
     mountList(listProps());
     expect(menuOf("wt:a").onOpenRepoGrid).toBeUndefined();
-  });
-
-  it("プロファイルの項目とチップは、プロファイル機能が有効なときだけ出す", () => {
-    const { container } = mountList(
-      listProps({
-        capabilities: { multiProfileSupported: true },
-        profiles,
-        repoProfileLinks: new Map([[repoPath, "p-work"]]),
-        worktreeProfileLinks: new Map(),
-        onSetWorktreeProfile: vi.fn(),
-        onSetRepoProfile: vi.fn(),
-        onOpenProfileManager: vi.fn(),
-      })
-    );
-
-    expect(menuOf("wt:a").worktreeProfile).toMatchObject({
-      currentProfileId: null,
-      inheritedProfileName: "仕事",
-    });
-    expect(menuOf("wt:a").repoProfile).toMatchObject({
-      currentProfileId: "p-work",
-    });
-    expect(
-      container.querySelector(
-        '[data-session-key="wt:a"] [data-testid="session-row-profile"]'
-      )?.textContent
-    ).toBe("仕事");
-
-    testDoubles.menuProps.clear();
-    const disabled = mountList(
-      listProps({
-        capabilities: { multiProfileSupported: false },
-        profiles,
-        repoProfileLinks: new Map([[repoPath, "p-work"]]),
-        onSetWorktreeProfile: vi.fn(),
-        onSetRepoProfile: vi.fn(),
-        onOpenProfileManager: vi.fn(),
-      })
-    );
-    expect(menuOf("wt:a").worktreeProfile).toBeUndefined();
-    expect(menuOf("wt:a").repoProfile).toBeUndefined();
-    expect(
-      disabled.container.querySelector('[data-testid="session-row-profile"]')
-    ).toBeNull();
   });
 });

@@ -205,24 +205,6 @@ export interface TmuxSession {
   status: "starting" | "running" | "stopped" | "error";
 }
 
-/**
- * createSessionの拡張オプション。
- * 全フィールド省略時は既存挙動（互換維持）。
- */
-export interface CreateSessionOptions {
-  /** 追加で注入する環境変数。tmux new-sessionの -e KEY=VALUE として展開される */
-  env?: Record<string, string>;
-  /** 起動コマンド。デフォルト: "claude" (skipPermissions有効時は "claude --dangerously-skip-permissions") */
-  commandLine?: string;
-  /** セッション名のプレフィックス。デフォルト: SESSION_PREFIX ("ark-") */
-  namePrefix?: string;
-  /**
-   * trueの場合、this.sessionsに登録し session:created を emit する（既存挙動、デフォルト）。
-   * falseの場合、登録もemitもしない（ログイン用など、SessionOrchestratorの管理外で使うケース）。
-   */
-  autoDiscover?: boolean;
-}
-
 export class TmuxManager extends EventEmitter {
   private sessions: Map<string, TmuxSession> = new Map();
   private readonly SESSION_PREFIX = "ark-";
@@ -321,22 +303,6 @@ export class TmuxManager extends EventEmitter {
 
       for (const name of sessionNames) {
         if (name.startsWith(this.SESSION_PREFIX)) {
-          // ark-usage-* は UsageCollector が一時的に作る短命セッション。
-          // サーバ crash/restart で finally の kill-session が走らずに残った
-          // 場合、claude プロセスごと永遠に残留するため、起動時に kill する。
-          if (name.startsWith("ark-usage-")) {
-            const killResult = spawnSync(
-              TMUX_BINARY_PATH,
-              ["kill-session", "-t", name],
-              { stdio: "pipe", timeout: TMUX_CMD_TIMEOUT_MS }
-            );
-            if (killResult.status === 0) {
-              console.log(
-                `[TmuxManager] Cleaned up orphan usage session: ${name}`
-              );
-            }
-            continue;
-          }
           const id = name.replace(this.SESSION_PREFIX, "");
           const cwd = this.getTmuxSessionCwd(name);
           if (!cwd.ok) {
@@ -394,23 +360,12 @@ export class TmuxManager extends EventEmitter {
    * 新しいtmuxセッションを作成してclaude-codeを起動
    *
    * @param worktreePath 作業ディレクトリ
-   * @param options 互換維持の拡張オプション。省略時は従来挙動。
    */
-  async createSession(
-    worktreePath: string,
-    options?: CreateSessionOptions
-  ): Promise<TmuxSession> {
+  async createSession(worktreePath: string): Promise<TmuxSession> {
     const id = nanoid(8);
-    const namePrefix = options?.namePrefix ?? this.SESSION_PREFIX;
-    const tmuxSessionName = `${namePrefix}${id}`;
-    const autoDiscover = options?.autoDiscover ?? true;
+    const tmuxSessionName = `${this.SESSION_PREFIX}${id}`;
 
-    // 追加の環境変数を -e KEY=VALUE 形式で展開（既存の -e の後ろに付与）
-    const extraEnvArgs: string[] = options?.env
-      ? Object.entries(options.env).flatMap(([k, v]) => ["-e", `${k}=${v}`])
-      : [];
-
-    // 起動コマンド（commandLine が指定されていればそれを優先）
+    // 起動コマンド
     // claude binary は resolveClaudePath() で絶対パスを取得する。これにより:
     //   - .app 配布で system PATH に claude が無い環境でも、同梱 SDK 付属の
     //     claude (`app.asar.unpacked/node_modules/@anthropic-ai/.../claude`) を起動できる
@@ -441,22 +396,17 @@ export class TmuxManager extends EventEmitter {
     const mcpConfigArg = this.claudeMcpConfigPath
       ? ` --mcp-config ${posixShellQuote(this.claudeMcpConfigPath)}`
       : "";
-    // プロファイル未指定のセッションが、Ark サーバープロセス (やその親、
-    // tmux サーバー) の CLAUDE_CONFIG_DIR を意図せず継承すると、transcript が
-    // 想定外の config dir 配下に書かれ、JSONL tail (チャットビュー) が
-    // 参照する <profileConfigDir ?? ~/.claude>/projects と不整合になる。
-    // tmux の -e は空文字設定しかできず、claude は空文字 CLAUDE_CONFIG_DIR を
-    // 「cwd を config dir に使う」と解釈して worktree 内に projects/ 等を
-    // 作ってしまう (実機確認済み) ため、シェル変数ごと unset してから起動する。
-    const hasProfileEnv =
-      options?.env != null && "CLAUDE_CONFIG_DIR" in options.env;
-    const envPrefix = hasProfileEnv ? "" : "unset CLAUDE_CONFIG_DIR; ";
+    // セッションが Ark サーバープロセス (やその親、tmux サーバー) の
+    // CLAUDE_CONFIG_DIR を意図せず継承すると、transcript が想定外の config dir
+    // 配下に書かれ、JSONL tail (チャットビュー) が参照する ~/.claude/projects と
+    // 不整合になる。tmux の -e は空文字設定しかできず、claude は空文字
+    // CLAUDE_CONFIG_DIR を「cwd を config dir に使う」と解釈して worktree 内に
+    // projects/ 等を作ってしまう (実機確認済み) ため、シェル変数ごと unset してから起動する。
+    const envPrefix = "unset CLAUDE_CONFIG_DIR; ";
     const skipFlag = this.skipPermissions
       ? " --dangerously-skip-permissions"
       : "";
-    const claudeCmd =
-      options?.commandLine ??
-      `${envPrefix}${claudeArg}${skipFlag}${settingsArg}${mcpConfigArg}`;
+    const claudeCmd = `${envPrefix}${claudeArg}${skipFlag}${settingsArg}${mcpConfigArg}`;
 
     let tmuxCreated = false;
 
@@ -485,7 +435,6 @@ export class TmuxManager extends EventEmitter {
           "CLAUDE_CODE_NO_FLICKER=1",
           "-e",
           "NODE_ENV=",
-          ...extraEnvArgs,
         ],
         { stdio: "pipe", timeout: TMUX_CMD_TIMEOUT_MS }
       );
@@ -508,7 +457,7 @@ export class TmuxManager extends EventEmitter {
           `tmux set-option exited with status ${setOptionResult.status}`
         );
 
-      // claudeコマンド（または options.commandLine）を送信
+      // claudeコマンドを送信
       // 終了後もシェルが残るのでvimなども使える
       const sendKeysResult = spawnSync(
         TMUX_BINARY_PATH,
@@ -540,11 +489,8 @@ export class TmuxManager extends EventEmitter {
       status: "running",
     };
 
-    // autoDiscover=falseの場合は管理対象に含めない（ログイン用セッションなど）
-    if (autoDiscover) {
-      this.sessions.set(id, session);
-      this.emit("session:created", session);
-    }
+    this.sessions.set(id, session);
+    this.emit("session:created", session);
 
     console.log(
       `[TmuxManager] Created session: ${tmuxSessionName} at ${worktreePath}`
@@ -713,7 +659,7 @@ export class TmuxManager extends EventEmitter {
    * プロセスの env を継承してシェル/claude に変数が渡っているケースがある
    * (旧コードで起動されたセッションの CLAUDE_CONFIG_DIR 継承等)。
    * 「claude が実際にどの env で動いているか」の事実はプロセス environ が
-   * 唯一の情報源なので、復元時のプロファイル補完フォールバックに使う。
+   * 唯一の情報源なので、復元時の設定ディレクトリ補完のフォールバックに使う。
    *
    * 失敗要因: no-session / unsupported-platform / tmux-failed (list-panes) /
    * invalid-pane-pid / proc-error (/proc 読み取り失敗) / not-set

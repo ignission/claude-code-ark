@@ -14,8 +14,6 @@ import {
   type Message,
   type MessageShortcut,
   type MessageType,
-  type Profile,
-  type RepoProfileLink,
   type Screen,
   type ScreenInput,
   type ScreenPatch,
@@ -23,7 +21,6 @@ import {
   type SessionStatus,
   type Todo,
   type WorktreeDisplayName,
-  type WorktreeProfileLink,
 } from "@ark/shared";
 import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
@@ -105,8 +102,6 @@ interface SessionRow {
   worktree_path: string;
   repo_path: string | null;
   status: string;
-  profile_id: string | null;
-  profile_config_dir: string | null;
   board_mcp_config_path: string | null;
   /** セッションで最後に開いた図（.claude/diagrams/*.diagram.html）の worktree 相対パス */
   last_diagram_path: string | null;
@@ -153,10 +148,6 @@ interface CreateSessionInput {
   readonly worktreePath: string;
   readonly repoPath?: string;
   readonly status: SessionStatus;
-  /** プロファイルID（未紐付けはnull/undefined） */
-  readonly profileId?: string | null;
-  /** 起動時に確定したプロファイルのconfigDir（profile_id とペア） */
-  readonly profileConfigDir?: string | null;
   /**
    * board MCP の per-session mcp-config ファイルのパス。
    * 稼働中の claude は起動時に渡された token を保持し続けるため、サーバー
@@ -247,8 +238,6 @@ export class SessionDatabase {
         worktree_id TEXT NOT NULL,
         worktree_path TEXT NOT NULL UNIQUE,
         status TEXT NOT NULL DEFAULT 'idle',
-        profile_id TEXT,
-        profile_config_dir TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
@@ -288,28 +277,6 @@ export class SessionDatabase {
       this.db.exec("ALTER TABLE sessions ADD COLUMN repo_path TEXT");
     } catch (e) {
       // カラムが既に存在する場合のみ無視、それ以外は再スロー
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.includes("duplicate column name")) {
-        throw e;
-      }
-    }
-
-    // マイグレーション: sessionsテーブルにprofile_id列を追加
-    // (server再起動後のセッション復元時に sessionProfiles Map を再構築するため)
-    try {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN profile_id TEXT");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.includes("duplicate column name")) {
-        throw e;
-      }
-    }
-
-    // マイグレーション: sessionsテーブルにprofile_config_dir列を追加
-    // (起動時のCLAUDE_CONFIG_DIRを記録し、profile.configDir変更を検出するため)
-    try {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN profile_config_dir TEXT");
-    } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes("duplicate column name")) {
         throw e;
@@ -380,54 +347,7 @@ export class SessionDatabase {
     // 既存のpetsテーブルを破棄（pet機能はサーバー側を廃止済み）
     this.db.exec("DROP TABLE IF EXISTS pets;");
 
-    // マイグレーション: 旧テーブル名 (account_profiles / repo_account_links) を
-    // 新名 (profiles / repo_profile_links) にリネーム。
-    // 旧コードからアップグレードしたDBでのみ成功し、新規DBや既にrename済みの
-    // ケースは catch で握り潰される。CREATE TABLE IF NOT EXISTS で fallback する。
-    try {
-      this.db.exec("ALTER TABLE account_profiles RENAME TO profiles");
-    } catch {
-      // 既にrename済み or 新規DB
-    }
-    try {
-      this.db.exec(
-        "ALTER TABLE repo_account_links RENAME TO repo_profile_links"
-      );
-    } catch {
-      // 既にrename済み or 新規DB
-    }
-    try {
-      this.db.exec(
-        "ALTER TABLE repo_profile_links RENAME COLUMN account_profile_id TO profile_id"
-      );
-    } catch {
-      // 既にrename済み or テーブル未作成
-    }
-
-    // CLAUDE_CONFIG_DIR プロファイル機能 (Linux限定) のテーブル
-    // - profiles: 各プロファイルの configDir (name と config_dir はそれぞれ UNIQUE)
-    // - repo_profile_links: リポジトリパスとプロファイルの紐付け (1:1)
-    // プロファイル削除時は CASCADE で紐付けも自動削除する
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS profiles (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        config_dir TEXT NOT NULL UNIQUE,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS repo_profile_links (
-        repo_path TEXT PRIMARY KEY,
-        profile_id TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS worktree_profile_links (
-        worktree_path TEXT PRIMARY KEY,
-        profile_id TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-      );
       CREATE TABLE IF NOT EXISTS worktree_display_names (
         worktree_path TEXT PRIMARY KEY,
         display_name TEXT NOT NULL,
@@ -438,14 +358,9 @@ export class SessionDatabase {
     // B-1 でコードから撤去した。既存 DB に残っている canvas_boards テーブルは
     // 意図的に DROP していない（使われなくなるだけで害はなく、稼働中 DB を
     // 誤って壊すリスクの方が大きいため）。新規 DB でも作成しない。
-
-    // マイグレーション: 既存DBにも config_dir の UNIQUE INDEX を追加。
-    // 旧スキーマ (UNIQUE なし) で起動していたインスタンスでも、複数プロファイル
-    // が同じconfigDirを指す状態を防ぐ。
-    // 既に重複データがあると失敗するが、起動を止めるべき不整合なので throw する。
-    this.db.exec(
-      "CREATE UNIQUE INDEX IF NOT EXISTS profiles_config_dir_unique ON profiles(config_dir)"
-    );
+    // 撤去したプロファイル切替の profiles / repo_profile_links /
+    // worktree_profile_links テーブルと sessions.profile_id / profile_config_dir 列も
+    // 同じ扱いにする。加えて、撤去前のコードへ戻したときに紐付けが残るようにもなる。
 
     // リモート画面 (SSH 越しの VNC)。vnc_password は平文で持つ
     // (単一ユーザー前提。data/ は gitignore 済み)
@@ -464,13 +379,6 @@ export class SessionDatabase {
         updated_at INTEGER NOT NULL
       )
     `);
-
-    // マイグレーション: 旧 status 列を削除（認証ダイアログ廃止）
-    try {
-      this.db.exec("ALTER TABLE profiles DROP COLUMN status");
-    } catch {
-      // 既に削除済み
-    }
 
     // メッセージショートカット（全リポジトリ共通の定型送信メッセージ）
     this.db.exec(`
@@ -561,8 +469,8 @@ export class SessionDatabase {
   createSession(session: CreateSessionInput): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       session.id,
@@ -570,8 +478,6 @@ export class SessionDatabase {
       session.worktreePath,
       session.repoPath ?? null,
       session.status,
-      session.profileId ?? null,
-      session.profileConfigDir ?? null,
       now,
       now
     );
@@ -580,23 +486,20 @@ export class SessionDatabase {
   /**
    * セッションをupsert（存在すれば更新、なければ作成）
    *
-   * worktree_pathのUNIQUE制約に基づき、競合時はid, worktree_id, status,
-   * profile_id, profile_config_dir を更新する
+   * worktree_pathのUNIQUE制約に基づき、競合時はid, worktree_id, status などを更新する
    *
    * @param session - セッション作成データ
    */
   upsertSession(session: CreateSessionInput): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, board_mcp_config_path, parent_worktree_path, parent_repo_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, board_mcp_config_path, parent_worktree_path, parent_repo_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worktree_path) DO UPDATE SET
         id = excluded.id,
         worktree_id = excluded.worktree_id,
         repo_path = COALESCE(excluded.repo_path, repo_path),
         status = excluded.status,
-        profile_id = excluded.profile_id,
-        profile_config_dir = excluded.profile_config_dir,
         board_mcp_config_path = excluded.board_mcp_config_path,
         -- A start without a parent (session:start etc.) must not erase the parent link of an existing row
         parent_worktree_path = COALESCE(excluded.parent_worktree_path, parent_worktree_path),
@@ -611,8 +514,6 @@ export class SessionDatabase {
       session.worktreePath,
       session.repoPath ?? null,
       session.status,
-      session.profileId ?? null,
-      session.profileConfigDir ?? null,
       session.boardMcpConfigPath ?? null,
       session.parentWorktreePath ?? null,
       session.parentRepoPath ?? null,
@@ -844,8 +745,6 @@ export class SessionDatabase {
       repoPath: row.repo_path ?? undefined,
       status: row.status as SessionStatus,
       createdAt: new Date(row.created_at),
-      profileId: row.profile_id,
-      profileConfigDir: row.profile_config_dir,
       boardMcpConfigPath: row.board_mcp_config_path,
       lastDiagramPath: row.last_diagram_path,
       parentWorktreePath: row.parent_worktree_path ?? null,
@@ -866,126 +765,6 @@ export class SessionDatabase {
       type: row.type as MessageType,
       timestamp: new Date(row.timestamp),
     };
-  }
-
-  // ============================================================
-  // プロファイルCRUD操作 (CLAUDE_CONFIG_DIR切替機能)
-  // ============================================================
-
-  /**
-   * profiles テーブルの行データ
-   */
-  private rowToProfile(row: {
-    id: string;
-    name: string;
-    config_dir: string;
-    created_at: number;
-    updated_at: number;
-  }): Profile {
-    return {
-      id: row.id,
-      name: row.name,
-      configDir: row.config_dir,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
-  }
-
-  /**
-   * 登録済みプロファイルを全件取得（作成順）
-   */
-  listProfiles(): Profile[] {
-    const stmt = this.db.prepare(
-      "SELECT * FROM profiles ORDER BY created_at ASC"
-    );
-    const rows = stmt.all() as Array<{
-      id: string;
-      name: string;
-      config_dir: string;
-      created_at: number;
-      updated_at: number;
-    }>;
-    return rows.map(row => this.rowToProfile(row));
-  }
-
-  /**
-   * IDでプロファイルを取得
-   */
-  getProfile(id: string): Profile | null {
-    const stmt = this.db.prepare("SELECT * FROM profiles WHERE id = ?");
-    const row = stmt.get(id) as
-      | {
-          id: string;
-          name: string;
-          config_dir: string;
-          created_at: number;
-          updated_at: number;
-        }
-      | undefined;
-    return row ? this.rowToProfile(row) : null;
-  }
-
-  /**
-   * 新規プロファイルを作成
-   *
-   * @throws name が既存と重複している場合（UNIQUE制約違反）
-   */
-  createProfile(input: { name: string; configDir: string }): Profile {
-    const id = nanoid();
-    const now = Date.now();
-    const stmt = this.db.prepare(`
-      INSERT INTO profiles (id, name, config_dir, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    stmt.run(id, input.name, input.configDir, now, now);
-    const created = this.getProfile(id);
-    if (!created) {
-      throw new Error(`Failed to create profile: ${id}`);
-    }
-    return created;
-  }
-
-  /**
-   * プロファイルの一部フィールドを更新
-   * undefined のフィールドはスキップ
-   */
-  updateProfile(
-    id: string,
-    patch: { name?: string; configDir?: string }
-  ): Profile {
-    const setClauses: string[] = [];
-    const params: Array<string | number> = [];
-    if (patch.name !== undefined) {
-      setClauses.push("name = ?");
-      params.push(patch.name);
-    }
-    if (patch.configDir !== undefined) {
-      setClauses.push("config_dir = ?");
-      params.push(patch.configDir);
-    }
-    setClauses.push("updated_at = ?");
-    params.push(Date.now());
-    params.push(id);
-    const stmt = this.db.prepare(
-      `UPDATE profiles SET ${setClauses.join(", ")} WHERE id = ?`
-    );
-    const result = stmt.run(...params);
-    if (result.changes === 0) {
-      throw new Error(`Profile not found: ${id}`);
-    }
-    const updated = this.getProfile(id);
-    if (!updated) {
-      throw new Error(`Profile not found after update: ${id}`);
-    }
-    return updated;
-  }
-
-  /**
-   * プロファイルを削除（紐付けはCASCADEで自動削除）
-   */
-  deleteProfile(id: string): void {
-    const stmt = this.db.prepare("DELETE FROM profiles WHERE id = ?");
-    stmt.run(id);
   }
 
   // ============================================================
@@ -1103,147 +882,6 @@ export class SessionDatabase {
 
   deleteScreen(id: string): void {
     this.db.prepare("DELETE FROM screens WHERE id = ?").run(id);
-  }
-
-  // ============================================================
-  // リポジトリ ↔ プロファイル紐付けCRUD操作
-  // ============================================================
-
-  /**
-   * すべてのリポジトリ紐付けを取得（クライアントの初期同期用）
-   */
-  listRepoProfileLinks(): RepoProfileLink[] {
-    const stmt = this.db.prepare(
-      "SELECT * FROM repo_profile_links ORDER BY updated_at DESC"
-    );
-    const rows = stmt.all() as Array<{
-      repo_path: string;
-      profile_id: string;
-      updated_at: number;
-    }>;
-    return rows.map(row => ({
-      repoPath: row.repo_path,
-      profileId: row.profile_id,
-      updatedAt: row.updated_at,
-    }));
-  }
-
-  /**
-   * リポジトリパスから紐付けを取得
-   */
-  getRepoProfileLink(repoPath: string): RepoProfileLink | null {
-    const stmt = this.db.prepare(
-      "SELECT * FROM repo_profile_links WHERE repo_path = ?"
-    );
-    const row = stmt.get(repoPath) as
-      | {
-          repo_path: string;
-          profile_id: string;
-          updated_at: number;
-        }
-      | undefined;
-    if (!row) return null;
-    return {
-      repoPath: row.repo_path,
-      profileId: row.profile_id,
-      updatedAt: row.updated_at,
-    };
-  }
-
-  /**
-   * リポジトリとプロファイルを紐付け（UPSERT）
-   */
-  setRepoProfileLink(repoPath: string, profileId: string): void {
-    const now = Date.now();
-    const stmt = this.db.prepare(`
-      INSERT INTO repo_profile_links (repo_path, profile_id, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(repo_path) DO UPDATE SET
-        profile_id = excluded.profile_id,
-        updated_at = excluded.updated_at
-    `);
-    stmt.run(repoPath, profileId, now);
-  }
-
-  /**
-   * リポジトリの紐付けを解除
-   */
-  removeRepoProfileLink(repoPath: string): void {
-    const stmt = this.db.prepare(
-      "DELETE FROM repo_profile_links WHERE repo_path = ?"
-    );
-    stmt.run(repoPath);
-  }
-
-  // ============================================================
-  // Worktree ↔ プロファイル紐付けCRUD操作
-  // worktree個別の紐付けが優先され、無い場合は repo_profile_links がデフォルト
-  // ============================================================
-
-  /**
-   * すべてのworktree紐付けを取得（クライアントの初期同期用）
-   */
-  listWorktreeProfileLinks(): WorktreeProfileLink[] {
-    const stmt = this.db.prepare(
-      "SELECT * FROM worktree_profile_links ORDER BY updated_at DESC"
-    );
-    const rows = stmt.all() as Array<{
-      worktree_path: string;
-      profile_id: string;
-      updated_at: number;
-    }>;
-    return rows.map(row => ({
-      worktreePath: row.worktree_path,
-      profileId: row.profile_id,
-      updatedAt: row.updated_at,
-    }));
-  }
-
-  /**
-   * worktreeパスから紐付けを取得
-   */
-  getWorktreeProfileLink(worktreePath: string): WorktreeProfileLink | null {
-    const stmt = this.db.prepare(
-      "SELECT * FROM worktree_profile_links WHERE worktree_path = ?"
-    );
-    const row = stmt.get(worktreePath) as
-      | {
-          worktree_path: string;
-          profile_id: string;
-          updated_at: number;
-        }
-      | undefined;
-    if (!row) return null;
-    return {
-      worktreePath: row.worktree_path,
-      profileId: row.profile_id,
-      updatedAt: row.updated_at,
-    };
-  }
-
-  /**
-   * worktreeとプロファイルを紐付け（UPSERT）
-   */
-  setWorktreeProfileLink(worktreePath: string, profileId: string): void {
-    const now = Date.now();
-    const stmt = this.db.prepare(`
-      INSERT INTO worktree_profile_links (worktree_path, profile_id, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(worktree_path) DO UPDATE SET
-        profile_id = excluded.profile_id,
-        updated_at = excluded.updated_at
-    `);
-    stmt.run(worktreePath, profileId, now);
-  }
-
-  /**
-   * worktreeの紐付けを解除
-   */
-  removeWorktreeProfileLink(worktreePath: string): void {
-    const stmt = this.db.prepare(
-      "DELETE FROM worktree_profile_links WHERE worktree_path = ?"
-    );
-    stmt.run(worktreePath);
   }
 
   // ============================================================

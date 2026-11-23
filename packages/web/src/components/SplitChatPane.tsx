@@ -156,7 +156,7 @@ interface SplitChatPaneProps {
    * 届いていない (画面を取れない、セッションが止まっている) ときは undefined
    */
   liveTail?: string;
-  /** セッションのプロファイルのプランの使用量。入力欄の横に出す。読めていなければ undefined */
+  /** セッションのプランの使用量。入力欄の横に出す。読めていなければ undefined */
   planLimits?: PlanLimits;
   /**
    * 帯を押したとき (端末の窓を開く)。渡さなければ帯を出さず、`liveTail` も使わない

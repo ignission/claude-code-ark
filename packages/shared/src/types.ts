@@ -79,10 +79,6 @@ export interface Session {
   repoPath?: string;
   status: SessionStatus;
   createdAt: Date;
-  /** 起動時に確定したプロファイルID（未紐付けはnull/undefined） */
-  profileId?: string | null;
-  /** 起動時に確定したプロファイルのconfigDir（configDir変更検出用） */
-  profileConfigDir?: string | null;
   /**
    * board MCP の per-session mcp-config ファイルのパス（サーバー内部用）。
    * サーバー再起動後に board token を registry へ復帰させるために使う。
@@ -147,7 +143,7 @@ export interface PlanLimitWindow {
   resetsAt: string | null;
 }
 
-/** セッションのプロファイルのプランの使用量。枠が無い、読めない、はその枠が null */
+/** セッションのプランの使用量。枠が無い、読めない、はその枠が null */
 export interface PlanLimits {
   fiveHour: PlanLimitWindow | null;
   sevenDay: PlanLimitWindow | null;
@@ -160,23 +156,6 @@ export interface ManagedSession extends Session {
   ttydPort: number | null;
   /** ttydのURL（未起動時はnull） */
   ttydUrl: string | null;
-  /** セッション起動時に確定したプロファイルID（未紐付けはnull/undefined） */
-  profileId?: string | null;
-  /** 現在のリポジトリ紐付けと不一致（再起動が必要） */
-  staleProfile?: boolean;
-}
-
-/**
- * Claude CLIの設定ディレクトリ (CLAUDE_CONFIG_DIR) プロファイル (Linux限定)
- * リポジトリ単位で別々のディレクトリを使い分けるための抽象化
- */
-export interface Profile {
-  id: string;
-  name: string;
-  /** 絶対パス。チルダはサーバ側で展開済 */
-  configDir: string;
-  createdAt: number;
-  updatedAt: number;
 }
 
 /**
@@ -246,27 +225,6 @@ export interface MessageShortcut {
 }
 
 /**
- * リポジトリとプロファイルの紐付け
- * 1リポジトリ=1プロファイル（多重紐付けは未サポート）。
- * worktree個別の紐付けが無いセッションのデフォルトとして使われる。
- */
-export interface RepoProfileLink {
-  repoPath: string;
-  profileId: string;
-  updatedAt: number;
-}
-
-/**
- * worktreeとプロファイルの紐付け
- * 1worktree=1プロファイル。指定された場合はリポジトリのデフォルトより優先される。
- */
-export interface WorktreeProfileLink {
-  worktreePath: string;
-  profileId: string;
-  updatedAt: number;
-}
-
-/**
  * worktreeのカスタム表示名
  * 未設定時はクライアント側で branch 名にフォールバックする。
  */
@@ -274,15 +232,6 @@ export interface WorktreeDisplayName {
   worktreePath: string;
   displayName: string;
   updatedAt: number;
-}
-
-/**
- * 実行環境の機能フラグ
- * クライアントは初期化時に受け取り、UI表示の可否を判断する
- */
-export interface SystemCapabilities {
-  /** プロファイル切替が利用可能か（Linux + claudeコマンド存在 で true） */
-  multiProfileSupported: boolean;
 }
 
 export type SessionStatus = "active" | "idle" | "error" | "stopped";
@@ -508,7 +457,7 @@ export interface ServerToClientEvents {
        */
       prStatus: SessionPrStatus | null;
       /**
-       * セッションのプロファイルのプランの使用量。読めない、まだ読んでいない、は null
+       * セッションのプランの使用量。読めない、まだ読んでいない、は null
        */
       planLimits: PlanLimits | null;
       timestamp: number;
@@ -560,11 +509,6 @@ export interface ServerToClientEvents {
     code?: string;
   }) => void;
 
-  // Usage取得
-  "usage:progress": (data: UsageProgress) => void;
-  "usage:complete": (report: UsageReport) => void;
-  "usage:error": (data: { message: string }) => void;
-
   // ファイルビューワー
   "file:updated": (data: { sessionId: string; filePath: string }) => void;
   /** 裏の Claude との会話が変わった (発話が増えた / 答え終えた / 失敗した) */
@@ -578,30 +522,12 @@ export interface ServerToClientEvents {
 
   // ブラウザセッション
 
-  // プロファイル切替 (Linux限定)
-  "system:capabilities": (caps: SystemCapabilities) => void;
-  "profile:list": (profiles: Profile[]) => void;
-  "repo:profile-links": (links: RepoProfileLink[]) => void;
-  "worktree:profile-links": (links: WorktreeProfileLink[]) => void;
-  "profile:created": (profile: Profile) => void;
-  "profile:updated": (profile: Profile) => void;
-  "profile:deleted": (data: { id: string }) => void;
-  "profile:error": (data: { message: string; code?: string }) => void;
-
   // リモート画面
   "screen:list": (screens: Screen[]) => void;
   "screen:created": (screen: Screen) => void;
   "screen:updated": (screen: Screen) => void;
   "screen:deleted": (data: { id: string }) => void;
   "screen:error": (data: { message: string; code?: string }) => void;
-  "repo:profile-changed": (data: {
-    repoPath: string;
-    profileId: string | null;
-  }) => void;
-  "worktree:profile-changed": (data: {
-    worktreePath: string;
-    profileId: string | null;
-  }) => void;
   "worktree:display-names": (names: WorktreeDisplayName[]) => void;
   "worktree:display-name-changed": (data: {
     worktreePath: string;
@@ -888,16 +814,6 @@ export interface ClientToServerEvents {
 
   // ブラウザセッション
 
-  // プロファイル切替 (Linux限定)
-  "profile:list": () => void;
-  "profile:create": (data: { name: string; configDir: string }) => void;
-  "profile:update": (data: {
-    id: string;
-    name?: string;
-    configDir?: string;
-  }) => void;
-  "profile:delete": (data: { id: string }) => void;
-
   // リモート画面
   "screen:list": () => void;
   "screen:create": (data: ScreenInput) => void;
@@ -913,20 +829,12 @@ export interface ClientToServerEvents {
     data: { id: string; text: string },
     callback: (result: ScreenPasteResult) => void
   ) => void;
-  "repo:set-profile": (data: {
-    repoPath: string;
-    profileId: string | null;
-  }) => void;
-  "worktree:set-profile": (data: {
-    worktreePath: string;
-    profileId: string | null;
-  }) => void;
   "worktree:set-display-name": (data: {
     worktreePath: string;
     /** null / 空文字でクリア（branch名にフォールバック） */
     displayName: string | null;
   }) => void;
-  "session:restart-with-profile": (data: { sessionId: string }) => void;
+  "session:restart": (data: { sessionId: string }) => void;
   /** 手動で休止にする (rested: true) / 休止から戻す (rested: false) */
   "session:rest": (data: { sessionId: string; rested: boolean }) => void;
 
@@ -939,9 +847,6 @@ export interface ClientToServerEvents {
     sortOrder?: number;
   }) => void;
   "shortcut:delete": (data: { id: string }) => void;
-
-  // Usage取得 (Linux + multiProfileSupported 限定)
-  "usage:request": () => void;
 
   // Bridge ダッシュボード
   /**
@@ -966,53 +871,6 @@ export interface ClientToServerEvents {
    */
   "session:grid:subscribe": () => void;
   "session:grid:unsubscribe": () => void;
-}
-
-/** Usage取得結果（プロファイル単位） */
-export interface UsageEntry {
-  profileId: string;
-  profileName: string;
-  configDir: string;
-  status: "ok" | "unauthenticated" | "timeout" | "error";
-  parsed?: {
-    sessionPercent: number;
-    weeklyAllPercent: number;
-    /**
-     * Per-model 集計が取得できなかった場合 null。
-     * - API rate limit (画面に「Per-model breakdown unavailable」表示)
-     * - claude 2.1.123 以降の新UIで Sonnet 区画がスクロール下方に押し出される
-     */
-    weeklySonnetPercent: number | null;
-    /** "8:20pm (Asia/Tokyo)" のような表示用文字列 */
-    sessionResets: string;
-    weeklyAllResets: string;
-    /** Sonnet 取得不可時は null。 */
-    weeklySonnetResets: string | null;
-    /** "$0.0000" のような表示用文字列 */
-    totalCost?: string;
-    /** "7s" のような表示用文字列 */
-    wallDuration?: string;
-  };
-  /** デバッグ用（NODE_ENV=development 時のみ含める） */
-  rawOutput?: string;
-  errorMessage?: string;
-}
-
-/** Usage取得結果（全プロファイル分） */
-export interface UsageReport {
-  entries: UsageEntry[];
-  /** UNIXタイムスタンプ(ms) */
-  collectedAt: number;
-}
-
-/** Usage取得進捗 */
-export interface UsageProgress {
-  /** 現在処理中のプロファイル名 */
-  currentProfileName: string;
-  /** 完了済み件数 */
-  completed: number;
-  /** 全体件数 */
-  total: number;
 }
 
 // ============================================================

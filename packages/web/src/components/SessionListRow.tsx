@@ -1,7 +1,7 @@
 /**
  * SessionListRow - セッション一覧の1行 (PCサイドバーの行 / モバイル一覧のカード)
  *
- * 1行目は「状態チップ + 主ラベル」、2行目は「プロファイル + PRの札 + ブランチ · プレビュー文」。
+ * 1行目は「状態チップ + 主ラベル」、2行目は「PRの札 + ブランチ · プレビュー文」。
  * PRの札はチェックの結果 (✓ / ✕ / 待ち) かマージ済み・クローズを出し、押すとPRを開く。
  * 色を付けるのは落ちたときだけ (セッションの状態の色は使わない)。
  * 主ラベルは表示名があれば表示名、無ければリポジトリ名。行のtitleはリポジトリの絶対パス。
@@ -10,14 +10,8 @@
  * (押すと親を開く)。親の行には子の数を出す。
  */
 
-import type { Profile, SessionPrStatus } from "@ark/shared";
-import {
-  CornerDownRight,
-  Ellipsis,
-  MoreVertical,
-  RotateCw,
-  TriangleAlert,
-} from "lucide-react";
+import type { SessionPrStatus } from "@ark/shared";
+import { CornerDownRight, Ellipsis, MoreVertical } from "lucide-react";
 import {
   Fragment,
   type KeyboardEvent,
@@ -51,32 +45,6 @@ const PR_BADGE_TONE: Readonly<Record<PrBadgeTone, string>> = {
   muted: "bg-muted text-muted-foreground",
 };
 
-export interface SessionRowProfile {
-  name: string;
-  /** worktree個別の上書きならtrue (リポジトリの既定を継承していればfalse) */
-  individual: boolean;
-}
-
-/** 行に出すプロファイル。未割り当て (~/.claude) や機能が無効なときはnull */
-export function resolveSessionRowProfile(input: {
-  enabled: boolean;
-  worktreePath: string | null;
-  repoPath: string;
-  profileById: ReadonlyMap<string, Profile>;
-  repoProfileLinks?: ReadonlyMap<string, string>;
-  worktreeProfileLinks?: ReadonlyMap<string, string>;
-}): SessionRowProfile | null {
-  if (!input.enabled) return null;
-  const worktreeProfileId = input.worktreePath
-    ? (input.worktreeProfileLinks?.get(input.worktreePath) ?? null)
-    : null;
-  const profileId =
-    worktreeProfileId ?? input.repoProfileLinks?.get(input.repoPath) ?? null;
-  const profile = profileId ? input.profileById.get(profileId) : undefined;
-  if (!profile) return null;
-  return { name: profile.name, individual: worktreeProfileId !== null };
-}
-
 export interface SessionListRowProps {
   /** "sidebar" = PCサイドバーの行、"card" = モバイル一覧のカード */
   variant: "sidebar" | "card";
@@ -95,10 +63,6 @@ export interface SessionListRowProps {
   parentLabel?: string | null;
   /** 親を開く。親のセッションが無ければ undefined (名前だけ出す) */
   onOpenParent?: () => void;
-  /** プロファイルのチップ。未割り当てならnull */
-  profile: SessionRowProfile | null;
-  /** 起動後にプロファイルの割り当てが変わった (再起動が要る) */
-  staleProfile: boolean;
   selected: boolean;
   /** 表示名を編集中か。どの行を編集するかは一覧が持つ */
   editing: boolean;
@@ -120,8 +84,6 @@ export function SessionListRow({
   childCount = 0,
   parentLabel = null,
   onOpenParent,
-  profile,
-  staleProfile,
   selected,
   editing,
   onEditingChange,
@@ -347,8 +309,7 @@ export function SessionListRow({
               </span>
             )}
           </div>
-          {(profile ||
-            badge ||
+          {(badge ||
             todoCount > 0 ||
             childCount > 0 ||
             parentLabel !== null ||
@@ -383,19 +344,6 @@ export function SessionListRow({
                   />
                   <span className="truncate">{parentLabel}</span>
                 </button>
-              )}
-              {profile && (
-                <span
-                  data-testid="session-row-profile"
-                  className="inline-flex h-5 max-w-[9rem] shrink-0 items-center gap-1 rounded-sm bg-muted px-2 text-xs font-medium text-muted-foreground"
-                >
-                  <span className="truncate">{profile.name}</span>
-                  {profile.individual && (
-                    <span className="shrink-0">
-                      {m.session.row.individualProfile}
-                    </span>
-                  )}
-                </span>
               )}
               {badge && prStatus && (
                 <a
@@ -486,27 +434,6 @@ export function SessionListRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {staleProfile && (
-        <div className="mt-2 flex items-center gap-1.5">
-          <span
-            className="inline-flex h-6 items-center gap-1 rounded-sm bg-status-awaiting/15 px-2 text-xs font-semibold text-status-awaiting"
-            title={m.session.row.staleProfileHint}
-          >
-            <TriangleAlert className="size-3.5" aria-hidden="true" />
-            {m.session.row.staleProfile}
-          </span>
-          {menu.onRestart && (
-            <button
-              type="button"
-              onClick={menu.onRestart}
-              className="inline-flex h-6 items-center gap-1 rounded-sm bg-status-awaiting/15 px-2 text-xs font-semibold text-status-awaiting transition-colors hover:bg-status-awaiting/25"
-            >
-              <RotateCw className="size-3.5" aria-hidden="true" />
-              {m.session.actions.restart}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 

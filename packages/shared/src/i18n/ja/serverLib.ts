@@ -44,13 +44,4 @@ export const serverLib = {
     invalidInput: "入力が不正です",
     duplicateName: "同じ名前の画面が既に登録されています",
   },
-  /** 使用量 (/usage) の取得の失敗 */
-  usage: {
-    launchSendFailed: (stderr: string) =>
-      `claude起動コマンド送信失敗 (stderr: ${stderr})`,
-    launchNotDetected: "claude CLIの起動を検出できませんでした",
-    usageSendFailed: "/usage 送信に失敗しました",
-    usageResultTimeout: "/usage 結果が時間内に表示されませんでした",
-    usageParseFailed: "/usage 出力のパースに失敗しました",
-  },
 };

@@ -19,7 +19,6 @@ import {
 } from "@/components/MobileLayout";
 import { NewTaskDialog, type NewTaskInitial } from "@/components/NewTaskDialog";
 import { NotificationPermissionButton } from "@/components/NotificationPermissionButton";
-import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
 import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { ScreenManagerDialog } from "@/components/ScreenManagerDialog";
@@ -208,18 +207,9 @@ export default function Dashboard() {
     deleteScreen,
     requestScreenCredentials,
     setScreenClipboard,
-    profiles,
-    repoProfileLinks,
-    worktreeProfileLinks,
-    capabilities,
-    createProfile,
-    updateProfile,
-    deleteProfile,
-    setRepoProfile,
-    setWorktreeProfile,
     worktreeDisplayNames,
     setWorktreeDisplayName,
-    restartSessionWithProfile,
+    restartSession,
     setSessionRested,
     messageShortcuts,
     createShortcut,
@@ -653,7 +643,6 @@ export default function Dashboard() {
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
-  const [showProfileManager, setShowProfileManager] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
   // PCのサイドバー下部とAboutに出すCPU/MEM/DISK用。サイドバーに常に出すのでPCでは
   // 常に購読する。モバイルにサイドバーは無いが、Aboutを開いたままモバイル幅になっても
@@ -681,9 +670,9 @@ export default function Dashboard() {
 
   const handleRestartSession = useCallback(
     (sessionId: string) => {
-      restartSessionWithProfile(sessionId);
+      restartSession(sessionId);
     },
-    [restartSessionWithProfile]
+    [restartSession]
   );
 
   // 再起動完了通知 (旧ID→新ID) による選択追従。
@@ -1292,13 +1281,6 @@ export default function Dashboard() {
           )}
           worktreeDisplayNames={worktreeDisplayNames}
           onSetWorktreeDisplayName={setWorktreeDisplayName}
-          capabilities={capabilities}
-          profiles={profiles}
-          repoProfileLinks={repoProfileLinks}
-          worktreeProfileLinks={worktreeProfileLinks}
-          onSetRepoProfile={setRepoProfile}
-          onSetWorktreeProfile={setWorktreeProfile}
-          onOpenProfileManager={() => setShowProfileManager(true)}
           onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
           onRemoveRepo={handleRemoveRepo}
           notificationControl={notificationControl}
@@ -1326,10 +1308,6 @@ export default function Dashboard() {
               sessionTodoCounts={sessionTodoCounts}
               selectedSessionId={selectedSessionId}
               worktreeDisplayNames={worktreeDisplayNames}
-              capabilities={capabilities}
-              profiles={profiles}
-              repoProfileLinks={repoProfileLinks}
-              worktreeProfileLinks={worktreeProfileLinks}
               notificationsSupported={sessionNotifications.supported}
               isSessionNotificationEnabled={isSessionNotificationEnabled}
               onOpenSession={handleSelectSession}
@@ -1344,9 +1322,6 @@ export default function Dashboard() {
               onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
               onSelectRepoGrid={handleSelectRepoGrid}
               onRemoveRepo={handleRemoveRepo}
-              onSetRepoProfile={setRepoProfile}
-              onSetWorktreeProfile={setWorktreeProfile}
-              onOpenProfileManager={() => setShowProfileManager(true)}
               onNewSession={handleNewSession}
               onNewTask={handleNewTask}
               onSplitTask={handleSplitTask}
@@ -1803,18 +1778,6 @@ export default function Dashboard() {
         onStartTask={startTask}
         onStarted={handleTaskStarted}
       />
-
-      {/* プロファイル管理 (Linux限定) */}
-      {capabilities.multiProfileSupported && (
-        <ProfileManagerDialog
-          open={showProfileManager}
-          onOpenChange={setShowProfileManager}
-          profiles={profiles}
-          onCreate={createProfile}
-          onUpdate={updateProfile}
-          onDelete={deleteProfile}
-        />
-      )}
 
       <ScreenManagerDialog
         open={showScreenManager}

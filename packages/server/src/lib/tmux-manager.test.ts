@@ -1,5 +1,5 @@
 /**
- * tmux-manager createSession optionsの後方互換テスト
+ * tmux-manager の createSession と入出力のテスト
  *
  * spawnSync / execSync をモックして、tmuxへ渡す引数を直接検証する。
  */
@@ -81,7 +81,7 @@ function findCommandSendKeysArgs(): string[] | undefined {
   return undefined;
 }
 
-describe("TmuxManager.createSession - options互換", () => {
+describe("TmuxManager.createSession", () => {
   let manager: TmuxManager;
 
   beforeEach(() => {
@@ -103,7 +103,7 @@ describe("TmuxManager.createSession - options互換", () => {
     manager = new TmuxManager();
   });
 
-  it("optionsを省略した場合、既存と同じargsでtmux new-sessionが呼ばれる", async () => {
+  it("決まったargsでtmux new-sessionが呼ばれる", async () => {
     const session = await manager.createSession("/path/to/worktree");
 
     const args = findNewSessionArgs();
@@ -123,8 +123,8 @@ describe("TmuxManager.createSession - options互換", () => {
       "NODE_ENV=",
     ]);
 
-    // send-keysにclaudeが渡される。プロファイル未指定なので、tmux サーバー
-    // env からの CLAUDE_CONFIG_DIR 継承を断つ unset が前置される
+    // send-keysにclaudeが渡される。tmux サーバー env からの
+    // CLAUDE_CONFIG_DIR 継承を断つ unset が常に前置される
     const sendKeys = findCommandSendKeysArgs();
     expect(sendKeys).toBeDefined();
     expect(sendKeys).toEqual([
@@ -178,104 +178,7 @@ describe("TmuxManager.createSession - options互換", () => {
     expect(opts?.timeout).toBeGreaterThan(0);
   });
 
-  it("options.envで -e KEY=VALUE が追加される", async () => {
-    await manager.createSession("/path/to/worktree", {
-      env: { FOO: "bar", BAZ: "qux" },
-    });
-
-    const args = findNewSessionArgs();
-    if (!args) throw new Error("new-session args not found");
-    // ベースの -e CLAUDECODE= -e CLAUDE_CODE_NO_FLICKER=1 に加えて -e FOO=bar -e BAZ=qux
-    expect(args).toContain("-e");
-    expect(args).toContain("FOO=bar");
-    expect(args).toContain("BAZ=qux");
-    expect(args).toContain("CLAUDECODE=");
-    expect(args).toContain("CLAUDE_CODE_NO_FLICKER=1");
-
-    // 順序: 既存の -e が先、追加 envが後
-    const fooIdx = args.indexOf("FOO=bar");
-    const bazIdx = args.indexOf("BAZ=qux");
-    const flickerIdx = args.indexOf("CLAUDE_CODE_NO_FLICKER=1");
-    expect(fooIdx).toBeGreaterThan(flickerIdx);
-    expect(bazIdx).toBeGreaterThan(flickerIdx);
-
-    // 各 KEY=VALUE の直前は -e
-    expect(args[fooIdx - 1]).toBe("-e");
-    expect(args[bazIdx - 1]).toBe("-e");
-  });
-
-  it("NODE_ENV= でリセットされ、options.env で明示上書きすれば last-wins で反映される", async () => {
-    // tmux の -e は同じキーが複数指定された場合 last-wins で評価される (man tmux)。
-    // デフォルトでベースの -e NODE_ENV= (空文字) が入り、その後ろに
-    // 利用者が options.env で NODE_ENV=test を指定した場合は last-wins で test が
-    // 採用される。これにより、特殊なテスト用セッションでは値を上書きできる。
-    await manager.createSession("/path/to/worktree", {
-      env: { NODE_ENV: "test" },
-    });
-
-    const args = findNewSessionArgs();
-    if (!args) throw new Error("new-session args not found");
-
-    // ベースの -e NODE_ENV= が含まれる
-    const baseNodeEnvIdx = args.indexOf("NODE_ENV=");
-    expect(baseNodeEnvIdx).toBeGreaterThan(-1);
-    expect(args[baseNodeEnvIdx - 1]).toBe("-e");
-
-    // 利用者指定の -e NODE_ENV=test が後に追加される
-    const overrideIdx = args.indexOf("NODE_ENV=test");
-    expect(overrideIdx).toBeGreaterThan(baseNodeEnvIdx);
-    expect(args[overrideIdx - 1]).toBe("-e");
-  });
-
-  it("options.namePrefix でセッション名のプレフィックスが変わる", async () => {
-    const session = await manager.createSession("/path/to/worktree", {
-      namePrefix: "arklogin-",
-      autoDiscover: false,
-    });
-
-    const args = findNewSessionArgs();
-    if (!args) throw new Error("new-session args not found");
-    // -s arklogin-testid01
-    const sIdx = args.indexOf("-s");
-    expect(args[sIdx + 1]).toBe("arklogin-testid01");
-    expect(session.tmuxSessionName).toBe("arklogin-testid01");
-  });
-
-  it("options.autoDiscover=falseのとき this.sessionsに登録されず、session:createdも発火しない", async () => {
-    const createdListener = vi.fn();
-    manager.on("session:created", createdListener);
-
-    const session = await manager.createSession("/path/to/worktree", {
-      namePrefix: "arklogin-",
-      autoDiscover: false,
-    });
-
-    // sessionsマップに入っていない
-    expect(manager.getSession(session.id)).toBeUndefined();
-    expect(manager.getAllSessions()).toHaveLength(0);
-
-    // イベントが発火していない
-    expect(createdListener).not.toHaveBeenCalled();
-  });
-
-  it("options.commandLine で send-keysに送られるコマンドが差し替わる", async () => {
-    await manager.createSession("/path/to/worktree", {
-      commandLine: "claude /login",
-    });
-
-    const sendKeys = findCommandSendKeysArgs();
-    expect(sendKeys).toBeDefined();
-    // commandLine引数がそのまま渡る
-    expect(sendKeys).toEqual([
-      "send-keys",
-      "-t",
-      "ark-testid01",
-      "claude /login",
-      "Enter",
-    ]);
-  });
-
-  it("setSkipPermissions(true) かつ commandLine省略時は --dangerously-skip-permissions が付く（既存挙動）", async () => {
+  it("setSkipPermissions(true) なら --dangerously-skip-permissions が付く", async () => {
     manager.setSkipPermissions(true);
     await manager.createSession("/path/to/worktree");
 
@@ -346,16 +249,6 @@ describe("TmuxManager.createSession - options互換", () => {
     if (!sendKeys) throw new Error("send-keys args not found");
     expect(sendKeys[3]).not.toContain("--mcp-config");
     expect(sendKeys[3]).not.toContain("--strict-mcp-config");
-  });
-
-  it("options.env に CLAUDE_CONFIG_DIR がある場合 (プロファイル) は unset を前置しない", async () => {
-    await manager.createSession("/path/to/worktree", {
-      env: { CLAUDE_CONFIG_DIR: "/home/user/.claude-work" },
-    });
-
-    const sendKeys = findCommandSendKeysArgs();
-    if (!sendKeys) throw new Error("send-keys args not found");
-    expect(sendKeys[3]).toBe("claude");
   });
 
   it("resolveClaudePath が絶対パスを返したら send-keys に POSIX single-quote 付きで渡る (issue #186)", async () => {

@@ -39,12 +39,4 @@ export const serverLib: Messages["serverLib"] = {
     invalidInput: "Invalid input",
     duplicateName: "A screen with the same name already exists",
   },
-  usage: {
-    launchSendFailed: stderr =>
-      `Failed to send the claude launch command (stderr: ${stderr})`,
-    launchNotDetected: "Could not detect that the claude CLI started",
-    usageSendFailed: "Failed to send /usage",
-    usageResultTimeout: "The /usage result did not appear in time",
-    usageParseFailed: "Failed to parse the /usage output",
-  },
 };
