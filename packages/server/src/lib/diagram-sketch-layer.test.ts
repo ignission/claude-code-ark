@@ -77,8 +77,11 @@ describe("手書きの層", () => {
     expect(source).toContain("return {x:0,y:0,w:docWidth,h:docHeight};");
     expect(source).toContain("Math.sqrt(MAX_COPY_PIXELS/(crop.w*crop.h))");
     expect(source).toContain(
-      'if(copying||sending){port.postMessage({type:"ark:diagram-copy-error"});return;}'
+      'if(copying||sending){port.postMessage({type:"ark:diagram-copy-error",id:id});return;}'
     );
+    // 返事には頼まれたときの番号を付ける
+    expect(source).toContain("copyPicture(data.id)");
+    expect(source).toContain("message.id=id;");
   });
 
   it("</body> の直前へ1回だけ入れる", () => {

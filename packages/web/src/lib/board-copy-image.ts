@@ -10,22 +10,27 @@
 
 const PNG_PREFIX = "data:image/png;base64,";
 
+/** id は親がコピーを頼んだときに付けた番号。層は同じ番号を付けて返す */
 export type DiagramCopyMessage =
-  | { kind: "picture"; dataUrl: string }
-  | { kind: "error" };
+  | { kind: "picture"; id: unknown; dataUrl: string }
+  | { kind: "error"; id: unknown };
 
 /** 層が返す画像 (ark:diagram-copy) か失敗 (ark:diagram-copy-error) を読む。どちらでもなければ null */
 export function readDiagramCopyMessage(
   data: unknown
 ): DiagramCopyMessage | null {
   if (typeof data !== "object" || data === null) return null;
-  const { type, dataUrl } = data as { type?: unknown; dataUrl?: unknown };
-  if (type === "ark:diagram-copy-error") return { kind: "error" };
+  const { type, id, dataUrl } = data as {
+    type?: unknown;
+    id?: unknown;
+    dataUrl?: unknown;
+  };
+  if (type === "ark:diagram-copy-error") return { kind: "error", id };
   if (type !== "ark:diagram-copy") return null;
   if (typeof dataUrl !== "string" || !dataUrl.startsWith(PNG_PREFIX)) {
-    return { kind: "error" };
+    return { kind: "error", id };
   }
-  return { kind: "picture", dataUrl };
+  return { kind: "picture", id, dataUrl };
 }
 
 export function pngDataUrlToBlob(dataUrl: string): Blob {

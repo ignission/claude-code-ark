@@ -332,11 +332,13 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
   }
   // "Copy as image" in the parent's toolbar: the whole board, strokes included. The parent
   // writes it to the clipboard (this sandboxed frame cannot)
-  function copyPicture(){
+  // The reply carries the request's id: a reply that comes after the parent gave up on the
+  // request must not answer a later one
+  function copyPicture(id){
     if(!port)return;
-    if(copying||sending){port.postMessage({type:"ark:diagram-copy-error"});return;}
+    if(copying||sending){port.postMessage({type:"ark:diagram-copy-error",id:id});return;}
     copying=true;
-    var reply=function(message){copying=false;if(port)port.postMessage(message);};
+    var reply=function(message){copying=false;message.id=id;if(port)port.postMessage(message);};
     probeImages(function(){
       capture(function(docWidth,docHeight){return {x:0,y:0,w:docWidth,h:docHeight};},function(crop){
         return Math.min(2,MAX_COPY_EDGE/Math.max(crop.w,crop.h),Math.sqrt(MAX_COPY_PIXELS/(crop.w*crop.h)));
@@ -426,7 +428,7 @@ export const SKETCH_LAYER = `<script id="${DIAGRAM_SKETCH_LAYER_MARKER}">
         for(var key in labels)if(typeof data.labels[key]==="string")labels[key]=data.labels[key];
         sync();
       }else if(data.type==="ark:diagram-copy-request"){
-        copyPicture();
+        copyPicture(data.id);
       }else if(data.type==="ark:diagram-sketch-result"){
         // The parent attached the picture to the chat input: the strokes have done their job
         sending=false;

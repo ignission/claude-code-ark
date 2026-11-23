@@ -11,22 +11,20 @@ import {
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
 
 describe("readDiagramCopyMessage", () => {
-  it("画像と失敗を読み、ほかのメッセージは null にする", () => {
+  it("画像と失敗を、頼んだときの番号と一緒に読み、ほかのメッセージは null にする", () => {
     expect(
-      readDiagramCopyMessage({ type: "ark:diagram-copy", dataUrl: PNG })
-    ).toEqual({
-      kind: "picture",
-      dataUrl: PNG,
-    });
-    expect(readDiagramCopyMessage({ type: "ark:diagram-copy-error" })).toEqual({
-      kind: "error",
-    });
+      readDiagramCopyMessage({ type: "ark:diagram-copy", id: 2, dataUrl: PNG })
+    ).toEqual({ kind: "picture", id: 2, dataUrl: PNG });
+    expect(
+      readDiagramCopyMessage({ type: "ark:diagram-copy-error", id: 3 })
+    ).toEqual({ kind: "error", id: 3 });
     expect(
       readDiagramCopyMessage({
         type: "ark:diagram-copy",
+        id: 4,
         dataUrl: "data:text/html,x",
       })
-    ).toEqual({ kind: "error" });
+    ).toEqual({ kind: "error", id: 4 });
     expect(readDiagramCopyMessage({ type: "ark:diagram-sketch" })).toBeNull();
     expect(readDiagramCopyMessage(null)).toBeNull();
   });

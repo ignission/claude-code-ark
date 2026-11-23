@@ -62,6 +62,8 @@ type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 const COPY_IMAGE_TIMEOUT_MS = 20_000;
 
 interface PendingCopy {
+  /** 層へ送った番号。返ってきた画像がこの頼みへの返事かを見分ける */
+  id: number;
   resolve: (dataUrl: string) => void;
   reject: (reason: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -435,6 +437,7 @@ export function DiagramPane({
   const [copyingImage, setCopyingImage] = useState(false);
   // 層に頼んで、まだ返っていないコピーの画像。図が読み直されたら返らないので失敗にする
   const pendingCopyRef = useRef<PendingCopy | null>(null);
+  const copyIdRef = useRef(0);
   const settleCopy = useCallback((dataUrl: string | null) => {
     const pending = pendingCopyRef.current;
     if (!pending) return;
@@ -697,7 +700,10 @@ export function DiagramPane({
         }
         const copy = readDiagramCopyMessage(event.data);
         if (copy) {
-          settleCopy(copy.kind === "picture" ? copy.dataUrl : null);
+          // 諦めたあとに届いた、前の頼みへの返事は捨てる
+          if (copy.id === pendingCopyRef.current?.id) {
+            settleCopy(copy.kind === "picture" ? copy.dataUrl : null);
+          }
           return;
         }
         const image = readDiagramImageMessage(event.data);
@@ -790,11 +796,13 @@ export function DiagramPane({
   const handleCopyImage = useCallback(() => {
     const port = portRef.current;
     if (!port || !relPath || pendingCopyRef.current) return;
+    copyIdRef.current += 1;
+    const id = copyIdRef.current;
     const picture = new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => settleCopy(null), COPY_IMAGE_TIMEOUT_MS);
-      pendingCopyRef.current = { resolve, reject, timer };
+      pendingCopyRef.current = { id, resolve, reject, timer };
     }).then(pngDataUrlToBlob);
-    port.postMessage({ type: "ark:diagram-copy-request" });
+    port.postMessage({ type: "ark:diagram-copy-request", id });
     setCopyingImage(true);
     void copyImageToClipboard(picture, diagramImageFileName(relPath)).then(
       result => {
