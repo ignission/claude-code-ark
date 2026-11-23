@@ -123,6 +123,8 @@ export const session: Messages["session"] = {
     rename: "Rename",
     muteNotifications: "Turn off notifications",
     unmuteNotifications: "Turn on notifications",
+    rest: "Move to resting",
+    unrest: "Move back from resting",
     worktreeProfile: "Profile for this worktree",
     inheritRepoProfile: (profileName: string | null) =>
       `Inherit from repository (${profileName ?? "default"})`,

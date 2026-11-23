@@ -613,6 +613,114 @@ describe("SessionSectionListの並べ方", () => {
   });
 });
 
+describe("SessionSectionListの手動の休止", () => {
+  function sessionsWithRested(restedIds: string[]) {
+    return new Map(
+      Array.from(sessions, ([id, session]) => [
+        id,
+        restedIds.includes(id) ? { ...session, restedAt: 1_000 } : session,
+      ])
+    );
+  }
+
+  it("手動で休止にした行は、状態に関係なく休止中に並べ、あなたの番の件数から外す", () => {
+    const onYourTurnCountChange = vi.fn();
+    const { container } = mountList(
+      listProps({
+        sessions: sessionsWithRested(["session-a"]),
+        sessionStatuses: statusesOf("IDLE", "TOOL", "AWAITING"),
+        onYourTurnCountChange,
+      })
+    );
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:c",
+      "# 作業中",
+      "wt:b",
+      "# 休止中",
+      "wt:a",
+    ]);
+    expect(onYourTurnCountChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it("「休止にする」はあなたの番の行にだけ出し、手動で休止にした行には「休止から戻す」を出す", () => {
+    const onSetSessionRested = vi.fn();
+    mountList(
+      listProps({
+        sessions: sessionsWithRested(["session-c"]),
+        sessionStatuses: statusesOf("IDLE", "TOOL", "IDLE"),
+        onSetSessionRested,
+      })
+    );
+
+    expect(menuOf("wt:a").rest?.rested).toBe(false);
+    expect(menuOf("wt:b").rest).toBeUndefined();
+    expect(menuOf("wt:c").rest?.rested).toBe(true);
+
+    act(() => menuOf("wt:a").rest?.onChange(true));
+    act(() => menuOf("wt:c").rest?.onChange(false));
+    expect(onSetSessionRested).toHaveBeenNthCalledWith(1, "session-a", true);
+    expect(onSetSessionRested).toHaveBeenNthCalledWith(2, "session-c", false);
+  });
+
+  it("一覧の中にフォーカスがあっても、メニューで休止にした行は休止中へ動かす", () => {
+    const onSetSessionRested = vi.fn();
+    const props = listProps({
+      sessionStatuses: statusesOf("IDLE", "TOOL", "IDLE"),
+      onSetSessionRested,
+    });
+    const { container, rerender } = mountList(props);
+    const menuButtonA = rowElementOf(
+      container,
+      "wt:a"
+    ).querySelector<HTMLButtonElement>(
+      'button[aria-label="app (feature/a) のメニュー"]'
+    );
+    act(() => menuButtonA?.focus());
+
+    act(() => menuOf("wt:a").rest?.onChange(true));
+    expect(onSetSessionRested).toHaveBeenCalledWith("session-a", true);
+    // サーバーから session:updated が届いた
+    rerender({ ...props, sessions: sessionsWithRested(["session-a"]) });
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:c",
+      "# 作業中",
+      "wt:b",
+      "# 休止中",
+      "wt:a",
+    ]);
+
+    // 動いたあとは保留に戻る: フォーカスが残る間は、ほかの状態の変化で行が動かない
+    rerender({
+      ...props,
+      sessions: sessionsWithRested(["session-a"]),
+      sessionStatuses: statusesOf("IDLE", "AWAITING", "IDLE"),
+    });
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:c",
+      "# 作業中",
+      "wt:b",
+      "# 休止中",
+      "wt:a",
+    ]);
+  });
+
+  it("状態だけで休止中にいる行には、休止の項目を出さない", () => {
+    mountList(
+      listProps({
+        sessionStatuses: statusesOf("IDLE", "TOOL", "READY"),
+        onSetSessionRested: vi.fn(),
+      })
+    );
+
+    expect(menuOf("wt:c").rest).toBeUndefined();
+  });
+});
+
 describe("SessionSectionListの行メニューの配線", () => {
   it("「表示名を変更」でその行を編集にし、Enterでworktreeのパスと名前を保存する", () => {
     const onSetWorktreeDisplayName = vi.fn();

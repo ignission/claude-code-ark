@@ -126,6 +126,11 @@ import {
   normalizeRequestedFilePath,
 } from "./lib/session-file-download.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
+import {
+  handleSessionRest,
+  type SessionRestDeps,
+  wakeRestedSessions,
+} from "./lib/session-rest.js";
 import { listSlashCommands } from "./lib/slash-command-scanner.js";
 import { SPA_FALLBACK_ROUTE_PATTERN } from "./lib/spa-fallback.js";
 import {
@@ -145,6 +150,7 @@ import {
   createTodoHandlers,
   recordStartedForCreatedWorktree,
 } from "./lib/todo-handlers.js";
+import { hasConversationSince } from "./lib/transcript-conversation-since.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { UsageCollector } from "./lib/usage-collector.js";
 import { formatVoiceDiagnostic } from "./lib/voice-diagnostic.js";
@@ -431,14 +437,46 @@ export async function startServer(
   );
   planLimitsCollector.start();
 
+  // 手動の休止 (lib/session-rest.ts)。セッションの組み立ては orchestrator に任せる
+  const sessionRestDeps: SessionRestDeps = {
+    getRestedSessions: () => db.getRestedSessions(),
+    clearRestedAtIfMatches: (sessionId, restedAt) =>
+      db.clearSessionRestedAtIfMatches(sessionId, restedAt),
+    updateRestedAt: (sessionId, restedAt) =>
+      db.updateSessionRestedAt(sessionId, restedAt),
+    getSession: sessionId => sessionOrchestrator.getSession(sessionId),
+    hasConversationSince: (sessionId, since) => {
+      const worktreePath =
+        sessionOrchestrator.getSessionWorktreePath(sessionId);
+      if (!worktreePath) return false;
+      return hasConversationSince(
+        worktreePath,
+        sessionOrchestrator.getSessionConfigDir(sessionId),
+        since
+      );
+    },
+    emitUpdated: session => io.emit("session:updated", session),
+  };
+
   const withPrStatus = (
     previews: ReturnType<typeof sessionOrchestrator.getAllPreviews>
-  ) =>
-    previews.map(preview => ({
+  ) => {
+    // 会話が動いた休止中のセッションを休止から外す。previews を配る前に済ませ、
+    // 外したことを同じ周回の session:updated で知らせる
+    try {
+      wakeRestedSessions(previews, sessionRestDeps);
+    } catch (err) {
+      console.error(
+        "[Rest] Failed to wake rested sessions:",
+        getErrorMessage(err)
+      );
+    }
+    return previews.map(preview => ({
       ...preview,
       prStatus: prStatusCollector?.get(preview.sessionId) ?? null,
       planLimits: planLimitsCollector.get(configDirOf(preview.sessionId)),
     }));
+  };
 
   // ===== Usage取得 =====
   const usageCollector = new UsageCollector();
@@ -3399,6 +3437,14 @@ export async function startServer(
           sessionId,
           error: getErrorMessage(e),
         });
+      }
+    });
+
+    socket.on("session:rest", (data: unknown) => {
+      try {
+        handleSessionRest(data, sessionRestDeps);
+      } catch (err) {
+        console.error("[Rest] Failed to update rest:", getErrorMessage(err));
       }
     });
 

@@ -14,6 +14,9 @@
  * task_start / task:start で起こした子 (セッションに parentWorktreePath がある行) は、
  * 親と同じセクションにいるときだけ親の直後に寄せる (nestChildEntries)。セクションの分け方は
  * 変えないので、親と別のセクションにいる子はそのセクションに残り、行の「↳ 親」で親をたどる。
+ *
+ * セクションは状態から決めるが、人が手動で休止にした行 (session.restedAt がある行) だけは
+ * 状態に関係なく休止中に置く。いつ外すかはサーバーが決める (server の session-rest.ts)。
  */
 
 import type {
@@ -38,6 +41,10 @@ export interface SessionListEntry {
   repoName: string;
   disambiguator: string | null;
   statusKey: StatusKey;
+  /** 並べるセクション。状態から決め、手動で休止にした行は休止中 */
+  section: SessionSection;
+  /** 手動で休止にした行か (行メニューの「休止にする / 休止から戻す」の出し分けに使う) */
+  manuallyRested: boolean;
   /**
    * 会話 (JSONL transcript) の最終更新時刻 (epochミリ秒)。不明なら null。
    * tmux の session_activity は端末の再描画でも動くので使わない
@@ -73,6 +80,11 @@ export function buildSessionEntries(
   for (const [repoPath, group] of groupedItems) {
     for (const { worktree, session } of group.items) {
       const key = worktree ? `wt:${worktree.id}` : `s:${session?.id ?? ""}`;
+      const statusKey = resolveStatusKey(
+        session !== null,
+        session ? statuses.get(session.id) : undefined
+      );
+      const manuallyRested = session?.restedAt != null;
       entries.push({
         key,
         worktree,
@@ -80,10 +92,9 @@ export function buildSessionEntries(
         repoPath,
         repoName: group.repoName,
         disambiguator: group.disambiguator,
-        statusKey: resolveStatusKey(
-          session !== null,
-          session ? statuses.get(session.id) : undefined
-        ),
+        statusKey,
+        section: manuallyRested ? "resting" : presentStatus(statusKey).section,
+        manuallyRested,
         lastUpdatedAt: (session && lastUpdatedAt.get(session.id)) ?? null,
         parentWorktreePath: session?.parentWorktreePath ?? null,
         nested: false,
@@ -117,10 +128,10 @@ function compareLastUpdated(a: SessionListEntry, b: SessionListEntry): number {
 function compareEntries(a: SessionListEntry, b: SessionListEntry): number {
   const pa = presentStatus(a.statusKey);
   const pb = presentStatus(b.statusKey);
-  const bySection = SECTION_RANK[pa.section] - SECTION_RANK[pb.section];
+  const bySection = SECTION_RANK[a.section] - SECTION_RANK[b.section];
   if (bySection !== 0) return bySection;
   // ここから先は同じセクション。最終更新を見るのは「あなたの番」だけ
-  if (pa.section === "your-turn") {
+  if (a.section === "your-turn") {
     const byLastUpdated = compareLastUpdated(a, b);
     if (byLastUpdated !== 0) return byLastUpdated;
   }
@@ -142,9 +153,7 @@ export function sortSessionEntries(
 export function sectionize(entries: SessionListEntry[]): SessionSectionGroup[] {
   return SECTION_ORDER.map(section => ({
     section,
-    entries: nestChildEntries(
-      entries.filter(e => presentStatus(e.statusKey).section === section)
-    ),
+    entries: nestChildEntries(entries.filter(e => e.section === section)),
   })).filter(g => g.entries.length > 0);
 }
 

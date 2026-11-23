@@ -105,6 +105,11 @@ export interface Session {
    * 親と別のリポジトリへ切り出した子かどうかを見分けるために使う。記録の無い古い行は null
    */
   parentRepoPath?: string | null;
+  /**
+   * 人が手動で休止にした時刻 (epochミリ秒、サーバーの時計)。休止にしていなければ null。
+   * 値があれば状態に関係なく「休止中」に並べる。会話が動いたらサーバーが消す (session-rest.ts)
+   */
+  restedAt?: number | null;
 }
 
 /**
@@ -922,6 +927,8 @@ export interface ClientToServerEvents {
     displayName: string | null;
   }) => void;
   "session:restart-with-profile": (data: { sessionId: string }) => void;
+  /** 手動で休止にする (rested: true) / 休止から戻す (rested: false) */
+  "session:rest": (data: { sessionId: string; rested: boolean }) => void;
 
   // メッセージショートカット
   "shortcut:list": () => void;

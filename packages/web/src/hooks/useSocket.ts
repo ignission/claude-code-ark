@@ -251,6 +251,8 @@ interface UseSocketReturn {
     displayName: string | null
   ) => void;
   restartSessionWithProfile: (sessionId: string) => void;
+  /** 手動で休止にする / 休止から戻す */
+  setSessionRested: (sessionId: string, rested: boolean) => void;
 
   // リモート画面
   screens: Screen[];
@@ -1579,6 +1581,14 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("session:restart-with-profile", { sessionId });
   }, []);
 
+  const setSessionRested = useCallback((sessionId: string, rested: boolean) => {
+    // 切断中に送ると Socket.IO が溜めて再接続後に送り、その間の別の端末での操作を上書きする。
+    // 送らなければ一覧は動かず、休止にできなかったことが見て分かる
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    socket.emit("session:rest", { sessionId, rested });
+  }, []);
+
   // メッセージショートカット actions
   const createShortcut = useCallback((message: string) => {
     socketRef.current?.emit("shortcut:create", { message });
@@ -1705,6 +1715,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     worktreeDisplayNames,
     setWorktreeDisplayName,
     restartSessionWithProfile,
+    setSessionRested,
     // リモート画面
     screens,
     screensLoaded,

@@ -389,6 +389,36 @@ describe("SessionRowMenu", () => {
   });
 });
 
+describe("SessionRowMenuの休止の項目", () => {
+  it("休止していなければ「休止にする」、手動で休止にしていれば「休止から戻す」を出し、選ぶと反転した値を渡す", () => {
+    const onChange = vi.fn();
+    const resting = mount(
+      <SessionRowMenu
+        variant="dropdown"
+        entry={entryOf()}
+        onOpen={vi.fn()}
+        rest={{ rested: false, onChange }}
+      />
+    );
+    expect(itemLabels(resting)).toContain("休止にする");
+    clickItem(resting, "休止にする");
+
+    const rested = mount(
+      <SessionRowMenu
+        variant="dropdown"
+        entry={entryOf()}
+        onOpen={vi.fn()}
+        rest={{ rested: true, onChange }}
+      />
+    );
+    expect(itemLabels(rested)).toContain("休止から戻す");
+    clickItem(rested, "休止から戻す");
+
+    expect(onChange).toHaveBeenNthCalledWith(1, true);
+    expect(onChange).toHaveBeenNthCalledWith(2, false);
+  });
+});
+
 describe("SessionRowMenuのサブメニューの高さ", () => {
   it.each([
     ["dropdown", "dropdown-menu"],

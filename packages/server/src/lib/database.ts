@@ -112,6 +112,8 @@ interface SessionRow {
   last_diagram_path: string | null;
   parent_worktree_path: string | null;
   parent_repo_path: string | null;
+  /** 手動で休止にした時刻 (epochミリ秒)。休止にしていなければ null */
+  rested_at: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -357,6 +359,16 @@ export class SessionDatabase {
         throw e;
       }
     }
+    // マイグレーション: sessionsテーブルにrested_at列を追加
+    // (手動の休止を、PCとモバイルの両方とサーバー再起動のあとにも効かせるため)
+    try {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN rested_at INTEGER");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
     // 旧 root の保存値は実ファイルの移行を保証できず stale tab を作るため、
     // prefix rewrite せず無効化する。同じ UPDATE の再実行は結果を変えない。
     this.db
@@ -589,6 +601,8 @@ export class SessionDatabase {
         -- A start without a parent (session:start etc.) must not erase the parent link of an existing row
         parent_worktree_path = COALESCE(excluded.parent_worktree_path, parent_worktree_path),
         parent_repo_path = COALESCE(excluded.parent_repo_path, parent_repo_path),
+        -- Starting or restarting a session is an act of attention, so it clears a manual rest
+        rested_at = NULL,
         updated_at = excluded.updated_at
     `);
     stmt.run(
@@ -676,6 +690,39 @@ export class SessionDatabase {
       "UPDATE sessions SET last_diagram_path = ?, updated_at = ? WHERE id = ?"
     );
     stmt.run(relPath, now, sessionId);
+  }
+
+  /**
+   * 手動の休止の時刻を付ける (restedAt) か外す (null)。
+   *
+   * @returns 行があって更新したら true
+   */
+  updateSessionRestedAt(sessionId: string, restedAt: number | null): boolean {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(
+      "UPDATE sessions SET rested_at = ?, updated_at = ? WHERE id = ?"
+    );
+    return stmt.run(restedAt, now, sessionId).changes > 0;
+  }
+
+  /**
+   * 休止の時刻が restedAt のままの場合だけ外す。読んでから消すまでの間に
+   * 休止にし直された値を消さないよう、比較と更新を単一 SQL にする。
+   */
+  clearSessionRestedAtIfMatches(sessionId: string, restedAt: number): boolean {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(
+      "UPDATE sessions SET rested_at = NULL, updated_at = ? WHERE id = ? AND rested_at = ?"
+    );
+    return stmt.run(now, sessionId, restedAt).changes > 0;
+  }
+
+  /** 手動で休止にしているセッションの id → 休止にした時刻 */
+  getRestedSessions(): Map<string, number> {
+    const rows = this.db
+      .prepare("SELECT id, rested_at FROM sessions WHERE rested_at IS NOT NULL")
+      .all() as Array<{ id: string; rested_at: number }>;
+    return new Map(rows.map(row => [row.id, row.rested_at]));
   }
 
   /**
@@ -803,6 +850,7 @@ export class SessionDatabase {
       lastDiagramPath: row.last_diagram_path,
       parentWorktreePath: row.parent_worktree_path ?? null,
       parentRepoPath: row.parent_repo_path ?? null,
+      restedAt: row.rested_at ?? null,
     };
   }
 

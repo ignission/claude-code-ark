@@ -220,6 +220,7 @@ export default function Dashboard() {
     worktreeDisplayNames,
     setWorktreeDisplayName,
     restartSessionWithProfile,
+    setSessionRested,
     messageShortcuts,
     createShortcut,
     updateShortcut,
@@ -1210,6 +1211,7 @@ export default function Dashboard() {
           onStartSession={handleStartSession}
           onDeleteSession={handleDeleteSession}
           onRestartSession={handleRestartSession}
+          onSetSessionRested={setSessionRested}
           onDeleteWorktree={handleDeleteWorktree}
           onSendMessage={sendMessage}
           onSendKey={sendKey}
@@ -1314,6 +1316,7 @@ export default function Dashboard() {
               onStartSession={handleStartSession}
               onDeleteSession={handleDeleteSession}
               onRestartSession={handleRestartSession}
+              onSetSessionRested={setSessionRested}
               onSetWorktreeDisplayName={setWorktreeDisplayName}
               onSessionNotificationEnabledChange={
                 handleSessionNotificationEnabledChange
