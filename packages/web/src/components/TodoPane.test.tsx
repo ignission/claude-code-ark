@@ -242,7 +242,7 @@ describe("TodoPane", () => {
     expect(onOpenWorktree).not.toHaveBeenCalled();
   });
 
-  it("「へ移動」の右の「完了」を押すと、その行を完了にする", () => {
+  it("「へ移動」の右に緑の「完了」を出し、押すと、その行を完了にする", () => {
     const props = mount({
       ...startedProps,
       todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
@@ -253,6 +253,7 @@ describe("TodoPane", () => {
       el => el.textContent === "完了"
     );
     expect(finish?.previousElementSibling).toBe(jump);
+    expect(finish?.className).toContain("emerald");
     click(finish);
     expect(props.onSetDone).toHaveBeenCalledWith("1", true);
   });
