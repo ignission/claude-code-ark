@@ -8,7 +8,6 @@ const status = (over: Partial<SessionPrStatus> = {}): SessionPrStatus => ({
   state: "OPEN",
   isDraft: false,
   checks: "pending",
-  headRefOid: "h1",
   ...over,
 });
 

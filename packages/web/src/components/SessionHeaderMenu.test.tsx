@@ -31,8 +31,6 @@ function menuProps(
 ): SessionHeaderMenuProps {
   return {
     worktree: undefined,
-    notificationsSupported: false,
-    notificationsEnabled: false,
     onDeleteSession: vi.fn(),
     ...overrides,
   };
@@ -78,38 +76,11 @@ describe("SessionHeaderMenu", () => {
     expect(content.textContent).not.toContain("入力バー");
   });
 
-  it("残すのはセッション全体の操作だけ (通知と、最下段の削除)", () => {
-    const content = menuContent(
-      mount(
-        menuProps({
-          notificationsSupported: true,
-          onNotificationsEnabledChange: vi.fn(),
-        })
-      )
-    );
-
-    expect(content.textContent).toContain("このセッションの通知をオンにする");
-    expect(content.textContent).toContain("セッションを削除");
-    expect(content.lastElementChild?.textContent).toBe("セッションを削除");
-  });
-
-  it("出す項目が削除だけのときは、先頭に区切り線を残さない", () => {
+  it("残すのはセッション全体の操作だけ (削除)。区切り線は引かない", () => {
     const content = menuContent(mount(menuProps()));
 
-    expect(content.firstElementChild?.tagName).not.toBe("HR");
+    expect(content.textContent).toContain("セッションを削除");
+    expect(content.lastElementChild?.textContent).toBe("セッションを削除");
     expect(content.querySelectorAll("hr")).toHaveLength(0);
-  });
-
-  it("通知を出せるときだけ、削除とのあいだに区切り線を引く", () => {
-    const content = menuContent(
-      mount(
-        menuProps({
-          notificationsSupported: true,
-          onNotificationsEnabledChange: vi.fn(),
-        })
-      )
-    );
-
-    expect(content.querySelectorAll("hr")).toHaveLength(1);
   });
 });

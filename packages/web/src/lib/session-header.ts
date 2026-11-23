@@ -32,7 +32,7 @@ export function resolveSessionHeaderLabels(input: {
  * 端末の窓の上端のバーに並べる操作。配列の順が左からの並び順。
  * どれも端末ペインの中のもの (バッファ・iframe・入力バー) を動かすので、端末が
  * 見えている窓の中に置く。上部バーに置くのは会話へ送る操作 (メッセージの
- * ショートカット) と、作業エリアの開閉、`…` (通知・削除) だけ。
+ * ショートカット) と、作業エリアの開閉、`…` (削除) だけ。
  * 添付と画像の貼り付けは、会話の入力欄が担う
  */
 export type TerminalWindowAction =
@@ -54,12 +54,6 @@ export function inputBarToggleLabel(visible: boolean): string {
   return visible
     ? m.session.header.hideInputBar
     : m.session.header.showInputBar;
-}
-
-export function notificationMenuLabel(enabled: boolean): string {
-  return enabled
-    ? m.session.header.muteSession
-    : m.session.header.unmuteSession;
 }
 
 export function deleteSessionDescription(

@@ -33,8 +33,8 @@
  * `@path` を入力欄に足す)、端末の窓と図モードは端末側の確認ダイアログへ渡す。
  * 端末そのものへの操作 (バッファのコピー・再読み込み) は、PCと同じく端末の窓の上端の
  * バーに置く (指で押せる44px)。窓の下部バーに残すのは、端末へ打ち込むための操作
- * (1タップの行・Quick Keys・入力欄) だけ。`…` にはセッション全体の操作 (通知・再起動・
- * 削除) だけを残す。
+ * (1タップの行・Quick Keys・入力欄) だけ。`…` にはセッション全体の操作 (再起動・削除)
+ * だけを残す。
  *
  * 端末の画面末尾 (`liveTail`) は1秒ごとに届き、そのたびにこの部品は描画し直す。
  * 画面末尾を使うのは会話の帯だけなので、端末の窓の中身は要素ごとメモ化し、
@@ -57,8 +57,6 @@ import {
   type Worktree,
 } from "@ark/shared";
 import {
-  Bell,
-  BellOff,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -110,7 +108,6 @@ import { FLOATING_BAR_BOTTOM } from "@/lib/floating-composer";
 import { m } from "@/lib/i18n";
 import {
   deleteSessionDescription,
-  notificationMenuLabel,
   resolveSessionHeaderLabels,
 } from "@/lib/session-header";
 import {
@@ -192,11 +189,6 @@ export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   repoName?: string;
   /** worktree のカスタム表示名。あれば主ラベルにする */
   displayName?: string | null;
-  /** Notification API 対応環境でだけ「このセッションの通知をオン/オフにする」を出す */
-  notificationsSupported?: boolean;
-  /** このセッションの通知が有効か (未設定なら有効) */
-  notificationsEnabled?: boolean;
-  onNotificationsEnabledChange?: (enabled: boolean) => void;
   onBack: () => void;
   /**
    * ホームの会話を開く (lib/home-session.ts)。ホームを決めていて、このセッションがホームで
@@ -250,9 +242,6 @@ export function MobileSessionView({
   worktree,
   repoName,
   displayName,
-  notificationsSupported = false,
-  notificationsEnabled = true,
-  onNotificationsEnabledChange,
   onBack,
   onOpenHome,
   isHome = false,
@@ -1017,11 +1006,6 @@ export function MobileSessionView({
     ]
   );
 
-  // `…` に残すのはセッション全体の操作だけ。通知を出せない環境 (Notification API の
-  // 無いブラウザ) もあるので、区切り線は直前のまとまりが実際に出たときだけ引く
-  const canChangeNotifications =
-    notificationsSupported && onNotificationsEnabledChange !== undefined;
-
   // 表示モードのバーの上段。会話と図のバーで同じ間隔 (4px) になるよう、
   // セグメントと1タップの操作をここでひとまとまりにする
   const bottomBarTop = (
@@ -1108,28 +1092,13 @@ export function MobileSessionView({
                 ここに置くのはセッション全体の操作だけ。
                 区切り線は、直前のまとまりが実際に出たときだけ引く */}
               <DropdownMenuContent align="end" className="w-64">
-                {canChangeNotifications && (
-                  <>
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        onNotificationsEnabledChange(!notificationsEnabled)
-                      }
-                    >
-                      {notificationsEnabled ? <BellOff /> : <Bell />}
-                      {notificationMenuLabel(notificationsEnabled)}
-                    </DropdownMenuItem>
-                    {onRestartSession && <DropdownMenuSeparator />}
-                  </>
-                )}
                 {onRestartSession && (
                   <DropdownMenuItem onSelect={() => setShowRestartDialog(true)}>
                     <RotateCw />
                     {m.mobile.session.restartSession}
                   </DropdownMenuItem>
                 )}
-                {(canChangeNotifications || onRestartSession) && (
-                  <DropdownMenuSeparator />
-                )}
+                {onRestartSession && <DropdownMenuSeparator />}
                 <DropdownMenuItem
                   variant="destructive"
                   onSelect={() => setShowDeleteDialog(true)}

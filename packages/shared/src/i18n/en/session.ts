@@ -68,31 +68,10 @@ export const session: Messages["session"] = {
     label: (tokens: string, window: string, percent: number) =>
       `Context: ${tokens} / ${window} tokens (${percent}%). The limit is an estimate.`,
   },
-  browserNotifications: {
-    granted: "Browser notifications are allowed",
-    denied: "Browser notifications are blocked in your browser settings",
-    enable: "Enable browser notifications",
-  },
-  notifications: {
-    awaitingTitle: "Ark: Waiting for your decision",
-    awaitingBody: (sessionLabel: string) =>
-      `${sessionLabel} needs a permission approval`,
-    questionTitle: "Ark: Question for you",
-    questionBody: (sessionLabel: string) =>
-      `${sessionLabel} is waiting for your answer`,
-    completedTitle: "Ark: Work finished",
-    completedBody: (sessionLabel: string) =>
-      `${sessionLabel} has stopped running`,
-    ciFailedTitle: "Ark: CI failed",
-    ciFailedBody: (sessionLabel: string, prNumber: number | string) =>
-      `Checks failed on PR #${prNumber} of ${sessionLabel}`,
-  },
   header: {
     moreActions: "More actions",
     hideInputBar: "Hide input bar",
     showInputBar: "Show input bar",
-    muteSession: "Turn off notifications for this session",
-    unmuteSession: "Turn on notifications for this session",
     deleteConfirm: "Delete this session?",
     deleteConfirmKeepMain:
       "Delete this session? The main worktree will be kept.",
@@ -117,8 +96,6 @@ export const session: Messages["session"] = {
     openParent: "Open parent",
     setHome: "Set as home",
     rename: "Rename",
-    muteNotifications: "Turn off notifications",
-    unmuteNotifications: "Turn on notifications",
     rest: "Move to resting",
     unrest: "Move back from resting",
     repository: "Repository",

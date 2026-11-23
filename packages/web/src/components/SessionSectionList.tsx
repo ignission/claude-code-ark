@@ -76,8 +76,6 @@ export interface SessionSectionListProps {
   selectedSessionId: string | null;
   /** worktreePath → 表示名 */
   worktreeDisplayNames?: Map<string, string>;
-  notificationsSupported?: boolean;
-  isSessionNotificationEnabled?: (sessionId: string) => boolean;
   onOpenSession: (sessionId: string) => void;
   onStartSession: (worktree: Worktree) => void;
   /** セッション削除 (停止 + メイン以外のWorktree削除) */
@@ -91,10 +89,6 @@ export interface SessionSectionListProps {
   onSetWorktreeDisplayName?: (
     worktreePath: string,
     displayName: string | null
-  ) => void;
-  onSessionNotificationEnabledChange?: (
-    sessionId: string,
-    enabled: boolean
   ) => void;
   onCreateWorktreeForRepo?: (repoPath: string) => void;
   /** その worktree を親にして子タスクを分離する (新しいタスクのダイアログを開く) */
@@ -157,8 +151,6 @@ export function SessionSectionList({
   sessionTodoCounts,
   selectedSessionId,
   worktreeDisplayNames,
-  notificationsSupported = false,
-  isSessionNotificationEnabled,
   onOpenSession,
   onStartSession,
   onDeleteSession,
@@ -166,7 +158,6 @@ export function SessionSectionList({
   onRestartSession,
   onSetSessionRested,
   onSetWorktreeDisplayName,
-  onSessionNotificationEnabledChange,
   onCreateWorktreeForRepo,
   onSplitTask,
   onSelectRepoGrid,
@@ -318,14 +309,6 @@ export function SessionSectionList({
       onStartRename:
         onSetWorktreeDisplayName && worktreePath
           ? () => setEditingKey(entry.key)
-          : undefined,
-      notifications:
-        session && notificationsSupported && onSessionNotificationEnabledChange
-          ? {
-              enabled: isSessionNotificationEnabled?.(session.id) ?? true,
-              onChange: enabled =>
-                onSessionNotificationEnabledChange(session.id, enabled),
-            }
           : undefined,
       // 休止にできるのは「あなたの番」の行だけ。作業中の行は休止にしてもすぐ会話が動いて外れる
       rest:

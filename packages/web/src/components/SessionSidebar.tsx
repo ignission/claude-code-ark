@@ -1,7 +1,7 @@
 /**
  * SessionSidebar - PCのセッション一覧サイドバー
  *
- * ヘッダー (ワードマークのメニュー・新規作成・通知許可・ブラウザ) と、
+ * ヘッダー (ワードマークのメニュー・新規作成・ブラウザ) と、
  * 注意の順に並べたセッション一覧 (SessionSectionList) と、
  * 下部に常に出すCPU/MEM/DISK (押すとBridgeを別タブで開く) を出す。
  * About と言語の切り替えはワードマークのメニューにある。
@@ -51,7 +51,6 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   onCollapse?: () => void;
   /** 下部に出すCPU/MEM/DISK (未着はnull) */
   metrics: HostMetrics | null;
-  notificationControl?: ReactNode;
   /** 一覧の上に固定で出すホームの行 (lib/home-session.ts)。ホームを決めていなければ無い */
   home?: ReactNode;
   /** リモート画面。onOpenScreenManager が無ければメニューを出さない */
@@ -67,7 +66,6 @@ export function SessionSidebar({
   onOpenAbout,
   onCollapse,
   metrics,
-  notificationControl,
   home,
   screens = [],
   selectedScreenId = null,
@@ -148,7 +146,6 @@ export function SessionSidebar({
         >
           <Plus className="size-5" />
         </Button>
-        {notificationControl}
         {onOpenScreenManager && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

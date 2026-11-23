@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   deleteSessionDescription,
   inputBarToggleLabel,
-  notificationMenuLabel,
   resolveSessionHeaderLabels,
   terminalWindowActions,
 } from "./session-header";
@@ -61,17 +60,6 @@ describe("inputBarToggleLabel", () => {
   it("今の状態ではなく、押すと起きることを書く", () => {
     expect(inputBarToggleLabel(true)).toBe("入力バーを隠す");
     expect(inputBarToggleLabel(false)).toBe("入力バーを表示");
-  });
-});
-
-describe("notificationMenuLabel", () => {
-  it("今の設定を反転する操作として書く", () => {
-    expect(notificationMenuLabel(true)).toBe(
-      "このセッションの通知をオフにする"
-    );
-    expect(notificationMenuLabel(false)).toBe(
-      "このセッションの通知をオンにする"
-    );
   });
 });
 

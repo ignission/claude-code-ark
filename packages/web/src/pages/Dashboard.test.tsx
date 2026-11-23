@@ -50,14 +50,6 @@ vi.mock("@/hooks/useHostMetrics", () => ({
   },
 }));
 
-vi.mock("@/hooks/useSessionNotifications", () => ({
-  useSessionNotifications: () => ({
-    supported: false,
-    permission: "denied",
-    requestPermission: vi.fn(),
-  }),
-}));
-
 vi.mock("@/hooks/useViewerTabs", () => ({
   useViewerTabs: (...args: unknown[]) => {
     testDoubles.viewerTabsArgs(args);
@@ -160,9 +152,6 @@ vi.mock("@/components/ScreenPane", () => ({
 }));
 vi.mock("@/components/CreateWorktreeDialog", () => ({
   CreateWorktreeDialog: () => null,
-}));
-vi.mock("@/components/NotificationPermissionButton", () => ({
-  NotificationPermissionButton: () => null,
 }));
 vi.mock("@/components/RepoGridView", () => ({ RepoGridView: () => null }));
 vi.mock("@/components/RepoSelectDialog", () => ({
@@ -289,8 +278,6 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     subscribeGrid: fn,
     unsubscribeGrid: fn,
     sessionStatuses: new Map([[session.id, "AWAITING"]]),
-    sessionStatusSignals: [],
-    sessionAuqSignals: [],
     readFile: fn,
     fileContent: null,
     screens: [],

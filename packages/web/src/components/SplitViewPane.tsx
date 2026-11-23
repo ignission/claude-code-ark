@@ -28,7 +28,7 @@
  *
  * 上部バーは1本で、左にセッションの主ラベル・ブランチ・状態チップ、右に1タップの操作
  * (メッセージのショートカット)・作業エリアの開閉 (「パネル」) と `…` メニュー
- * (SessionHeaderMenu)。`…` にはセッション全体の操作 (通知・削除) だけを残す。
+ * (SessionHeaderMenu)。`…` にはセッション全体の操作 (削除) だけを残す。
  * 端末専用の操作 (バッファのコピー / 端末の再読み込み / 入力バーの表示) は、端末の窓の
  * 上端のバーに置き、TerminalPaneHandle経由でTerminalPaneに頼む。
  * ファイルの添付と画像の貼り付けは、会話の入力欄が担う。
@@ -181,11 +181,6 @@ interface SplitViewPaneProps {
   onCreateShortcut: (message: string) => void;
   onUpdateShortcut: (id: string, patch: { message?: string }) => void;
   onDeleteShortcut: (id: string) => void;
-  /** Notification APIが使える環境か。falseなら `…` メニューに通知の項目を出さない */
-  notificationsSupported?: boolean;
-  /** このセッションの通知が有効か (未設定は有効) */
-  notificationsEnabled?: boolean;
-  onNotificationsEnabledChange?: (enabled: boolean) => void;
   /**
    * 「ファイル」のタブの中身。Dashboard が FilePane を渡す (SplitViewPane は中身を知らない)。
    * 渡さなければ「ファイル」のタブを出さない。
@@ -706,11 +701,6 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               </button>
               <SessionHeaderMenu
                 worktree={props.worktree}
-                notificationsSupported={props.notificationsSupported ?? false}
-                notificationsEnabled={props.notificationsEnabled ?? true}
-                onNotificationsEnabledChange={
-                  props.onNotificationsEnabledChange
-                }
                 onDeleteSession={props.onDeleteSession}
               />
             </div>

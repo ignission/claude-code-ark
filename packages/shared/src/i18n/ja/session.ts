@@ -1,4 +1,4 @@
-/** セッション一覧、上部バー、状態の札、通知、ダッシュボードの文 */
+/** セッション一覧、上部バー、状態の札、ダッシュボードの文 */
 export const session = {
   /** 複数の場所で使う操作の名前 */
   actions: {
@@ -72,35 +72,11 @@ export const session = {
     label: (tokens: string, window: string, percent: number) =>
       `コンテキスト ${tokens} / ${window} トークン (${percent}%)。上限は推定`,
   },
-  /** ブラウザ通知の許可のボタン */
-  browserNotifications: {
-    granted: "ブラウザ通知は許可済み",
-    denied: "ブラウザ通知はブラウザ設定で拒否されています",
-    enable: "ブラウザ通知を有効にする",
-  },
-  /** OSの通知 (`session-notifications.ts`) */
-  notifications: {
-    awaitingTitle: "Ark: 判断を待っています",
-    awaitingBody: (sessionLabel: string) =>
-      `${sessionLabel} で権限確認が必要です`,
-    questionTitle: "Ark: 質問があります",
-    questionBody: (sessionLabel: string) =>
-      `${sessionLabel} が回答を待っています`,
-    completedTitle: "Ark: 作業が完了しました",
-    completedBody: (sessionLabel: string) =>
-      `${sessionLabel} の実行が停止しました`,
-    ciFailedTitle: "Ark: CIが落ちました",
-    /** prNumber は番号か、分からないときの "?" */
-    ciFailedBody: (sessionLabel: string, prNumber: number | string) =>
-      `${sessionLabel} のPR #${prNumber} のチェックが失敗しました`,
-  },
   /** PCの上部バーと `…` メニュー (`session-header.ts`) */
   header: {
     moreActions: "その他の操作",
     hideInputBar: "入力バーを隠す",
     showInputBar: "入力バーを表示",
-    muteSession: "このセッションの通知をオフにする",
-    unmuteSession: "このセッションの通知をオンにする",
     deleteConfirm: "このセッションを削除しますか？",
     deleteConfirmKeepMain:
       "このセッションを削除しますか？メインWorktreeは削除されません。",
@@ -125,8 +101,6 @@ export const session = {
     openParent: "親を開く",
     setHome: "ホームにする",
     rename: "表示名を変更",
-    muteNotifications: "通知をオフにする",
-    unmuteNotifications: "通知をオンにする",
     rest: "休止にする",
     unrest: "休止から戻す",
     repository: "リポジトリ",

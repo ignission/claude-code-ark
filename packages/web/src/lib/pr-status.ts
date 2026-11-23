@@ -12,8 +12,7 @@ function sameStatus(a: SessionPrStatus, b: SessionPrStatus): boolean {
     a.url === b.url &&
     a.state === b.state &&
     a.isDraft === b.isDraft &&
-    a.checks === b.checks &&
-    a.headRefOid === b.headRefOid
+    a.checks === b.checks
   );
 }
 

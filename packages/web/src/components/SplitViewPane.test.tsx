@@ -895,8 +895,6 @@ describe("PC上部バーの1タップ操作と、端末の窓の操作", () => {
     const container = mount(
       paneSection(makeSession("quick-rest"), true, {
         onCopyBuffer: vi.fn(async () => "buffer"),
-        notificationsSupported: true,
-        onNotificationsEnabledChange: vi.fn(),
       })
     );
 
@@ -913,7 +911,6 @@ describe("PC上部バーの1タップ操作と、端末の窓の操作", () => {
     expect(menu?.textContent).not.toContain("端末のバッファをコピー");
     expect(menu?.textContent).not.toContain("端末を再読み込み");
     expect(menu?.textContent).not.toContain("入力バー");
-    expect(menu?.textContent).toContain("このセッションの通知をオフにする");
     expect(menu?.textContent).toContain("セッションを削除");
   });
 });

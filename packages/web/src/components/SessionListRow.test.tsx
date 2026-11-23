@@ -297,7 +297,6 @@ describe("SessionListRowのPRの札", () => {
             state: "OPEN",
             isDraft: false,
             checks: "failed",
-            headRefOid: "h",
           },
         })}
       />

@@ -34,7 +34,6 @@ type MobileSessionListProps = Omit<
   onNewTask: () => void;
   /** 画面の管理ダイアログを開く。画面が未登録でも一覧の見出しから登録できるようにする */
   onOpenScreenManager?: () => void;
-  notificationControl?: ReactNode;
   /** 一覧の上に固定で出すホームの行 (lib/home-session.ts)。ホームを決めていなければ無い */
   home?: ReactNode;
 };
@@ -43,7 +42,6 @@ export function MobileSessionList({
   onNewSession,
   onNewTask,
   onOpenScreenManager,
-  notificationControl,
   home,
   ...listProps
 }: MobileSessionListProps) {
@@ -85,7 +83,6 @@ export function MobileSessionList({
             </DropdownMenuContent>
           </DropdownMenu>
         </h1>
-        {notificationControl}
         {onOpenScreenManager && (
           <Button
             variant="ghost"

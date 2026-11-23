@@ -203,7 +203,7 @@ export function SessionListRow({
     detailSegments.push({ key: "preview", node: previewText });
   }
 
-  // 選ばれた行が一覧のスクロールの外にあれば、見える位置へ寄せる。タブや通知から
+  // 選ばれた行が一覧のスクロールの外にあれば、見える位置へ寄せる。タブなどから
   // 選んだときに、一覧のどこにいるかを見失わないようにする
   const rowRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
