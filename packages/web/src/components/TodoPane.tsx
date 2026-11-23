@@ -46,6 +46,11 @@ interface TodoPaneProps {
   onOpenWorktree?: (worktreePath: string) => void;
   /** その worktree にセッションがあって開けるか。省略時は開ける。false なら見出しはボタンにしない */
   canOpenWorktree?: (worktreePath: string) => boolean;
+  /**
+   * 黄色の「<名前> へ移動」を押したとき。省略時は onOpenWorktree を使う。
+   * Dashboard は会話を見せる開き方を渡す (モバイルは移動先が TODO の表示のままでも会話へ替える)
+   */
+  onOpenStarted?: (worktreePath: string) => void;
   /** 「元のセッションで話す」。省略時はボタンを出さない */
   onStartHere?: (todo: Todo) => void;
   /** 「新しいworktreeで話す」。省略時はボタンを出さない */
@@ -63,6 +68,7 @@ type RowProps = Pick<
   | "worktreeLabel"
   | "onOpenWorktree"
   | "canOpenWorktree"
+  | "onOpenStarted"
   | "onStartHere"
   | "onStartInNewWorktree"
   | "canStartInNewWorktree"
@@ -103,8 +109,9 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
   const { onSetDone, onRemove } = props;
   const done = todo.doneAt !== null;
   // 始めた先のセッションがあれば、始める代わりにそこへ移動する
+  const openStarted = props.onOpenStarted ?? props.onOpenWorktree;
   const startedPath =
-    props.onOpenWorktree === undefined
+    openStarted === undefined
       ? null
       : todoStartedSessionPath(
           todo,
@@ -154,7 +161,7 @@ function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
         {startedPath !== null && startedLabel !== null ? (
           <button
             type="button"
-            onClick={() => props.onOpenWorktree?.(startedPath)}
+            onClick={() => openStarted?.(startedPath)}
             className="mt-1.5 inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/15 px-2.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/25 dark:text-amber-300"
           >
             <ArrowRight className="size-3.5 shrink-0" aria-hidden="true" />
@@ -246,6 +253,7 @@ export function TodoPane(props: TodoPaneProps) {
     worktreeLabel: props.worktreeLabel,
     onOpenWorktree: props.onOpenWorktree,
     canOpenWorktree: props.canOpenWorktree,
+    onOpenStarted: props.onOpenStarted,
     onStartHere: props.onStartHere,
     onStartInNewWorktree: props.onStartInNewWorktree,
     canStartInNewWorktree: props.canStartInNewWorktree,

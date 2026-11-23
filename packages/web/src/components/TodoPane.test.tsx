@@ -228,6 +228,20 @@ describe("TodoPane", () => {
     expect(startedProps.onStartInNewWorktree).not.toHaveBeenCalled();
   });
 
+  it("onOpenStarted があれば、「へ移動」は onOpenWorktree ではなくそちらを呼ぶ", () => {
+    const onOpenWorktree = vi.fn();
+    const onOpenStarted = vi.fn();
+    mount({
+      ...startedProps,
+      todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
+      onOpenWorktree,
+      onOpenStarted,
+    });
+    click(byText("button", "todo-abc へ移動"));
+    expect(onOpenStarted).toHaveBeenCalledWith("/w/c");
+    expect(onOpenWorktree).not.toHaveBeenCalled();
+  });
+
   it("行き先のリポジトリを持つ行も、始めた先のセッションがあれば「へ移動」だけを出す", () => {
     mount({
       ...startedProps,

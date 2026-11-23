@@ -828,6 +828,18 @@ export default function Dashboard() {
     [handleOpenSessionFromNotification]
   );
 
+  // TODO の黄色の「へ移動」から、始めた先のセッションを開いて会話を見せる
+  const openStartedTodoSession = useCallback(
+    (worktreePath: string) => {
+      const sessionId = findSessionIdByWorktreePath(
+        sessions.values(),
+        worktreePath
+      );
+      if (sessionId) openSessionForTodo(sessionId);
+    },
+    [sessions, openSessionForTodo]
+  );
+
   // 待っている worktree のセッションが現れたら選ぶ (既にあればすぐ選ぶ)
   useEffect(() => {
     if (!pendingSelectWorktreePath) return;
@@ -1250,6 +1262,7 @@ export default function Dashboard() {
               worktreeLabel={worktreeLabelOf}
               onOpenWorktree={openWorktree}
               canOpenWorktree={canOpenWorktreeSession}
+              onOpenStarted={openStartedTodoSession}
               onStartHere={handleStartTodoHere}
               onStartInNewWorktree={handleStartTodoInNewWorktree}
               canStartInNewWorktree={canStartTodoInNewWorktree}
@@ -1547,6 +1560,7 @@ export default function Dashboard() {
                             worktreeLabel={worktreeLabelOf}
                             onOpenWorktree={openWorktreeSession}
                             canOpenWorktree={canOpenWorktreeSession}
+                            onOpenStarted={openStartedTodoSession}
                             onStartHere={handleStartTodoHere}
                             onStartInNewWorktree={handleStartTodoInNewWorktree}
                             canStartInNewWorktree={canStartTodoInNewWorktree}
