@@ -14,17 +14,18 @@
  *
  * ## 読み方と倒れ方
  *
- * 末尾 TAIL_LIMIT_BYTES だけ読み、後ろから 1 行ずつ見る。JSONL は追記だけなので、
- * 後ろほど新しい。
+ * 末尾 TAIL_LIMIT_BYTES から読み、後ろから 1 行ずつ見る。JSONL は追記だけなので、
+ * 後ろほど新しい。決め手の行に着かないまま範囲を使い切ったら、範囲を 4 倍に広げて
+ * 読み直す (MAX_TAIL_LIMIT_BYTES まで)。休止の前の巨大な 1 行 (大きなツールの結果) が
+ * 範囲の先頭で切れて捨てられ、そのあとのメタデータだけを見て「動いた」とみなすのを防ぐ。
  *
  * - 会話のレコードで timestamp が since より後 → 動いた
  * - timestamp が since 以前のレコード (種類を問わない) に着いた → それより前は
  *   もっと古いので、動いていない
  * - どちらにも着かずに読んだ範囲を使い切った:
  *   - ファイル全体を読んでいた → 動いていない
- *   - 切り詰めていた → **動いたとみなす**。範囲を埋めるほど大きな行はほぼ
- *     ツールの結果で、会話が動いている。休止のまま呼ばれて気づかないよりは、
- *     外れて「あなたの番」に戻る方を選ぶ
+ *   - 上限まで広げても切り詰めていた → **動いたとみなす**。休止のまま呼ばれて
+ *     気づかないよりは、外れて「あなたの番」に戻る方を選ぶ
  * - 失敗 (ファイル無し・権限など) は「動いていない」。polling を落とさない
  *
  * 1 秒ごとの polling に載るので、大きさと mtime と since が同じなら読み直さない。
@@ -40,8 +41,10 @@ import {
 } from "./claude-projects.js";
 import { isConversationRecord } from "./transcript-conversation.js";
 
-/** 末尾から読む上限 */
+/** 末尾から読む最初の範囲 */
 const TAIL_LIMIT_BYTES = 256 * 1024;
+/** 範囲を広げる上限 */
+const MAX_TAIL_LIMIT_BYTES = 16 * 1024 * 1024;
 
 const MEMO_LIMIT = 128;
 
@@ -124,7 +127,21 @@ export function hasConversationSince(
     ) {
       return cached.moved;
     }
-    const moved = classifyTail(io.readTail(file, TAIL_LIMIT_BYTES), since);
+    let moved = false;
+    for (let limit = TAIL_LIMIT_BYTES; ; limit *= 4) {
+      const tail = io.readTail(file, limit);
+      const verdict = classifyTail(tail, since);
+      if (verdict !== "undecided") {
+        moved = verdict === "moved";
+        break;
+      }
+      // ファイル全体を読んで決め手が無い → 動いていない。上限まで広げても切れる → 動いた
+      if (!tail.truncated) break;
+      if (limit >= MAX_TAIL_LIMIT_BYTES) {
+        moved = true;
+        break;
+      }
+    }
     rememberFifoEntry(memo, file, { size, mtimeMs, since, moved }, MEMO_LIMIT);
     return moved;
   } catch {
@@ -132,7 +149,10 @@ export function hasConversationSince(
   }
 }
 
-function classifyTail(tail: TranscriptTail, since: number): boolean {
+function classifyTail(
+  tail: TranscriptTail,
+  since: number
+): "moved" | "not-moved" | "undecided" {
   const lines = tail.text.split("\n");
   // 切り詰めた場合、先頭は行の途中かもしれないので捨てる
   if (tail.truncated) lines.shift();
@@ -148,10 +168,10 @@ function classifyTail(tail: TranscriptTail, since: number): boolean {
     }
     const at = timestampOf(record);
     if (at === null) continue;
-    if (at <= since) return false;
-    if (isConversationRecord(record)) return true;
+    if (at <= since) return "not-moved";
+    if (isConversationRecord(record)) return "moved";
   }
-  return tail.truncated;
+  return "undecided";
 }
 
 function timestampOf(record: unknown): number | null {

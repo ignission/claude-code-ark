@@ -73,6 +73,42 @@ describe("hasConversationSince", () => {
     expect(check(ioOf(text, true))).toBe(true);
   });
 
+  it("休止の前の巨大な行が範囲の先頭で切れても、範囲を広げて読み、メタデータだけなら動いていない", () => {
+    const huge = line({
+      type: "assistant",
+      timestamp: at(-1),
+      message: { role: "assistant", content: "x".repeat(300) },
+    });
+    const full = [huge, prLink(2)].join("\n");
+    const io: TranscriptSinceIo = {
+      pickLatestJsonl: () => "/p/current.jsonl",
+      statFile: () => ({ size: full.length, mtimeMs: 1 }),
+      // 最初の範囲では巨大な行の途中から、広げたら全体が読める
+      readTail: (_file, maxBytes) =>
+        maxBytes <= 256 * 1024
+          ? { text: full.slice(full.length - 40), truncated: true }
+          : { text: full, truncated: false },
+    };
+    expect(check(io)).toBe(false);
+  });
+
+  it("上限まで広げても切り詰めたまま決め手が無ければ、動いたとみなす", () => {
+    const readTail = vi.fn((_file: string, _maxBytes: number) => ({
+      text: ['xx", "type":"user"}', prLink(2)].join("\n"),
+      truncated: true,
+    }));
+    expect(
+      check({
+        pickLatestJsonl: () => "/p/current.jsonl",
+        statFile: () => ({ size: 1, mtimeMs: 1 }),
+        readTail,
+      })
+    ).toBe(true);
+    expect(readTail.mock.calls.at(-1)?.[1]).toBeGreaterThanOrEqual(
+      16 * 1024 * 1024
+    );
+  });
+
   it("ファイル全体を読んで休止の前に着かなければ、動いていない", () => {
     expect(check(ioOf(prLink(2)))).toBe(false);
   });

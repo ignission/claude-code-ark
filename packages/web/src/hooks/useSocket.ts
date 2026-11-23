@@ -1582,7 +1582,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   }, []);
 
   const setSessionRested = useCallback((sessionId: string, rested: boolean) => {
-    socketRef.current?.emit("session:rest", { sessionId, rested });
+    // 切断中に送ると Socket.IO が溜めて再接続後に送り、その間の別の端末での操作を上書きする。
+    // 送らなければ一覧は動かず、休止にできなかったことが見て分かる
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    socket.emit("session:rest", { sessionId, rested });
   }, []);
 
   // メッセージショートカット actions
