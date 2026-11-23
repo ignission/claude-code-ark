@@ -148,6 +148,7 @@ import {
 import { TunnelManager } from "./lib/tunnel.js";
 import { UsageCollector } from "./lib/usage-collector.js";
 import { formatVoiceDiagnostic } from "./lib/voice-diagnostic.js";
+import { WorktreeHeadWatcher } from "./lib/worktree-head-watcher.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -637,6 +638,17 @@ export async function startServer(
     db.updateSessionLastDiagram(sessionId, relPath);
     return { ok: true };
   };
+  // ===== Arkの外でのブランチ・worktreeの変化 =====
+  // 端末での git checkout などをHEADの変化で拾い、全クライアントに一覧を配り直す
+  const worktreeHeadWatcher = new WorktreeHeadWatcher(repoPath => {
+    listWorktrees(repoPath)
+      .then(worktrees => io.emit("worktree:list", { repoPath, worktrees }))
+      .catch(() => {
+        // 読めなければ配らない。次の変化か再接続で取り直す
+      });
+  });
+  worktreeHeadWatcher.start();
+
   // TODO が変わったら全クライアントに読み直させる (一覧は小さいので差分は配らない)
   const emitTodoChanged = () => io.emit("todo:changed");
   // socket に依存しないので connection の外で 1 回だけ作る (足すのは Claude の todo_add だけ)
@@ -1762,6 +1774,7 @@ export async function startServer(
         currentRepoPath = repoPath;
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", { repoPath, worktrees });
+        worktreeHeadWatcher.watch(repoPath);
       } catch (error) {
         socket.emit("repo:error", { repoPath, error: getErrorMessage(error) });
       }
@@ -1773,6 +1786,7 @@ export async function startServer(
       try {
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", { repoPath, worktrees });
+        worktreeHeadWatcher.watch(repoPath);
       } catch (error) {
         socket.emit("worktree:error", getErrorMessage(error));
       }
@@ -3720,6 +3734,7 @@ export async function startServer(
     clearInterval(bridgeBroadcastInterval);
     clearInterval(gridBroadcastInterval);
     prStatusCollector?.stop();
+    worktreeHeadWatcher.stop();
     planLimitsCollector.stop();
     sessionOrchestrator.cleanup();
     screenBridge.closeAll();
