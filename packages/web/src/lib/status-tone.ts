@@ -3,14 +3,20 @@
  *
  * PCサイドバー・モバイル一覧・PC上部バー・モバイルヘッダー・RepoGridView が
  * すべてここを通す。状態は BridgeSessionStatus だけから決め、端末の画面テキストは
- * 解釈しない (情報源分離の原則)。
+ * 解釈しない (情報源分離の原則)。一覧だけは、手動で休止にした行を RESTED にする
+ * (session-sections.ts)。
  */
 
 import type { BridgeSessionStatus } from "@ark/shared";
 import { m } from "./i18n";
 import type { MobileSessionViewMode } from "./mobile-session-view-mode";
 
-export type StatusKey = BridgeSessionStatus | "NOT_STARTED" | "UNKNOWN";
+/** RESTED は人が手動で休止にした行 (BridgeSessionStatus に関係なく一覧の札をこれにする) */
+export type StatusKey =
+  | BridgeSessionStatus
+  | "RESTED"
+  | "NOT_STARTED"
+  | "UNKNOWN";
 export type StatusTone = "awaiting" | "error" | "idle" | "busy" | "neutral";
 export type StatusIcon =
   | "question"
@@ -19,15 +25,15 @@ export type StatusIcon =
   | "dots"
   | "minus"
   | "stop"
+  | "pause"
   | "play";
-export type SessionSection = "your-turn" | "working" | "resting";
 
 export interface StatusPresentation {
   tone: StatusTone;
   label: string;
   icon: StatusIcon;
-  section: SessionSection;
-  priority: number;
+  /** あなたの番 (人の手を待っている) か。畳んだサイドバーの帯の件数と、休止にできる行の判定に使う */
+  yourTurn: boolean;
   outlined: boolean;
 }
 
@@ -37,16 +43,14 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
     tone: "awaiting",
     label: m.session.status.awaiting,
     icon: "question",
-    section: "your-turn",
-    priority: 1,
+    yourTurn: true,
     outlined: false,
   },
   ERR: {
     tone: "error",
     label: m.session.status.error,
     icon: "alert",
-    section: "your-turn",
-    priority: 2,
+    yourTurn: true,
     outlined: false,
   },
   // IDLE は「出力があり入力を待っている」だけで、成功を意味しない
@@ -54,56 +58,56 @@ const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
     tone: "idle",
     label: m.session.status.idle,
     icon: "message",
-    section: "your-turn",
-    priority: 3,
+    yourTurn: true,
     outlined: false,
   },
   TOOL: {
     tone: "busy",
     label: m.session.status.working,
     icon: "dots",
-    section: "working",
-    priority: 4,
+    yourTurn: false,
     outlined: false,
   },
   THINK: {
     tone: "busy",
     label: m.session.status.working,
     icon: "dots",
-    section: "working",
-    priority: 4,
+    yourTurn: false,
     outlined: false,
   },
   READY: {
     tone: "neutral",
     label: m.session.status.ready,
     icon: "minus",
-    section: "resting",
-    priority: 5,
+    yourTurn: false,
     outlined: false,
   },
   STOP: {
     tone: "neutral",
     label: m.session.status.stopped,
     icon: "stop",
-    section: "resting",
-    priority: 6,
+    yourTurn: false,
+    outlined: false,
+  },
+  RESTED: {
+    tone: "neutral",
+    label: m.session.status.rested,
+    icon: "pause",
+    yourTurn: false,
     outlined: false,
   },
   NOT_STARTED: {
     tone: "neutral",
     label: m.session.status.notStarted,
     icon: "play",
-    section: "resting",
-    priority: 7,
+    yourTurn: false,
     outlined: true,
   },
   UNKNOWN: {
     tone: "neutral",
     label: "",
     icon: "minus",
-    section: "resting",
-    priority: 8,
+    yourTurn: false,
     outlined: false,
   },
 };
@@ -119,18 +123,6 @@ export function resolveStatusKey(
 export function presentStatus(key: StatusKey): StatusPresentation {
   return PRESENTATIONS[key];
 }
-
-export const SECTION_ORDER: readonly SessionSection[] = [
-  "your-turn",
-  "working",
-  "resting",
-];
-
-export const SECTION_LABELS: Readonly<Record<SessionSection, string>> = {
-  "your-turn": m.session.sections.yourTurn,
-  working: m.session.sections.working,
-  resting: m.session.sections.resting,
-};
 
 /**
  * トーンごとの Tailwind クラス。Tailwind がクラス名を静的に拾えるよう、

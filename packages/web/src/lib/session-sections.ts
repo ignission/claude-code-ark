@@ -1,22 +1,20 @@
 /**
- * PCサイドバーとモバイル一覧の並べ方 (設計書 7 節)。
+ * PCサイドバーとモバイル一覧の並べ方。
  *
- * リポジトリ順ではなく注意の順に並べる。比較キーは
- * セクション → (あなたの番だけ) 最終更新の降順 → 状態の優先度 → リポジトリ名 →
- * リポジトリの絶対パス → worktreeのパス (worktreeの無いセッションは後ろ)。
+ * 行はリポジトリごとにまとめ、リポジトリの見出しの下に並べる。状態では並べ替えない
+ * (会話が動くたびに行の場所が変わると、押そうとした行が逃げる)。
  *
- * 最終更新で並べ替えるのは「あなたの番」だけ。上から順に片付ける列なので、
- * 最後に動いた会話が先頭に来てほしい。作業中・休止中は眺めるだけの列なので、
- * 会話が動くたびに場所が変わらない方がよく、従来のキーのままにする。
- * 最終更新の不明な行 (未起動・会話がまだ無い) はあなたの番の最後へ回す。
- * 同着で並びが毎秒揺れないよう、従来の比較キーはそのまま tiebreaker に残す。
- *
- * task_start / task:start で起こした子 (セッションに parentWorktreePath がある行) は、
- * 親と同じセクションにいるときだけ親の直後に寄せる (nestChildEntries)。セクションの分け方は
- * 変えないので、親と別のセクションにいる子はそのセクションに残り、行の「↳ 親」で親をたどる。
- *
- * セクションは状態から決めるが、人が手動で休止にした行 (session.restedAt がある行) だけは
- * 状態に関係なく休止中に置く。いつ外すかはサーバーが決める (server の session-rest.ts)。
+ * - リポジトリの順は、人がドラッグで決めた順 (設定 `sessionListRepoOrder`、サーバーに保存して
+ *   PCとモバイルで共有) を先に置き、そこに無いリポジトリはリポジトリ名 → 絶対パスの順で後ろへ足す。
+ *   保存値には、いま一覧に見えていないリポジトリのパスも残す (worktreeが届く前のリロード直後や、
+ *   一時的に除外したリポジトリの位置を失わないため)。書き込むのは人が並べ替えたときだけ
+ * - リポジトリの中は、worktreeのある行をworktreeのパス順に、worktreeの無いセッションを後ろに置く
+ *   (useGroupedWorktreeItems が積んだ順のまま)
+ * - task_start / task:start で起こした子 (セッションに parentWorktreePath がある行) は、
+ *   親と同じリポジトリにいるときだけ親の直後に寄せる (nestChildEntries)。別のリポジトリへ
+ *   切り出した子はそのリポジトリに残り、行の「↳ 親」で親をたどる
+ * - 人が手動で休止にした行 (session.restedAt がある行) は、状態に関係なく状態の札を「休止」にする。
+ *   位置は動かさない。いつ外すかはサーバーが決める (server の session-rest.ts)
  */
 
 import type {
@@ -25,13 +23,10 @@ import type {
   Worktree,
 } from "@ark/shared";
 import type { RepoGroup } from "@/hooks/useGroupedWorktreeItems";
-import {
-  presentStatus,
-  resolveStatusKey,
-  SECTION_ORDER,
-  type SessionSection,
-  type StatusKey,
-} from "./status-tone";
+import { presentStatus, resolveStatusKey, type StatusKey } from "./status-tone";
+
+/** リポジトリの並び順を保存する設定のキー。値は repoPath の配列 */
+export const REPO_ORDER_SETTING = "sessionListRepoOrder";
 
 export interface SessionListEntry {
   key: string;
@@ -40,47 +35,34 @@ export interface SessionListEntry {
   repoPath: string;
   repoName: string;
   disambiguator: string | null;
+  /** 状態の札に出す状態。手動で休止にした行は RESTED */
   statusKey: StatusKey;
-  /** 並べるセクション。状態から決め、手動で休止にした行は休止中 */
-  section: SessionSection;
   /** 手動で休止にした行か (行メニューの「休止にする / 休止から戻す」の出し分けに使う) */
   manuallyRested: boolean;
-  /**
-   * 会話 (JSONL transcript) の最終更新時刻 (epochミリ秒)。不明なら null。
-   * tmux の session_activity は端末の再描画でも動くので使わない
-   */
-  lastUpdatedAt: number | null;
+  /** あなたの番 (確認待ち・問題・入力待ち) で、手動で休止にしていない行か */
+  yourTurn: boolean;
   /** 子の行なら親の worktree のパス。親の行や普通の行は null */
   parentWorktreePath: string | null;
   /** 親の直後に寄せた子の行 (字下げして出す) */
   nested: boolean;
 }
 
-export interface SessionSectionGroup {
-  section: SessionSection;
+export interface SessionRepoSection {
+  repoPath: string;
+  repoName: string;
+  disambiguator: string | null;
   entries: SessionListEntry[];
 }
 
-/**
- * 描画用の平らな行。セクション見出しも行として同じ親に並べ、useHeldOrder の対象にする。
- * コンポーネントの SessionListRow (SessionListRow.tsx) と名前が同じなので、両方を使う側は
- * `type SessionListRow as ListRow` のように別名で import する
- */
-export type SessionListRow =
-  | { kind: "section"; key: string; section: SessionSection; count: number }
-  | { kind: "entry"; key: string; entry: SessionListEntry };
-
 export function buildSessionEntries(
   groupedItems: Map<string, RepoGroup>,
-  statuses: Map<string, BridgeSessionStatus>,
-  /** sessionId → 会話の最終更新時刻 (session:previews 由来)。未起動の行は載らない */
-  lastUpdatedAt: ReadonlyMap<string, number> = new Map()
+  statuses: Map<string, BridgeSessionStatus>
 ): SessionListEntry[] {
   const entries: SessionListEntry[] = [];
   for (const [repoPath, group] of groupedItems) {
     for (const { worktree, session } of group.items) {
       const key = worktree ? `wt:${worktree.id}` : `s:${session?.id ?? ""}`;
-      const statusKey = resolveStatusKey(
+      const liveStatusKey = resolveStatusKey(
         session !== null,
         session ? statuses.get(session.id) : undefined
       );
@@ -92,10 +74,9 @@ export function buildSessionEntries(
         repoPath,
         repoName: group.repoName,
         disambiguator: group.disambiguator,
-        statusKey,
-        section: manuallyRested ? "resting" : presentStatus(statusKey).section,
+        statusKey: manuallyRested ? "RESTED" : liveStatusKey,
         manuallyRested,
-        lastUpdatedAt: (session && lastUpdatedAt.get(session.id)) ?? null,
+        yourTurn: !manuallyRested && presentStatus(liveStatusKey).yourTurn,
         parentWorktreePath: session?.parentWorktreePath ?? null,
         nested: false,
       });
@@ -104,61 +85,96 @@ export function buildSessionEntries(
   return entries;
 }
 
-const SECTION_RANK: Readonly<Record<SessionSection, number>> = {
-  "your-turn": 0,
-  working: 1,
-  resting: 2,
-};
-
 function itemPath(entry: SessionListEntry): string {
   return entry.worktree?.path ?? entry.session?.worktreePath ?? "";
 }
 
-/**
- * 最終更新の降順 (あなたの番でだけ使う)。不明 (null) は常に後ろ。
- * 同着 (両方不明を含む) は 0 を返し、後続の比較キーに委ねる
- */
-function compareLastUpdated(a: SessionListEntry, b: SessionListEntry): number {
-  if (a.lastUpdatedAt === b.lastUpdatedAt) return 0;
-  if (a.lastUpdatedAt === null) return 1;
-  if (b.lastUpdatedAt === null) return -1;
-  return b.lastUpdatedAt - a.lastUpdatedAt;
-}
-
-function compareEntries(a: SessionListEntry, b: SessionListEntry): number {
-  const pa = presentStatus(a.statusKey);
-  const pb = presentStatus(b.statusKey);
-  const bySection = SECTION_RANK[a.section] - SECTION_RANK[b.section];
-  if (bySection !== 0) return bySection;
-  // ここから先は同じセクション。最終更新を見るのは「あなたの番」だけ
-  if (a.section === "your-turn") {
-    const byLastUpdated = compareLastUpdated(a, b);
-    if (byLastUpdated !== 0) return byLastUpdated;
+/** 設定から読んだ値を repoPath の配列に揃える (壊れた値は空、重複は先の方を残す) */
+export function normalizeRepoOrder(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item === "string" && item !== "") seen.add(item);
   }
-  return (
-    pa.priority - pb.priority ||
-    a.repoName.localeCompare(b.repoName) ||
-    a.repoPath.localeCompare(b.repoPath) ||
-    Number(a.worktree === null) - Number(b.worktree === null) ||
-    itemPath(a).localeCompare(itemPath(b))
-  );
-}
-
-export function sortSessionEntries(
-  entries: SessionListEntry[]
-): SessionListEntry[] {
-  return [...entries].sort(compareEntries);
-}
-
-export function sectionize(entries: SessionListEntry[]): SessionSectionGroup[] {
-  return SECTION_ORDER.map(section => ({
-    section,
-    entries: nestChildEntries(entries.filter(e => e.section === section)),
-  })).filter(g => g.entries.length > 0);
+  return [...seen];
 }
 
 /**
- * 1つのセクションの (並べ替え済みの) 行で、親が同じセクションにいる子を親の直後へ寄せる。
+ * 見えているリポジトリ (既定の順に並べたもの) を、保存した順で並べ直す。
+ * 保存順に無いものは既定の順のまま後ろに足す
+ */
+export function orderRepoPaths(
+  repoPaths: readonly string[],
+  savedOrder: readonly string[]
+): string[] {
+  const present = new Set(repoPaths);
+  const ordered = savedOrder.filter(path => present.has(path));
+  const placed = new Set(ordered);
+  for (const path of repoPaths) {
+    if (!placed.has(path)) ordered.push(path);
+  }
+  return ordered;
+}
+
+/**
+ * 見えている順 (visibleOrder) の from を toIndex へ動かした結果を、保存する値にして返す。
+ * toIndex は from を抜いた列での挿入位置。いま見えていない保存済みのパスは後ろに残す
+ */
+export function moveRepo(
+  visibleOrder: readonly string[],
+  savedOrder: readonly string[],
+  from: string,
+  toIndex: number
+): string[] {
+  const rest = visibleOrder.filter(path => path !== from);
+  const index = Math.max(0, Math.min(toIndex, rest.length));
+  const moved = [...rest.slice(0, index), from, ...rest.slice(index)];
+  const visible = new Set(moved);
+  return [...moved, ...savedOrder.filter(path => !visible.has(path))];
+}
+
+/**
+ * ドラッグ中のポインタの縦位置から、つまんだリポジトリを入れる位置を求める。
+ * otherMidpoints は、つまんだもの以外のかたまりの縦の中心 (上から順)。
+ * 戻り値は moveRepo の toIndex (つまんだものを抜いた列での挿入位置)
+ */
+export function resolveDropIndex(
+  pointerY: number,
+  otherMidpoints: readonly number[]
+): number {
+  return otherMidpoints.filter(mid => mid < pointerY).length;
+}
+
+/**
+ * 行をリポジトリのかたまりにまとめ、保存した順に並べる。行の無いリポジトリは出さない。
+ * entries は useGroupedWorktreeItems の順 (リポジトリ名 → パス、中はworktreeのパス順) のまま渡す
+ */
+export function groupByRepo(
+  entries: readonly SessionListEntry[],
+  savedOrder: readonly string[]
+): SessionRepoSection[] {
+  const byRepo = new Map<string, SessionRepoSection>();
+  for (const entry of entries) {
+    let section = byRepo.get(entry.repoPath);
+    if (!section) {
+      section = {
+        repoPath: entry.repoPath,
+        repoName: entry.repoName,
+        disambiguator: entry.disambiguator,
+        entries: [],
+      };
+      byRepo.set(entry.repoPath, section);
+    }
+    section.entries.push(entry);
+  }
+  return orderRepoPaths([...byRepo.keys()], savedOrder).map(path => {
+    const section = byRepo.get(path) as SessionRepoSection;
+    return { ...section, entries: nestChildEntries(section.entries) };
+  });
+}
+
+/**
+ * 1つのリポジトリの (並べ替え済みの) 行で、親が同じリポジトリにいる子を親の直後へ寄せる。
  * 子どうしの順は元の並びのまま。孫も同じ規則でたどる (親子が輪になっていても止まる)
  */
 export function nestChildEntries(
@@ -197,7 +213,7 @@ export function nestChildEntries(
   return result;
 }
 
-/** worktree のパス → そのパスを親に持つ行の数 (セクションをまたいで数える) */
+/** worktree のパス → そのパスを親に持つ行の数 (リポジトリをまたいで数える) */
 export function countChildren(
   entries: readonly SessionListEntry[]
 ): Map<string, number> {
@@ -208,26 +224,4 @@ export function countChildren(
     counts.set(parent, (counts.get(parent) ?? 0) + 1);
   }
   return counts;
-}
-
-/**
- * 見出しは空のセクションも含めて3つとも出す (件数0)。保留中にセクションが空になったとき
- * 見出しのkeyが消えると、useHeldOrderがそれを落として下の行が繰り上がるため。
- * 空の見出しを描くかどうかは描く側 (SessionSectionList) が決める
- */
-export function toListRows(groups: SessionSectionGroup[]): SessionListRow[] {
-  const rows: SessionListRow[] = [];
-  for (const section of SECTION_ORDER) {
-    const entries = groups.find(g => g.section === section)?.entries ?? [];
-    rows.push({
-      kind: "section",
-      key: `section:${section}`,
-      section,
-      count: entries.length,
-    });
-    for (const entry of entries) {
-      rows.push({ kind: "entry", key: entry.key, entry });
-    }
-  }
-  return rows;
 }

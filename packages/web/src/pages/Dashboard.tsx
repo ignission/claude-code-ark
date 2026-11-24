@@ -78,6 +78,7 @@ import {
   parseScreenSelection,
   screenSelectionId,
 } from "@/lib/screen-selection";
+import { normalizeRepoOrder, REPO_ORDER_SETTING } from "@/lib/session-sections";
 import {
   closeSessionTab,
   normalizeSessionTabs,
@@ -127,6 +128,16 @@ export default function Dashboard() {
   const setHomeWorktreePath = useCallback(
     (worktreePath: string | null) =>
       setSetting(HOME_WORKTREE_SETTING, worktreePath),
+    [setSetting]
+  );
+  // セッション一覧のリポジトリの並び順 (決まりは lib/session-sections.ts)
+  const rawRepoOrder = getSetting<unknown>(REPO_ORDER_SETTING, null);
+  const repoOrder = useMemo(
+    () => normalizeRepoOrder(rawRepoOrder),
+    [rawRepoOrder]
+  );
+  const setRepoOrder = useCallback(
+    (order: string[]) => setSetting(REPO_ORDER_SETTING, order),
     [setSetting]
   );
 
@@ -1239,6 +1250,8 @@ export default function Dashboard() {
           home={homeRow}
           homeWorktreePath={homeWorktreePath}
           onSetHome={setHomeWorktreePath}
+          repoOrder={repoOrder}
+          onRepoOrderChange={setRepoOrder}
           onOpenHome={homeWorktreePath ? handleOpenHome : undefined}
         />
       ) : (
@@ -1274,6 +1287,8 @@ export default function Dashboard() {
               home={homeRow}
               homeWorktreePath={homeWorktreePath}
               onSetHome={setHomeWorktreePath}
+              repoOrder={repoOrder}
+              onRepoOrderChange={setRepoOrder}
               screens={screens}
               selectedScreenId={selectedScreenId}
               onSelectScreen={handleSelectScreen}

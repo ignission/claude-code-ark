@@ -180,6 +180,9 @@ interface MobileLayoutProps {
   home?: ReactNode;
   homeWorktreePath?: string | null;
   onSetHome?: (worktreePath: string) => void;
+  /** リポジトリの並び順 (SessionSectionList の repoOrder) */
+  repoOrder?: readonly string[];
+  onRepoOrderChange?: (order: string[]) => void;
   /** ホームの会話を開く。ホームを決めていなければ無い */
   onOpenHome?: () => void;
 }
@@ -244,6 +247,8 @@ export function MobileLayout({
   home,
   homeWorktreePath,
   onSetHome,
+  repoOrder,
+  onRepoOrderChange,
   onOpenHome,
 }: MobileLayoutProps) {
   const [openedSessions, setOpenedSessions] = useState<Set<string>>(() =>
@@ -422,6 +427,8 @@ export function MobileLayout({
           home={home}
           homeWorktreePath={homeWorktreePath}
           onSetHome={onSetHome}
+          repoOrder={repoOrder}
+          onRepoOrderChange={onRepoOrderChange}
         />
       </div>
 

@@ -1,11 +1,10 @@
 /**
  * SessionSectionList - PCサイドバーとモバイル一覧で共有するセッション一覧
  *
- * 行を「あなたの番 → 作業中 → 休止中」の注意の順に並べる。セクション見出しと行は
- * 同じ親の直下に安定したkeyで置き、セクションをまたいでも行を再マウントしない
- * (表示名の編集中の値やフォーカスを失わないため)。
- * ポインタ・フォーカス・メニュー・タッチの間は並びを保留し、チップと件数の表示だけ最新にする。
- * 行を押せる要素にdata-session-key、見出しにdata-sectionを付ける (撮影のスクリプトが使う)。
+ * 行をリポジトリの見出しの下にまとめて並べる (並べ方は lib/session-sections.ts)。
+ * 見出しのつまみでリポジトリのかたまりを並べ替え、順はサーバーの設定に保存する
+ * (hooks/useRepoReorder.ts)。状態では並べ替えないので、状態が変わっても行は動かない。
+ * 行を押せる要素にdata-session-key、かたまりにdata-repo-groupを付ける (撮影のスクリプトが使う)。
  * 行メニューから開く確認ダイアログ (削除・再起動・リポジトリの除外) もここで持つ。
  */
 
@@ -15,6 +14,7 @@ import type {
   SessionPrStatus,
   Worktree,
 } from "@ark/shared";
+import { GripVertical } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertDialog,
@@ -27,19 +27,15 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useGroupedWorktreeItems } from "@/hooks/useGroupedWorktreeItems";
-import { useHeldOrder, useListHold } from "@/hooks/useHeldOrder";
+import { useRepoReorder } from "@/hooks/useRepoReorder";
 import { m } from "@/lib/i18n";
 import { deleteSessionDescription } from "@/lib/session-header";
 import {
   buildSessionEntries,
   countChildren,
-  type SessionListRow as ListRow,
+  groupByRepo,
   type SessionListEntry,
-  sectionize,
-  sortSessionEntries,
-  toListRows,
 } from "@/lib/session-sections";
-import { SECTION_LABELS, TONE_CLASSES } from "@/lib/status-tone";
 import { collectActiveSessionIds } from "@/lib/unlisted-active-sessions";
 import { cn } from "@/lib/utils";
 import { getBaseName } from "@/utils/pathUtils";
@@ -64,7 +60,7 @@ export interface SessionSectionListProps {
   sessionStatuses: Map<string, BridgeSessionStatus>;
   /**
    * sessionId → 会話の最終更新時刻 (session:previews由来)。
-   * セクションの中はこれの降順に並べる。未起動や読めていない行は不明として最後へ
+   * 未登録のリポジトリでも直近に動いたセッションを出すのに使う
    */
   sessionLastUpdatedAt?: Map<string, number>;
   /** sessionId → 端末の最後の内容行。2行目にそのまま出す */
@@ -96,6 +92,12 @@ export interface SessionSectionListProps {
   /** リポジトリの全セッションを並べて見る (RepoGridView)。PCだけ渡す */
   onSelectRepoGrid?: (repoPath: string) => void;
   onRemoveRepo?: (repoPath: string) => void;
+  /**
+   * リポジトリの並び順 (設定 `sessionListRepoOrder` の値)。無い・空ならリポジトリ名の順
+   */
+  repoOrder?: readonly string[];
+  /** リポジトリを並べ替えたときに新しい保存値を渡す。無ければつまみを出さない */
+  onRepoOrderChange?: (order: string[]) => void;
   /** 「あなたの番」の件数が変わるたびに呼ぶ (畳んだサイドバーの帯に出す) */
   onYourTurnCountChange?: (count: number) => void;
   /**
@@ -111,9 +113,7 @@ type DeleteTarget =
   | { kind: "session"; sessionId: string; worktree: Worktree | undefined }
   | { kind: "worktree"; worktree: Worktree };
 
-/** 休止の付け外しがサーバーから届かなかったときに、保留へ戻すまでの時間 */
-const PENDING_REST_TIMEOUT_MS = 5000;
-const rowKey = (row: ListRow) => row.key;
+const NO_REPO_ORDER: readonly string[] = [];
 
 function worktreePathOf(entry: SessionListEntry): string | null {
   return entry.worktree?.path ?? entry.session?.worktreePath ?? null;
@@ -162,6 +162,8 @@ export function SessionSectionList({
   onSplitTask,
   onSelectRepoGrid,
   onRemoveRepo,
+  repoOrder = NO_REPO_ORDER,
+  onRepoOrderChange,
   onYourTurnCountChange,
   homeWorktreePath = null,
   onSetHome,
@@ -184,32 +186,46 @@ export function SessionSectionList({
     repoList,
     activeSessionIds
   );
-  const { held: pointerHeld, bindings, onMenuOpenChange } = useListHold();
-  // 行メニューで休止にした (戻した) 行は、保留中でも新しいセクションへ動かす。
-  // メニューを閉じるとフォーカスは … に残り、ポインタも一覧の上にあるので、保留のままだと
-  // 選んでも何も起きないように見える。行が動いたら (または届かなければ時間で) 保留に戻す
-  const [pendingRest, setPendingRest] = useState<{
-    key: string;
-    rested: boolean;
-  } | null>(null);
-  const held = pointerHeld && pendingRest === null;
   // ホームの行は一覧から外す。親をたどる対応表 (entryByPath) にも入らないので、
   // ホームの子は親の表示を持たない普通の行になる (子は全部ホームの子なので、出すと全行に付く)
   const entries = useMemo(
     () =>
-      sortSessionEntries(
-        buildSessionEntries(groupedItems, sessionStatuses, sessionLastUpdatedAt)
-      ).filter(
+      buildSessionEntries(groupedItems, sessionStatuses).filter(
         entry =>
           homeWorktreePath === null ||
           worktreePathOf(entry) !== homeWorktreePath
       ),
-    [groupedItems, sessionStatuses, sessionLastUpdatedAt, homeWorktreePath]
+    [groupedItems, sessionStatuses, homeWorktreePath]
   );
-  const rows = useMemo(() => toListRows(sectionize(entries)), [entries]);
-  // 見出しの件数と同じ値を外へ知らせる。並びを保留していても件数は最新にする
+  const repoSections = useMemo(
+    () => groupByRepo(entries, repoOrder),
+    [entries, repoOrder]
+  );
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const {
+    order: shownRepoOrder,
+    draggingRepoPath,
+    handleProps,
+  } = useRepoReorder({
+    visibleOrder: useMemo(
+      () => repoSections.map(section => section.repoPath),
+      [repoSections]
+    ),
+    savedOrder: repoOrder,
+    onChange: onRepoOrderChange,
+    containerRef: listRef,
+  });
+  // ドラッグ中はドラッグで並べた順に描く。途中で消えた・増えたかたまりも落とさない
+  const shownSections = useMemo(() => {
+    const byPath = new Map(repoSections.map(s => [s.repoPath, s] as const));
+    const ordered = shownRepoOrder.flatMap(path => byPath.get(path) ?? []);
+    const placed = new Set(ordered);
+    return [...ordered, ...repoSections.filter(s => !placed.has(s))];
+  }, [repoSections, shownRepoOrder]);
+  const canReorder = onRepoOrderChange !== undefined && repoSections.length > 1;
+  // 畳んだサイドバーの帯に出す件数を外へ知らせる
   const yourTurnCount = useMemo(
-    () => entries.filter(e => e.section === "your-turn").length,
+    () => entries.filter(e => e.yourTurn).length,
     [entries]
   );
   useEffect(() => {
@@ -225,35 +241,6 @@ export function SessionSectionList({
     }
     return map;
   }, [entries]);
-  useEffect(() => {
-    if (!pendingRest) return;
-    const entry = entries.find(e => e.key === pendingRest.key);
-    if (!entry || entry.manuallyRested === pendingRest.rested) {
-      setPendingRest(null);
-      return;
-    }
-    const timer = setTimeout(
-      () => setPendingRest(null),
-      PENDING_REST_TIMEOUT_MS
-    );
-    return () => clearTimeout(timer);
-  }, [entries, pendingRest]);
-  const shownRows = useHeldOrder(rows, rowKey, held);
-  // 保留していなければ、直後に行が続かない (空の) 見出しは描かない。
-  // 保留中は描く見出しを保留の前のまま固定する。空になった見出しも残して下の行を動かさず、
-  // 保留の前に空だった見出しは行が入っても出さない (出すとその分だけ下の行が押し下がる)
-  const visibleHeadingKeysRef = useRef<ReadonlySet<string>>(new Set());
-  const visibleRows = shownRows.filter((row, index) => {
-    if (row.kind === "entry") return true;
-    return held
-      ? visibleHeadingKeysRef.current.has(row.key)
-      : shownRows[index + 1]?.kind === "entry";
-  });
-  useEffect(() => {
-    visibleHeadingKeysRef.current = new Set(
-      visibleRows.filter(row => row.kind === "section").map(rowKey)
-    );
-  });
 
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
@@ -314,13 +301,10 @@ export function SessionSectionList({
       rest:
         session &&
         onSetSessionRested &&
-        (entry.manuallyRested || entry.section === "your-turn")
+        (entry.manuallyRested || entry.yourTurn)
           ? {
               rested: entry.manuallyRested,
-              onChange: rested => {
-                setPendingRest({ key: entry.key, rested });
-                onSetSessionRested(session.id, rested);
-              },
+              onChange: rested => onSetSessionRested(session.id, rested),
             }
           : undefined,
       onRestart:
@@ -340,29 +324,36 @@ export function SessionSectionList({
     };
   };
 
-  const renderSection = (row: Extract<ListRow, { kind: "section" }>) => (
+  const renderRepoHeading = (section: (typeof repoSections)[number]) => (
     <h2
-      key={row.key}
-      data-section={row.section}
       className={cn(
-        "mt-4 flex h-7 items-center gap-2 font-semibold text-muted-foreground first:mt-0",
-        // sidebar の見出しは小さい大文字の間隔で、行の題と読み分ける
-        variant === "sidebar"
-          ? "px-2.5 text-[11px] tracking-[0.06em]"
-          : "px-1 text-[13px]"
+        "flex h-7 items-center gap-1.5 font-semibold text-muted-foreground",
+        variant === "sidebar" ? "px-2.5 text-[12px]" : "px-1 text-[13px]"
       )}
+      title={section.repoPath}
     >
-      <span>{SECTION_LABELS[row.section]}</span>
-      {row.section === "your-turn" && row.count > 0 && (
-        <span
-          data-testid="section-count"
+      <span className="min-w-0 truncate">{section.repoName}</span>
+      {section.disambiguator && (
+        <span className="min-w-0 truncate font-normal">
+          {section.disambiguator}
+        </span>
+      )}
+      {canReorder && (
+        <button
+          type="button"
+          {...handleProps(section.repoPath)}
+          aria-label={m.session.list.reorderRepo(section.repoName)}
           className={cn(
-            "inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-sm px-1 font-mono text-[11px] font-bold tabular-nums tracking-normal text-background",
-            TONE_CLASSES.awaiting.solidBg
+            "ml-auto inline-flex shrink-0 cursor-grab touch-none items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing",
+            // sidebar はかたまりにポインタを載せたときだけ出す (行の … と同じ)。card は指で掴むので常に出す
+            variant === "sidebar"
+              ? "h-6 w-6 opacity-0 group-hover/repo:opacity-100 focus-visible:opacity-100"
+              : "-mr-1 h-9 w-9",
+            draggingRepoPath === section.repoPath && "opacity-100"
           )}
         >
-          {row.count}
-        </span>
+          <GripVertical className="size-4" aria-hidden="true" />
+        </button>
       )}
     </h2>
   );
@@ -427,7 +418,6 @@ export function SessionSectionList({
             : undefined
         }
         menu={buildMenu(entry)}
-        onMenuOpenChange={onMenuOpenChange}
       />
     );
   };
@@ -435,22 +425,33 @@ export function SessionSectionList({
   return (
     <>
       <div
+        ref={listRef}
         data-session-list=""
         className={cn(
           "flex flex-col",
-          variant === "sidebar" ? "gap-px" : "gap-2"
+          variant === "sidebar" ? "gap-3" : "gap-4"
         )}
-        {...bindings}
       >
-        {visibleRows.length === 0 ? (
+        {shownSections.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">
             <p>{m.session.list.empty}</p>
             <p className="mt-1 text-xs">{m.session.list.emptyHint}</p>
           </div>
         ) : (
-          visibleRows.map(row =>
-            row.kind === "section" ? renderSection(row) : renderRow(row.entry)
-          )
+          shownSections.map(section => (
+            <section
+              key={section.repoPath}
+              data-repo-group={section.repoPath}
+              className={cn(
+                "group/repo flex flex-col transition-opacity",
+                variant === "sidebar" ? "gap-px" : "gap-2",
+                draggingRepoPath === section.repoPath && "opacity-60"
+              )}
+            >
+              {renderRepoHeading(section)}
+              {section.entries.map(renderRow)}
+            </section>
+          ))
         )}
       </div>
 

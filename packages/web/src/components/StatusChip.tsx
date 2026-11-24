@@ -4,6 +4,7 @@ import {
   CircleMinus,
   MessageSquare,
   Minus,
+  Pause,
   Play,
 } from "lucide-react";
 import {
@@ -25,7 +26,7 @@ interface StatusChipProps {
   labelClassName?: string;
   /**
    * true なら地の塗りと枠を付けず、アイコン (と文言) を状態の色で出すだけにする。
-   * 一覧の行のように、見出しが状態を言っていて、行には目印だけが要る場所で使う
+   * 一覧の行のように、行には目印だけが要る場所で使う
    */
   bare?: boolean;
 }
@@ -95,6 +96,8 @@ function StatusGlyph({ icon }: { icon: StatusIcon }) {
       return <Minus className={svg} aria-hidden="true" />;
     case "stop":
       return <CircleMinus className={svg} aria-hidden="true" />;
+    case "pause":
+      return <Pause className={svg} aria-hidden="true" />;
     case "play":
       return <Play className={svg} aria-hidden="true" />;
   }

@@ -4,7 +4,8 @@
  * 1行目は「状態チップ + 主ラベル」、2行目は「PRの札 + ブランチ · プレビュー文」。
  * PRの札はチェックの結果 (✓ / ✕ / 待ち) かマージ済み・クローズを出し、押すとPRを開く。
  * 色を付けるのは落ちたときだけ (セッションの状態の色は使わない)。
- * 主ラベルは表示名があれば表示名、無ければリポジトリ名。行のtitleはリポジトリの絶対パス。
+ * 行はリポジトリの見出しの下に並ぶので、主ラベルにリポジトリ名は出さない。表示名があれば表示名
+ * (2行目にブランチ)、無ければブランチ。行のtitleはリポジトリの絶対パス。
  * 行メニューはsidebarでは右クリックと `…`、cardでは `⋮` で開き、中身は同じ。
  * task_start で起こした子の行は、親の直後に寄せたときだけ字下げし、2行目の先頭に「↳ 親」を出す
  * (押すと親を開く)。親の行には子の数を出す。
@@ -67,11 +68,9 @@ export interface SessionListRowProps {
   /** 表示名を編集中か。どの行を編集するかは一覧が持つ */
   editing: boolean;
   onEditingChange: (editing: boolean) => void;
-  /** 表示名を保存する。nullで解除 (主ラベルはリポジトリ名に戻る) */
+  /** 表示名を保存する。nullで解除 (主ラベルはブランチに戻る) */
   onSaveDisplayName?: (displayName: string | null) => void;
   menu: Omit<SessionRowMenuProps, "variant" | "entry">;
-  /** 行メニューの開閉。一覧の並び替えの保留に使う */
-  onMenuOpenChange: (open: boolean) => void;
 }
 
 export function SessionListRow({
@@ -89,11 +88,12 @@ export function SessionListRow({
   onEditingChange,
   onSaveDisplayName,
   menu,
-  onMenuOpenChange,
 }: SessionListRowProps) {
-  const primaryLabel = displayName ?? entry.repoName;
   const branch =
     entry.worktree?.branch ?? getBaseName(entry.session?.worktreePath ?? "");
+  // 表示名が無いときの主ラベル。表示名にこれと同じ文字を入れたら解除として扱う
+  const fallbackLabel = branch || entry.repoName;
+  const primaryLabel = displayName ?? fallbackLabel;
   const quiet = entry.statusKey === "NOT_STARTED" || entry.statusKey === "STOP";
   const badge = prStatus ? prBadge(prStatus) : null;
 
@@ -116,31 +116,6 @@ export function SessionListRow({
     inputRef.current?.select();
   }, [editing]);
 
-  // 開いている行メニューの数 (sidebarは右クリックと `…` の2つ)。Radixはメニューを開いたまま
-  // 行が消えてもonOpenChange(false)を呼ばない。知らせないと一覧の並び替えの保留が解けなくなるので、
-  // 行が消えるときに開いていた分を閉じたことにする
-  const openMenuCountRef = useRef(0);
-  const onMenuOpenChangeRef = useRef(onMenuOpenChange);
-  useEffect(() => {
-    onMenuOpenChangeRef.current = onMenuOpenChange;
-  });
-  useEffect(
-    () => () => {
-      while (openMenuCountRef.current > 0) {
-        openMenuCountRef.current -= 1;
-        onMenuOpenChangeRef.current(false);
-      }
-    },
-    []
-  );
-  const handleMenuOpenChange = (open: boolean) => {
-    openMenuCountRef.current = Math.max(
-      0,
-      openMenuCountRef.current + (open ? 1 : -1)
-    );
-    onMenuOpenChange(open);
-  };
-
   // 保存と取り消しはblurに一本化する。Enter / Escapeはblurを起こすだけにし、
   // 入力欄が消えるときにblurを出さないブラウザでも、一覧からフォーカスが確実に抜けるようにする
   const finishEditing = () => {
@@ -148,8 +123,7 @@ export function SessionListRow({
     cancelEditRef.current = false;
     if (!canceled && draft !== null) {
       const trimmed = draft.trim();
-      const next =
-        trimmed === "" || trimmed === entry.repoName ? null : trimmed;
+      const next = trimmed === "" || trimmed === fallbackLabel ? null : trimmed;
       if (next !== displayName) onSaveDisplayName?.(next);
     }
     onEditingChange(false);
@@ -179,20 +153,7 @@ export function SessionListRow({
   };
 
   const detailSegments: { key: string; node: ReactNode }[] = [];
-  if (displayName !== null) {
-    detailSegments.push({
-      key: "repo",
-      node: (
-        <>
-          {entry.repoName}
-          {entry.disambiguator && (
-            <span className="ml-1">{entry.disambiguator}</span>
-          )}
-        </>
-      ),
-    });
-  }
-  if (branch) {
+  if (displayName !== null && branch) {
     detailSegments.push({
       key: "branch",
       // ブランチは機械が付けた名前なので等幅にする (差分の量や CPU と同じ扱い)
@@ -244,7 +205,7 @@ export function SessionListRow({
           className="min-w-0 flex-1 cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={menu.onOpen}
           onKeyDown={handleRowKeyDown}
-          // マウスで押しただけで一覧にフォーカスが残ると、並び替えの保留が解けなくなる。
+          // マウスで押しただけで一覧にフォーカスの枠を残さない。
           // キーボードのフォーカスは残す。編集中は入力欄のカーソル操作を妨げない
           onMouseDown={event => {
             if (editing) return;
@@ -263,8 +224,8 @@ export function SessionListRow({
           }}
         >
           <div className="flex min-w-0 items-center gap-2">
-            {/* 一覧では状態の文言を出さない。見出し (作業中 / 確認待ち / 待機) が
-                同じことを言っており、行の幅は名前に回したい。読み上げには残す */}
+            {/* 一覧では状態の文言を出さない。アイコンと色で足り、行の幅は名前に回したい。
+                読み上げには残す */}
             <StatusChip
               statusKey={entry.statusKey}
               labelClassName="sr-only"
@@ -298,14 +259,6 @@ export function SessionListRow({
                 )}
               >
                 {primaryLabel}
-                {displayName === null && entry.disambiguator && (
-                  <span
-                    data-testid="session-row-disambiguator"
-                    className="ml-1.5 font-normal text-muted-foreground"
-                  >
-                    {entry.disambiguator}
-                  </span>
-                )}
               </span>
             )}
           </div>
@@ -406,11 +359,15 @@ export function SessionListRow({
             </div>
           )}
         </div>
-        <DropdownMenu onOpenChange={handleMenuOpenChange}>
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label={m.session.row.menuLabel(primaryLabel, branch)}
+              // 読み上げではリポジトリ名も添える (見出しは画面の位置でしか結び付かない)
+              aria-label={m.session.row.menuLabel(
+                displayName ?? entry.repoName,
+                branch
+              )}
               className={cn(
                 "inline-flex shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground",
                 variant === "sidebar"
@@ -440,7 +397,7 @@ export function SessionListRow({
   if (variant === "card") return row;
 
   return (
-    <ContextMenu onOpenChange={handleMenuOpenChange}>
+    <ContextMenu>
       <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
       <ContextMenuContent
         className="w-64"

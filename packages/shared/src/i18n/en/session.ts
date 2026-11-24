@@ -18,11 +18,7 @@ export const session: Messages["session"] = {
     ready: "Ready",
     stopped: "Stopped",
     notStarted: "Not started",
-  },
-  sections: {
-    yourTurn: "Your turn",
-    working: "Working",
-    resting: "Inactive",
+    rested: "Inactive",
   },
   tabs: {
     list: "Open sessions",
@@ -116,6 +112,7 @@ export const session: Messages["session"] = {
     removeRepoBody: (repoName: string) =>
       `“${repoName}” will be hidden from the sidebar. Its worktrees, sessions, and the repository itself are not deleted. Select the repository again to bring it back.`,
     removeRepoAction: "Remove",
+    reorderRepo: (repoName: string) => `Move ${repoName} (drag or arrow keys)`,
   },
   /** ホーム (入口にするセッション。決まりは web の lib/home-session.ts) */
   home: {

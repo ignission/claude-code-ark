@@ -3,8 +3,6 @@ import {
   presentStatus,
   resolveStatusKey,
   resolveStatusStrip,
-  SECTION_LABELS,
-  SECTION_ORDER,
   type StatusKey,
 } from "./status-tone";
 
@@ -22,44 +20,37 @@ describe("resolveStatusKey", () => {
 });
 
 describe("presentStatus", () => {
-  const cases: [StatusKey, string, string, string, number][] = [
-    ["AWAITING", "awaiting", "確認待ち", "your-turn", 1],
-    ["ERR", "error", "問題", "your-turn", 2],
-    ["IDLE", "idle", "入力待ち", "your-turn", 3],
-    ["TOOL", "busy", "作業中", "working", 4],
-    ["THINK", "busy", "作業中", "working", 4],
-    ["READY", "neutral", "待機", "resting", 5],
-    ["STOP", "neutral", "停止", "resting", 6],
-    ["NOT_STARTED", "neutral", "未起動", "resting", 7],
-    ["UNKNOWN", "neutral", "", "resting", 8],
+  const cases: [StatusKey, string, string, boolean][] = [
+    ["AWAITING", "awaiting", "確認待ち", true],
+    ["ERR", "error", "問題", true],
+    ["IDLE", "idle", "入力待ち", true],
+    ["TOOL", "busy", "作業中", false],
+    ["THINK", "busy", "作業中", false],
+    ["READY", "neutral", "待機", false],
+    ["STOP", "neutral", "停止", false],
+    ["RESTED", "neutral", "休止", false],
+    ["NOT_STARTED", "neutral", "未起動", false],
+    ["UNKNOWN", "neutral", "", false],
   ];
   it.each(cases)(
-    "%s → %s / %s / %s / %i",
-    (key, tone, label, section, priority) => {
+    "%s → %s / %s / あなたの番=%s",
+    (key, tone, label, yourTurn) => {
       const p = presentStatus(key);
       expect(p.tone).toBe(tone);
       expect(p.label).toBe(label);
-      expect(p.section).toBe(section);
-      expect(p.priority).toBe(priority);
+      expect(p.yourTurn).toBe(yourTurn);
     }
   );
+  it("手動の休止は待機と見分けられる形にする", () => {
+    expect(presentStatus("RESTED").icon).toBe("pause");
+    expect(presentStatus("READY").icon).not.toBe("pause");
+  });
   it("未起動だけ枠線のチップにする", () => {
     expect(presentStatus("NOT_STARTED").outlined).toBe(true);
     expect(presentStatus("IDLE").outlined).toBe(false);
   });
   it("入力待ちは成功を意味するチェックの形を使わない", () => {
     expect(presentStatus("IDLE").icon).toBe("message");
-  });
-});
-
-describe("セクション", () => {
-  it("あなたの番 → 作業中 → 休止中 の順", () => {
-    expect(SECTION_ORDER).toEqual(["your-turn", "working", "resting"]);
-    expect(SECTION_ORDER.map(s => SECTION_LABELS[s])).toEqual([
-      "あなたの番",
-      "作業中",
-      "休止中",
-    ]);
   });
 });
 

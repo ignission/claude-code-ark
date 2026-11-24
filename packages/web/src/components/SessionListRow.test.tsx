@@ -15,10 +15,6 @@ import { SessionListRow } from "./SessionListRow";
 
 const testDoubles = vi.hoisted(() => ({
   rowMenuVariants: vi.fn(),
-  // 最後に描いた行のメニューのonOpenChange。Radixの開閉を代わりに起こす
-  menuOpenChanges: {} as Partial<
-    Record<"context" | "dropdown", (open: boolean) => void>
-  >,
 }));
 
 vi.mock("./SessionRowMenu", () => ({
@@ -29,16 +25,7 @@ vi.mock("./SessionRowMenu", () => ({
 }));
 
 vi.mock("@/components/ui/context-menu", () => ({
-  ContextMenu: ({
-    children,
-    onOpenChange,
-  }: {
-    children?: ReactNode;
-    onOpenChange?: (open: boolean) => void;
-  }) => {
-    testDoubles.menuOpenChanges.context = onOpenChange;
-    return <>{children}</>;
-  },
+  ContextMenu: ({ children }: { children?: ReactNode }) => <>{children}</>,
   ContextMenuTrigger: ({ children }: { children?: ReactNode }) => (
     <>{children}</>
   ),
@@ -48,16 +35,7 @@ vi.mock("@/components/ui/context-menu", () => ({
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({
-    children,
-    onOpenChange,
-  }: {
-    children?: ReactNode;
-    onOpenChange?: (open: boolean) => void;
-  }) => {
-    testDoubles.menuOpenChanges.dropdown = onOpenChange;
-    return <>{children}</>;
-  },
+  DropdownMenu: ({ children }: { children?: ReactNode }) => <>{children}</>,
   DropdownMenuTrigger: ({ children }: { children?: ReactNode }) => (
     <>{children}</>
   ),
@@ -94,6 +72,10 @@ function entryOf(overrides: Partial<SessionListEntry> = {}): SessionListEntry {
     repoName: "app",
     disambiguator: "work",
     statusKey: "IDLE",
+    manuallyRested: false,
+    yourTurn: true,
+    parentWorktreePath: null,
+    nested: false,
     ...overrides,
   };
 }
@@ -112,7 +94,6 @@ function rowProps(
     onEditingChange: vi.fn(),
     onSaveDisplayName: vi.fn(),
     menu: { onOpen: vi.fn() },
-    onMenuOpenChange: vi.fn(),
     ...overrides,
   };
 }
@@ -171,7 +152,6 @@ function editingInput(container: ParentNode): HTMLInputElement {
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   testDoubles.rowMenuVariants.mockClear();
-  testDoubles.menuOpenChanges = {};
 });
 
 afterEach(() => {
@@ -182,20 +162,17 @@ afterEach(() => {
 });
 
 describe("SessionListRowの中身", () => {
-  it("表示名が無ければリポジトリ名を主ラベルにし、見分け用の親ディレクトリ名を後ろに添える", () => {
+  it("表示名が無ければブランチを主ラベルにし、2行目はプレビューだけにする (リポジトリ名は見出しにある)", () => {
     const openArea = openAreaOf(mount(<SessionListRow {...rowProps()} />));
 
     expect(openArea.getAttribute("role")).toBe("button");
     expect(openArea.getAttribute("title")).toBe("/work/app");
-    const label = openArea.querySelector('[data-testid="session-row-label"]');
-    expect(label?.childNodes[0]?.textContent).toBe("app");
     expect(
-      label?.querySelector('[data-testid="session-row-disambiguator"]')
-        ?.textContent
-    ).toBe("work");
+      openArea.querySelector('[data-testid="session-row-label"]')?.textContent
+    ).toBe("feature/login");
     expect(
       openArea.querySelector('[data-testid="session-row-detail"]')?.textContent
-    ).toBe("feature/login·テストを実行しています");
+    ).toBe("テストを実行しています");
     expect(openArea.textContent).toContain(presentStatus("IDLE").label);
   });
 
@@ -211,7 +188,7 @@ describe("SessionListRowの中身", () => {
     expect(chip.querySelector("svg")).not.toBeNull();
   });
 
-  it("表示名があれば主ラベルにし、2行目の先頭にリポジトリ名を足す", () => {
+  it("表示名があれば主ラベルにし、2行目の先頭にブランチを足す", () => {
     const openArea = openAreaOf(
       mount(<SessionListRow {...rowProps({ displayName: "ログイン画面" })} />)
     );
@@ -221,7 +198,7 @@ describe("SessionListRowの中身", () => {
     ).toBe("ログイン画面");
     expect(
       openArea.querySelector('[data-testid="session-row-detail"]')?.textContent
-    ).toBe("appwork·feature/login·テストを実行しています");
+    ).toBe("feature/login·テストを実行しています");
   });
 
   it("行を押すかEnterで開く操作を呼ぶ", () => {
@@ -323,42 +300,6 @@ describe("SessionListRowのPRの札", () => {
   });
 });
 
-describe("SessionListRowのメニューの開閉", () => {
-  it("メニューを開いたまま行が消えたら、開いていた分だけ閉じたことを知らせる", () => {
-    const onMenuOpenChange = vi.fn();
-    mount(<SessionListRow {...rowProps({ onMenuOpenChange })} />);
-
-    act(() => testDoubles.menuOpenChanges.dropdown?.(true));
-    act(() => testDoubles.menuOpenChanges.context?.(true));
-    expect(onMenuOpenChange.mock.calls).toEqual([[true], [true]]);
-
-    const { root, container } = mountedRoots.splice(0)[0];
-    act(() => root.unmount());
-    container.remove();
-
-    expect(onMenuOpenChange.mock.calls).toEqual([
-      [true],
-      [true],
-      [false],
-      [false],
-    ]);
-  });
-
-  it("閉じてから行が消えたときは、重ねて閉じたことを知らせない", () => {
-    const onMenuOpenChange = vi.fn();
-    mount(<SessionListRow {...rowProps({ onMenuOpenChange })} />);
-
-    act(() => testDoubles.menuOpenChanges.dropdown?.(true));
-    act(() => testDoubles.menuOpenChanges.dropdown?.(false));
-
-    const { root, container } = mountedRoots.splice(0)[0];
-    act(() => root.unmount());
-    container.remove();
-
-    expect(onMenuOpenChange.mock.calls).toEqual([[true], [false]]);
-  });
-});
-
 describe("SessionListRowの表示名の編集", () => {
   it("編集を始めると今の主ラベルを入れた入力欄にフォーカスし、Enterで前後の空白を除いて保存する", () => {
     const props = rowProps({ editing: true, displayName: "旧名" });
@@ -375,7 +316,7 @@ describe("SessionListRowの表示名の編集", () => {
     expect(props.onEditingChange).toHaveBeenCalledWith(false);
   });
 
-  it("空、またはリポジトリ名と同じ値を保存すると表示名を解除する", () => {
+  it("空、または表示名が無いときの主ラベル (ブランチ) と同じ値を保存すると表示名を解除する", () => {
     const emptied = rowProps({ editing: true, displayName: "旧名" });
     const emptyInput = editingInput(mount(<SessionListRow {...emptied} />));
     typeInto(emptyInput, "   ");
@@ -388,7 +329,7 @@ describe("SessionListRowの表示名の編集", () => {
     });
     const sameAsRepo = rowProps({ editing: true, displayName: "旧名" });
     const repoInput = editingInput(mount(<SessionListRow {...sameAsRepo} />));
-    typeInto(repoInput, "app");
+    typeInto(repoInput, "feature/login");
     pressKey(repoInput, "Enter");
     expect(sameAsRepo.onSaveDisplayName).toHaveBeenCalledWith(null);
   });

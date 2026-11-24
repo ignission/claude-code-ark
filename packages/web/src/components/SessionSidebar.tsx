@@ -2,7 +2,7 @@
  * SessionSidebar - PCのセッション一覧サイドバー
  *
  * ヘッダー (ワードマークのメニュー・新規作成・ブラウザ) と、
- * 注意の順に並べたセッション一覧 (SessionSectionList) と、
+ * リポジトリごとに並べたセッション一覧 (SessionSectionList) と、
  * 下部に常に出すCPU/MEM/DISK (押すとBridgeを別タブで開く) を出す。
  * About と言語の切り替えはワードマークのメニューにある。
  *

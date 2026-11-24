@@ -37,23 +37,7 @@ vi.mock("@/components/ui/context-menu", () => ({
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
-  // Radixのメニューはjsdomで開けないため、開いたことを起こすボタンを行ごとに置く
-  DropdownMenu: ({
-    children,
-    onOpenChange,
-  }: {
-    children?: ReactNode;
-    onOpenChange?: (open: boolean) => void;
-  }) => (
-    <>
-      {children}
-      <button
-        type="button"
-        data-testid="open-row-menu"
-        onClick={() => onOpenChange?.(true)}
-      />
-    </>
-  ),
+  DropdownMenu: ({ children }: { children?: ReactNode }) => <>{children}</>,
   DropdownMenuTrigger: ({ children }: { children?: ReactNode }) => (
     <>{children}</>
   ),
@@ -63,11 +47,12 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 }));
 
 const repoPath = "/work/app";
+const zetaRepoPath = "/work/zeta";
 
-function makeWorktree(id: string): Worktree {
+function makeWorktree(id: string, repo = repoPath): Worktree {
   return {
     id,
-    path: `${repoPath}/.worktrees/${id}`,
+    path: `${repo}/.worktrees/${id}`,
     branch: `feature/${id}`,
     commit: "abc1234",
     isMain: false,
@@ -75,12 +60,12 @@ function makeWorktree(id: string): Worktree {
   };
 }
 
-function makeSession(worktree: Worktree): ManagedSession {
+function makeSession(worktree: Worktree, repo = repoPath): ManagedSession {
   return {
     id: `session-${worktree.id}`,
     worktreeId: worktree.id,
     worktreePath: worktree.path,
-    repoPath,
+    repoPath: repo,
     status: "active",
     createdAt: new Date("2026-09-17T00:00:00Z"),
     tmuxSessionName: `ark-${worktree.id}`,
@@ -89,7 +74,7 @@ function makeSession(worktree: Worktree): ManagedSession {
   };
 }
 
-const worktrees = ["a", "b", "c"].map(makeWorktree);
+const worktrees = ["a", "b", "c"].map(id => makeWorktree(id));
 const sessions = new Map(
   worktrees.map(worktree => {
     const session = makeSession(worktree);
@@ -142,28 +127,17 @@ function mountList(props: SessionSectionListProps) {
   };
 }
 
-/** 一覧の直下の並び。見出し (data-section) は"# 見出しの文言"、行はdata-session-keyの値 */
+/** 一覧の並び。リポジトリの見出しは"# 見出しの文言"、行はdata-session-keyの値 */
 function sequence(container: HTMLElement): string[] {
   const list = container.querySelector("[data-session-list]");
-  return Array.from(list?.children ?? []).map(element =>
-    element.hasAttribute("data-section")
-      ? `# ${element.firstElementChild?.textContent ?? ""}`
-      : (element
-          .querySelector("[data-session-key]")
-          ?.getAttribute("data-session-key") ?? "?")
+  return Array.from(list?.querySelectorAll("[data-repo-group]") ?? []).flatMap(
+    group => [
+      `# ${group.querySelector("h2")?.textContent ?? ""}`,
+      ...Array.from(group.querySelectorAll("[data-session-key]"), element =>
+        element.getAttribute("data-session-key")
+      ),
+    ]
   );
-}
-
-/** 行を押せる要素 (data-session-key) を含む、一覧の直下の要素 */
-function rowElementOf(container: HTMLElement, key: string): HTMLElement {
-  let element = container.querySelector<HTMLElement>(
-    `[data-session-key="${key}"]`
-  );
-  while (element && !element.parentElement?.hasAttribute("data-session-list")) {
-    element = element.parentElement;
-  }
-  expect(element).not.toBeNull();
-  return element as HTMLElement;
 }
 
 function pressableOf(container: HTMLElement, key: string): HTMLElement {
@@ -172,6 +146,40 @@ function pressableOf(container: HTMLElement, key: string): HTMLElement {
   );
   expect(pressable).not.toBeNull();
   return pressable as HTMLElement;
+}
+
+function handleOf(container: HTMLElement, repo: string): HTMLButtonElement {
+  const handle = Array.from(
+    container.querySelectorAll<HTMLButtonElement>("[data-repo-handle]")
+  ).find(element => element.dataset.repoHandle === repo);
+  expect(handle).toBeDefined();
+  return handle as HTMLButtonElement;
+}
+
+/** app (a, b, c) に、名前順で後ろに来る zeta (z) を足した一覧 */
+const zetaWorktree = makeWorktree("z", zetaRepoPath);
+const twoRepoProps = (overrides: Partial<SessionSectionListProps> = {}) =>
+  listProps({
+    worktrees: [...worktrees, zetaWorktree],
+    sessions: new Map([
+      ...sessions,
+      ["session-z", makeSession(zetaWorktree, zetaRepoPath)],
+    ]),
+    repoList: [zetaRepoPath, repoPath],
+    ...overrides,
+  });
+
+function pointer(
+  target: HTMLElement,
+  type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
+  clientY: number
+) {
+  // jsdom には PointerEvent が無い。React は pointer* の名前で拾うので MouseEvent で足りる
+  act(() => {
+    target.dispatchEvent(
+      new MouseEvent(type, { bubbles: true, cancelable: true, clientY })
+    );
+  });
 }
 
 function menuOf(key: string): SessionRowMenuProps {
@@ -211,27 +219,46 @@ describe("SessionSectionListのTODO件数", () => {
 });
 
 describe("SessionSectionListの並べ方", () => {
-  it("注意の順に3セクションで並べ、「あなたの番」に件数を出し、空のセクションは出さない", () => {
-    const { container } = mountList(
-      listProps({ sessionStatuses: statusesOf("IDLE", "TOOL", "AWAITING") })
-    );
+  it("リポジトリの見出しの下に、リポジトリ名の順で並べる", () => {
+    const { container } = mountList(twoRepoProps());
 
     expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:c",
+      "# app",
       "wt:a",
-      "# 作業中",
       "wt:b",
+      "wt:c",
+      "# zeta",
+      "wt:z",
     ]);
-    expect(
-      container.querySelector(
-        '[data-section="your-turn"] [data-testid="section-count"]'
-      )?.textContent
-    ).toBe("2");
-    expect(container.querySelector('[data-section="resting"]')).toBeNull();
   });
 
-  it("「あなたの番」の件数を、見出しと同じ値で外へ知らせる", () => {
+  it("状態が変わっても行は動かず、同じDOM要素のまま札だけ替わる", () => {
+    const props = twoRepoProps({
+      sessionStatuses: statusesOf("IDLE", "TOOL", "READY"),
+    });
+    const { container, rerender } = mountList(props);
+    const rowC = pressableOf(container, "wt:c");
+
+    rerender({
+      ...props,
+      sessionStatuses: statusesOf("TOOL", "READY", "AWAITING"),
+    });
+
+    expect(sequence(container)).toEqual([
+      "# app",
+      "wt:a",
+      "wt:b",
+      "wt:c",
+      "# zeta",
+      "wt:z",
+    ]);
+    expect(pressableOf(container, "wt:c")).toBe(rowC);
+    expect(
+      rowC.querySelector("[data-status]")?.getAttribute("data-status")
+    ).toBe("AWAITING");
+  });
+
+  it("「あなたの番」の件数を外へ知らせる", () => {
     const onYourTurnCountChange = vi.fn();
     mountList(
       listProps({
@@ -239,322 +266,135 @@ describe("SessionSectionListの並べ方", () => {
         onYourTurnCountChange,
       })
     );
-
     expect(onYourTurnCountChange).toHaveBeenLastCalledWith(2);
   });
 
-  it("あなたの番は会話の最終更新が新しい順に並べる", () => {
+  it("保存した順があれば、その順にリポジトリを並べる", () => {
     const { container } = mountList(
-      listProps({
-        sessionStatuses: statusesOf("IDLE", "IDLE", "IDLE"),
-        sessionLastUpdatedAt: new Map([
-          ["session-a", 100],
-          ["session-b", 300],
-          ["session-c", 200],
-        ]),
-      })
+      twoRepoProps({ repoOrder: [zetaRepoPath, repoPath] })
     );
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:b",
-      "wt:c",
-      "wt:a",
-    ]);
+    expect(sequence(container)[0]).toBe("# zeta");
   });
 
-  it("一覧の中にフォーカスがある間は、最終更新が動いても位置を保ち、外れたら並べ直す", () => {
-    // 最終更新は会話のたびに動くので、押そうとした行が足元で入れ替わりやすい
-    const props = listProps({
-      sessionStatuses: statusesOf("IDLE", "IDLE", "IDLE"),
-      sessionLastUpdatedAt: new Map([
-        ["session-a", 300],
-        ["session-b", 200],
-        ["session-c", 100],
-      ]),
-    });
-    const { container, rerender } = mountList(props);
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:a",
-      "wt:b",
-      "wt:c",
-    ]);
-    const openA = pressableOf(container, "wt:a");
-    act(() => openA.focus());
+  it("並べ替えを渡さないか、リポジトリが1つだけなら、つまみを出さない", () => {
+    const none = mountList(twoRepoProps());
+    expect(none.container.querySelector("[data-repo-handle]")).toBeNull();
 
-    rerender({
-      ...props,
-      sessionLastUpdatedAt: new Map([
-        ["session-a", 300],
-        ["session-b", 200],
-        ["session-c", 400],
-      ]),
-    });
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:a",
-      "wt:b",
-      "wt:c",
-    ]);
-
-    act(() => openA.blur());
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:c",
-      "wt:a",
-      "wt:b",
-    ]);
+    const single = mountList(listProps({ onRepoOrderChange: vi.fn() }));
+    expect(single.container.querySelector("[data-repo-handle]")).toBeNull();
   });
 
-  it("セクションをまたいで移っても、行は同じ親の同じDOM要素のまま", () => {
-    const props = listProps();
+  it("つまみの上下キーで1つずつ動かし、動かしたあともつまみにフォーカスを残す", () => {
+    const onRepoOrderChange = vi.fn();
+    const props = twoRepoProps({ onRepoOrderChange });
     const { container, rerender } = mountList(props);
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:a",
-      "# 作業中",
-      "wt:b",
-      "# 休止中",
-      "wt:c",
-    ]);
-    const list = container.querySelector("[data-session-list]");
-    const rowB = rowElementOf(container, "wt:b");
-    const pressableB = pressableOf(container, "wt:b");
-
-    rerender({
-      ...props,
-      sessionStatuses: statusesOf("IDLE", "AWAITING", "READY"),
-    });
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:b",
-      "wt:a",
-      "# 休止中",
-      "wt:c",
-    ]);
-    expect(rowElementOf(container, "wt:b")).toBe(rowB);
-    expect(pressableOf(container, "wt:b")).toBe(pressableB);
-    expect(rowB.parentElement).toBe(list);
-  });
-
-  it("一覧の中にフォーカスがある間は、行がセクションをまたいでも位置を保ってチップと件数だけ更新し、フォーカスが外れたら並べ直す", () => {
-    const props = listProps({
-      sessionStatuses: statusesOf("IDLE", "TOOL", "THINK"),
-    });
-    const { container, rerender } = mountList(props);
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:a",
-      "# 作業中",
-      "wt:b",
-      "wt:c",
-    ]);
-    const openA = pressableOf(container, "wt:a");
-    act(() => openA.focus());
-
-    rerender({
-      ...props,
-      sessionStatuses: statusesOf("IDLE", "AWAITING", "THINK"),
-    });
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:a",
-      "# 作業中",
-      "wt:b",
-      "wt:c",
-    ]);
-    expect(pressableOf(container, "wt:b").textContent).toContain(
-      presentStatus("AWAITING").label
+    const handle = handleOf(container, zetaRepoPath);
+    expect(handle.getAttribute("aria-label")).toBe(
+      "zetaの位置を動かす (ドラッグか上下キー)"
     );
-    expect(
-      container.querySelector('[data-testid="section-count"]')?.textContent
-    ).toBe("2");
-
-    act(() => openA.blur());
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:b",
-      "wt:a",
-      "# 作業中",
-      "wt:c",
-    ]);
-  });
-
-  it("保留中にセクションが空になっても、その見出しを同じ位置に残して下の行を動かさず、保留が解けたら消す", () => {
-    const props = listProps();
-    const { container, rerender } = mountList(props);
-    const before = [
-      "# あなたの番",
-      "wt:a",
-      "# 作業中",
-      "wt:b",
-      "# 休止中",
-      "wt:c",
-    ];
-    expect(sequence(container)).toEqual(before);
-    const openA = pressableOf(container, "wt:a");
-    act(() => openA.focus());
-
-    rerender({
-      ...props,
-      sessionStatuses: statusesOf("IDLE", "AWAITING", "READY"),
-    });
-
-    expect(sequence(container)).toEqual(before);
-    expect(
-      container.querySelector('[data-testid="section-count"]')?.textContent
-    ).toBe("2");
-
-    act(() => openA.blur());
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:b",
-      "wt:a",
-      "# 休止中",
-      "wt:c",
-    ]);
-    expect(container.querySelector('[data-section="working"]')).toBeNull();
-  });
-
-  it("保留中に「あなたの番」が空になると、見出しは残して件数のバッジだけ隠す", () => {
-    const props = listProps();
-    const { container, rerender } = mountList(props);
-    const openB = pressableOf(container, "wt:b");
-    act(() => openB.focus());
-
-    rerender({
-      ...props,
-      sessionStatuses: statusesOf("TOOL", "TOOL", "READY"),
-    });
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:a",
-      "# 作業中",
-      "wt:b",
-      "# 休止中",
-      "wt:c",
-    ]);
-    expect(container.querySelector('[data-testid="section-count"]')).toBeNull();
-
-    act(() => openB.blur());
-
-    expect(sequence(container)).toEqual([
-      "# 作業中",
-      "wt:a",
-      "wt:b",
-      "# 休止中",
-      "wt:c",
-    ]);
-  });
-
-  it("保留の前に空だったセクションの見出しは、保留中に行が入っても描かない", () => {
-    const props = listProps({
-      sessionStatuses: statusesOf("TOOL", "TOOL", "TOOL"),
-    });
-    const { container, rerender } = mountList(props);
-    const openA = pressableOf(container, "wt:a");
-    act(() => openA.focus());
-    expect(sequence(container)).toEqual(["# 作業中", "wt:a", "wt:b", "wt:c"]);
-
-    rerender({
-      ...props,
-      sessionStatuses: statusesOf("IDLE", "TOOL", "TOOL"),
-    });
-
-    expect(sequence(container)).toEqual(["# 作業中", "wt:a", "wt:b", "wt:c"]);
-    expect(container.querySelector('[data-section="your-turn"]')).toBeNull();
-
-    act(() => openA.blur());
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:a",
-      "# 作業中",
-      "wt:b",
-      "wt:c",
-    ]);
-  });
-
-  it("…のメニューを閉じてフォーカスがボタンに残っても、行を押せば保留が解けて並べ直す", () => {
-    const props = listProps({
-      sessionStatuses: statusesOf("IDLE", "TOOL", "THINK"),
-    });
-    const { container, rerender } = mountList(props);
-    const menuButtonA = rowElementOf(
-      container,
-      "wt:a"
-    ).querySelector<HTMLButtonElement>(
-      'button[aria-label="app (feature/a) のメニュー"]'
-    );
-    act(() => menuButtonA?.focus());
-
-    rerender({
-      ...props,
-      sessionStatuses: statusesOf("IDLE", "AWAITING", "THINK"),
-    });
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:a",
-      "# 作業中",
-      "wt:b",
-      "wt:c",
-    ]);
+    act(() => handle.focus());
 
     act(() => {
-      pressableOf(container, "wt:b").dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+      handle.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })
       );
     });
+    // 一番下からは下へ動かない
+    expect(onRepoOrderChange).not.toHaveBeenCalled();
 
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:b",
-      "wt:a",
-      "# 作業中",
-      "wt:c",
+    act(() => {
+      handle.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })
+      );
+    });
+    expect(onRepoOrderChange).toHaveBeenCalledWith([zetaRepoPath, repoPath]);
+
+    rerender({ ...props, repoOrder: [zetaRepoPath, repoPath] });
+    expect(sequence(container)[0]).toBe("# zeta");
+    expect(document.activeElement).toBe(handleOf(container, zetaRepoPath));
+  });
+
+  it("つまみをドラッグしている間は並べた順で描き、離したときに見えていないパスも残して保存する", () => {
+    const onRepoOrderChange = vi.fn();
+    const { container } = mountList(
+      twoRepoProps({ onRepoOrderChange, repoOrder: ["/work/hidden"] })
+    );
+    // かたまりの位置: app は 0-100、zeta は 100-200
+    for (const group of container.querySelectorAll<HTMLElement>(
+      "[data-repo-group]"
+    )) {
+      const top = group.dataset.repoGroup === repoPath ? 0 : 100;
+      group.getBoundingClientRect = () =>
+        ({ top, height: 100, bottom: top + 100 }) as DOMRect;
+    }
+    const handle = handleOf(container, zetaRepoPath);
+
+    pointer(handle, "pointerdown", 150);
+    pointer(handle, "pointermove", 10);
+
+    expect(sequence(container)[0]).toBe("# zeta");
+    expect(onRepoOrderChange).not.toHaveBeenCalled();
+
+    pointer(handle, "pointerup", 10);
+    expect(onRepoOrderChange).toHaveBeenCalledWith([
+      zetaRepoPath,
+      repoPath,
+      "/work/hidden",
     ]);
   });
 
-  it("…のメニューを開いたまま行が消えても、保留を残さずに並べ直す", () => {
-    const props = listProps({
-      sessionStatuses: statusesOf("IDLE", "TOOL", "THINK"),
-    });
-    const { container, rerender } = mountList(props);
-    act(() =>
-      rowElementOf(container, "wt:c")
-        .querySelector<HTMLButtonElement>('[data-testid="open-row-menu"]')
-        ?.click()
+  it("ドラッグで並べ替えを描いたあと、外れたポインタキャプチャを取り直す", () => {
+    const { container } = mountList(
+      twoRepoProps({ onRepoOrderChange: vi.fn() })
     );
+    for (const group of container.querySelectorAll<HTMLElement>(
+      "[data-repo-group]"
+    )) {
+      const top = group.dataset.repoGroup === repoPath ? 0 : 100;
+      group.getBoundingClientRect = () =>
+        ({ top, height: 100, bottom: top + 100 }) as DOMRect;
+    }
+    const handle = handleOf(container, zetaRepoPath);
+    // かたまりのDOMが動くとキャプチャが外れる、というブラウザの振る舞いを真似る
+    const setPointerCapture = vi.fn();
+    handle.setPointerCapture = setPointerCapture;
+    handle.hasPointerCapture = () => false;
 
-    const withoutC = {
-      ...props,
-      worktrees: worktrees.filter(worktree => worktree.id !== "c"),
-      sessions: new Map(
-        [...sessions].filter(([sessionId]) => sessionId !== "session-c")
-      ),
-    };
-    rerender(withoutC);
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:a",
-      "# 作業中",
-      "wt:b",
-    ]);
+    pointer(handle, "pointerdown", 150);
+    const capturesBeforeMove = setPointerCapture.mock.calls.length;
+    pointer(handle, "pointermove", 10);
 
-    rerender({
-      ...withoutC,
-      sessionStatuses: statusesOf("IDLE", "AWAITING", "THINK"),
-    });
+    expect(sequence(container)[0]).toBe("# zeta");
+    expect(setPointerCapture.mock.calls.length).toBeGreaterThan(
+      capturesBeforeMove
+    );
+  });
 
-    expect(sequence(container)).toEqual(["# あなたの番", "wt:b", "wt:a"]);
+  it("ドラッグを取り消したら保存せず、元の順に戻す", () => {
+    const onRepoOrderChange = vi.fn();
+    const { container } = mountList(twoRepoProps({ onRepoOrderChange }));
+    for (const group of container.querySelectorAll<HTMLElement>(
+      "[data-repo-group]"
+    )) {
+      const top = group.dataset.repoGroup === repoPath ? 0 : 100;
+      group.getBoundingClientRect = () =>
+        ({ top, height: 100, bottom: top + 100 }) as DOMRect;
+    }
+    const handle = handleOf(container, zetaRepoPath);
+
+    pointer(handle, "pointerdown", 150);
+    pointer(handle, "pointermove", 10);
+    pointer(handle, "pointercancel", 10);
+
+    expect(sequence(container)[0]).toBe("# app");
+    expect(onRepoOrderChange).not.toHaveBeenCalled();
+  });
+
+  it("ホームの行を外して行が無くなったリポジトリは、見出しも出さない", () => {
+    const { container } = mountList(
+      twoRepoProps({ homeWorktreePath: zetaWorktree.path })
+    );
+    expect(sequence(container)).toEqual(["# app", "wt:a", "wt:b", "wt:c"]);
   });
 
   it("リポジトリが未登録でも、動いているセッションと会話が直近に動いたセッションは出す", () => {
@@ -570,25 +410,13 @@ describe("SessionSectionListの並べ方", () => {
     );
 
     expect(sequence(container)).toEqual([
-      "# あなたの番",
+      "# app",
       "s:session-a",
-      "# 作業中",
       "s:session-b",
     ]);
   });
 
-  it("行が1件も無ければ新規作成の案内を出す", () => {
-    const { container } = mountList(
-      listProps({
-        repoList: [],
-        sessionStatuses: statusesOf("IDLE", "READY", "READY"),
-      })
-    );
-
-    expect(container.textContent).toContain("セッションがありません");
-  });
-
-  it("行が1件も無くてもdata-session-listの要素は残り、案内文を含む", () => {
+  it("行が1件も無くてもdata-session-listの要素は残り、新規作成の案内を出す", () => {
     const { container } = mountList(
       listProps({
         repoList: [],
@@ -612,7 +440,7 @@ describe("SessionSectionListの手動の休止", () => {
     );
   }
 
-  it("手動で休止にした行は、状態に関係なく休止中に並べ、あなたの番の件数から外す", () => {
+  it("手動で休止にした行は、位置を変えずに札を休止にし、あなたの番の件数から外す", () => {
     const onYourTurnCountChange = vi.fn();
     const { container } = mountList(
       listProps({
@@ -622,14 +450,10 @@ describe("SessionSectionListの手動の休止", () => {
       })
     );
 
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:c",
-      "# 作業中",
-      "wt:b",
-      "# 休止中",
-      "wt:a",
-    ]);
+    expect(sequence(container)).toEqual(["# app", "wt:a", "wt:b", "wt:c"]);
+    const chip = pressableOf(container, "wt:a").querySelector("[data-status]");
+    expect(chip?.getAttribute("data-status")).toBe("RESTED");
+    expect(chip?.textContent).toBe(presentStatus("RESTED").label);
     expect(onYourTurnCountChange).toHaveBeenLastCalledWith(1);
   });
 
@@ -653,52 +477,7 @@ describe("SessionSectionListの手動の休止", () => {
     expect(onSetSessionRested).toHaveBeenNthCalledWith(2, "session-c", false);
   });
 
-  it("一覧の中にフォーカスがあっても、メニューで休止にした行は休止中へ動かす", () => {
-    const onSetSessionRested = vi.fn();
-    const props = listProps({
-      sessionStatuses: statusesOf("IDLE", "TOOL", "IDLE"),
-      onSetSessionRested,
-    });
-    const { container, rerender } = mountList(props);
-    const menuButtonA = rowElementOf(
-      container,
-      "wt:a"
-    ).querySelector<HTMLButtonElement>(
-      'button[aria-label="app (feature/a) のメニュー"]'
-    );
-    act(() => menuButtonA?.focus());
-
-    act(() => menuOf("wt:a").rest?.onChange(true));
-    expect(onSetSessionRested).toHaveBeenCalledWith("session-a", true);
-    // サーバーから session:updated が届いた
-    rerender({ ...props, sessions: sessionsWithRested(["session-a"]) });
-
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:c",
-      "# 作業中",
-      "wt:b",
-      "# 休止中",
-      "wt:a",
-    ]);
-
-    // 動いたあとは保留に戻る: フォーカスが残る間は、ほかの状態の変化で行が動かない
-    rerender({
-      ...props,
-      sessions: sessionsWithRested(["session-a"]),
-      sessionStatuses: statusesOf("IDLE", "AWAITING", "IDLE"),
-    });
-    expect(sequence(container)).toEqual([
-      "# あなたの番",
-      "wt:c",
-      "# 作業中",
-      "wt:b",
-      "# 休止中",
-      "wt:a",
-    ]);
-  });
-
-  it("状態だけで休止中にいる行には、休止の項目を出さない", () => {
+  it("待機・停止の行には、休止の項目を出さない", () => {
     mountList(
       listProps({
         sessionStatuses: statusesOf("IDLE", "TOOL", "READY"),
