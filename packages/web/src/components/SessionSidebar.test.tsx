@@ -75,7 +75,6 @@ function sidebarProps(): ComponentProps<typeof SessionSidebar> {
     worktrees: [],
     repoList: ["/work/app"],
     sessionStatuses: new Map([["session-1", "IDLE"]]),
-    sessionPreviews: new Map([["session-1", "どちらにしますか"]]),
     sessionPrStatuses: new Map(),
     selectedSessionId: "session-1",
     onOpenSession: vi.fn(),
@@ -131,7 +130,6 @@ describe("SessionSidebar", () => {
       repoList: ["/work/app"],
     });
     expect(listProps.sessionStatuses).toBe(props.sessionStatuses);
-    expect(listProps.sessionPreviews).toBe(props.sessionPreviews);
     expect(listProps.onSelectRepoGrid).toBe(props.onSelectRepoGrid);
     expect(listProps).not.toHaveProperty("onNewSession");
     expect(listProps).not.toHaveProperty("onOpenAbout");

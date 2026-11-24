@@ -426,7 +426,6 @@ export interface ServerToClientEvents {
   "session:previews": (
     previews: Array<{
       sessionId: string;
-      text: string;
       activityText: string;
       status: SessionStatus;
       /**

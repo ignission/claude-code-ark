@@ -1027,7 +1027,6 @@ export class SessionOrchestrator extends EventEmitter {
    */
   getAllPreviews(): Array<{
     sessionId: string;
-    text: string;
     activityText: string;
     status: SessionStatus;
     bridgeStatus: BridgeSessionStatus;
@@ -1039,7 +1038,6 @@ export class SessionOrchestrator extends EventEmitter {
     const allSessions = tmuxManager.getAllSessions();
     const previews: Array<{
       sessionId: string;
-      text: string;
       activityText: string;
       status: SessionStatus;
       bridgeStatus: BridgeSessionStatus;
@@ -1058,7 +1056,7 @@ export class SessionOrchestrator extends EventEmitter {
       if (!captured.ok) continue;
       const raw = captured.value;
       // Bridge dashboard / サイドバードット / RepoGridView で共通利用する状態判定。
-      // 既存の text/activityText/status (legacy SessionStatus) と同じ raw から
+      // activityText/status (legacy SessionStatus) と同じ raw から
       // 派生させて、tmux capture を1回で済ませる。
       //
       // さらに Claude Code CLI が状態ファイルに busy を書いていれば「作業中」に格上げする。
@@ -1125,16 +1123,15 @@ export class SessionOrchestrator extends EventEmitter {
         return false;
       };
 
-      // UI行を除外した最後の行を取得
+      // UI行を除外した内容行。有無だけを status の判定に使う
       const contentLines = allLines.filter(line => !isUiLine(line));
-      const text =
-        contentLines.length > 0 ? contentLines[contentLines.length - 1] : "";
       // ✢✻行（アイドル時表示用）
       const activityLine = allLines.findLast(line => /[✢✻]/.test(line)) || "";
 
       // コンテンツ行が空 → idle（起動中アニメーションやno content）
       // コンテンツ行あり → active
-      const status: SessionStatus = text === "" ? "idle" : "active";
+      const status: SessionStatus =
+        contentLines.length === 0 ? "idle" : "active";
       // ステータス変化時のみDB更新（不要なI/Oを回避）
       // stopped/errorはライフサイクル駆動のstatusなので上書きしない
       const dbSession = db.getSessionByWorktreePath(session.worktreePath);
@@ -1265,7 +1262,6 @@ export class SessionOrchestrator extends EventEmitter {
 
       previews.push({
         sessionId: session.id,
-        text,
         activityText: activityLine,
         status,
         bridgeStatus,

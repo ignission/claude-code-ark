@@ -1,7 +1,7 @@
 /**
  * SessionListRow - セッション一覧の1行 (PCサイドバーの行 / モバイル一覧のカード)
  *
- * 1行目は「状態チップ + 主ラベル」、2行目は「PRの札 + ブランチ · プレビュー文」。
+ * 1行目は「状態チップ + 主ラベル」、2行目は「PRの札 + ブランチ」。
  * PRの札はチェックの結果 (✓ / ✕ / 待ち) かマージ済み・クローズを出し、押すとPRを開く。
  * 色を付けるのは落ちたときだけ (セッションの状態の色は使わない)。
  * 行はリポジトリの見出しの下に並ぶので、主ラベルにリポジトリ名は出さない。表示名があれば表示名
@@ -52,8 +52,6 @@ export interface SessionListRowProps {
   entry: SessionListEntry;
   /** 表示名 (前後の空白を除いた値。未設定ならnull) */
   displayName: string | null;
-  /** 端末の最後の内容行。空なら2行目に出さない */
-  previewText: string;
   /** ブランチのPRとチェックの集計。PRが無ければnull */
   prStatus: SessionPrStatus | null;
   /** 未完了の分岐TODOの件数。0なら出さない */
@@ -77,7 +75,6 @@ export function SessionListRow({
   variant,
   entry,
   displayName,
-  previewText,
   prStatus,
   todoCount = 0,
   childCount = 0,
@@ -159,9 +156,6 @@ export function SessionListRow({
       // ブランチは機械が付けた名前なので等幅にする (差分の量や CPU と同じ扱い)
       node: <span className="font-mono text-foreground/80">{branch}</span>,
     });
-  }
-  if (previewText) {
-    detailSegments.push({ key: "preview", node: previewText });
   }
 
   // 選ばれた行が一覧のスクロールの外にあれば、見える位置へ寄せる。タブなどから

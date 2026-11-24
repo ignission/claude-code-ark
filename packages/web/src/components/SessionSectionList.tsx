@@ -63,8 +63,6 @@ export interface SessionSectionListProps {
    * 未登録のリポジトリでも直近に動いたセッションを出すのに使う
    */
   sessionLastUpdatedAt?: Map<string, number>;
-  /** sessionId → 端末の最後の内容行。2行目にそのまま出す */
-  sessionPreviews: Map<string, string>;
   /** sessionId → ブランチのPRとチェックの集計。PRが無ければエントリが無い */
   sessionPrStatuses: Map<string, SessionPrStatus>;
   /** sessionId → 未完了の分岐TODOの件数。無ければエントリが無い */
@@ -146,7 +144,6 @@ export function SessionSectionList({
   repoList,
   sessionStatuses,
   sessionLastUpdatedAt,
-  sessionPreviews,
   sessionPrStatuses,
   sessionTodoCounts,
   selectedSessionId,
@@ -398,9 +395,6 @@ export function SessionSectionList({
         }
         onOpenParent={
           parentSession ? () => onOpenSession(parentSession.id) : undefined
-        }
-        previewText={
-          entry.session ? (sessionPreviews.get(entry.session.id) ?? "") : ""
         }
         selected={
           entry.session !== null && entry.session.id === selectedSessionId

@@ -267,7 +267,6 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     copyBuffer: undefined,
     deletedWorktreeId: null,
     clearDeletedWorktreeId: fn,
-    sessionPreviews: new Map(),
     sessionPrStatuses: new Map(),
     sessionPlanLimits: new Map(),
     sessionAwaitingTexts: new Map([
@@ -487,13 +486,12 @@ describe("Dashboardのファイルペイン配線", () => {
 });
 
 describe("Dashboardのサイドバー配線", () => {
-  it("状態とプレビューをサイドバーへ渡し、PCではホストの状態を常に購読する", () => {
+  it("状態をサイドバーへ渡し、PCではホストの状態を常に購読する", () => {
     mount(<Dashboard />);
 
     const state = testDoubles.socketState;
     const sidebar = latestProps(testDoubles.sessionSidebar);
     expect(sidebar.sessionStatuses).toBe(state.sessionStatuses);
-    expect(sidebar.sessionPreviews).toBe(state.sessionPreviews);
     expect(sidebar.selectedSessionId).toBe("dashboard-session");
     expect(sidebar).not.toHaveProperty("sessionActivityTexts");
     expect(latestProps(testDoubles.aboutDialog)).toMatchObject({
@@ -569,7 +567,6 @@ describe("Dashboardのモバイル一覧の配線", () => {
     const state = testDoubles.socketState;
     const layout = latestProps(testDoubles.mobileLayout);
     expect(layout.sessionStatuses).toBe(state.sessionStatuses);
-    expect(layout.sessionPreviews).toBe(state.sessionPreviews);
     expect(layout.worktreeDisplayNames).toBe(state.worktreeDisplayNames);
     expect(layout.onSetWorktreeDisplayName).toBe(state.setWorktreeDisplayName);
     expect(layout.onCreateWorktreeForRepo).toBeTypeOf("function");

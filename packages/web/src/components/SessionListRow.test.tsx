@@ -87,7 +87,6 @@ function rowProps(
     variant: "sidebar",
     entry: entryOf(),
     displayName: null,
-    previewText: "テストを実行しています",
     prStatus: null,
     selected: false,
     editing: false,
@@ -162,7 +161,7 @@ afterEach(() => {
 });
 
 describe("SessionListRowの中身", () => {
-  it("表示名が無ければブランチを主ラベルにし、2行目はプレビューだけにする (リポジトリ名は見出しにある)", () => {
+  it("表示名が無ければブランチを主ラベルにし、2行目は出さない (リポジトリ名は見出しにある)", () => {
     const openArea = openAreaOf(mount(<SessionListRow {...rowProps()} />));
 
     expect(openArea.getAttribute("role")).toBe("button");
@@ -171,8 +170,8 @@ describe("SessionListRowの中身", () => {
       openArea.querySelector('[data-testid="session-row-label"]')?.textContent
     ).toBe("feature/login");
     expect(
-      openArea.querySelector('[data-testid="session-row-detail"]')?.textContent
-    ).toBe("テストを実行しています");
+      openArea.querySelector('[data-testid="session-row-detail"]')
+    ).toBeNull();
     expect(openArea.textContent).toContain(presentStatus("IDLE").label);
   });
 
@@ -198,7 +197,7 @@ describe("SessionListRowの中身", () => {
     ).toBe("ログイン画面");
     expect(
       openArea.querySelector('[data-testid="session-row-detail"]')?.textContent
-    ).toBe("feature/login·テストを実行しています");
+    ).toBe("feature/login");
   });
 
   it("行を押すかEnterで開く操作を呼ぶ", () => {
