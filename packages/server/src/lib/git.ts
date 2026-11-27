@@ -454,7 +454,8 @@ function siblingWorktreePath(gitRoot: string, branch: string): string {
 /**
  * その名前で新しい worktree を作れば、まっさらなブランチになるか。
  * 同名のブランチがあると createWorktree は既存のブランチに付けて作業を引き継ぐので、
- * 名前を機械で作るとき (新しいタスクで名前を省いたとき) は、ブランチも作成先も無い名前を選ぶ
+ * 名前を機械で作るとき (新しいタスクで名前を省いたとき) は、ローカルにもリモートにも
+ * 同名のブランチが無く、作成先も無い名前を選ぶ
  */
 export async function isWorktreeNameAvailable(
   repoPath: string,
@@ -463,7 +464,13 @@ export async function isWorktreeNameAvailable(
   const safeBranch = validateBranchName(branchName);
   const gitRoot = await getGitRoot(validatePath(repoPath));
   if (fs.existsSync(siblingWorktreePath(gitRoot, safeBranch))) return false;
-  return !(await branchExists(gitRoot, safeBranch));
+  if (await branchExists(gitRoot, safeBranch)) return false;
+  // リモートに同名のブランチが残っていると、最初の push が拒まれる
+  const { stdout } = await execAsync(
+    `git for-each-ref --count=1 --format="%(refname)" "refs/remotes/*/${safeBranch}"`,
+    { cwd: gitRoot }
+  );
+  return stdout.trim() === "";
 }
 
 // Create a new worktree

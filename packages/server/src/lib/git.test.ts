@@ -30,6 +30,7 @@ import {
   deleteWorktree,
   getDefaultBranch,
   getLatestDefaultBase,
+  isWorktreeNameAvailable,
 } from "./git.js";
 
 const mockedExec = vi.mocked(exec);
@@ -142,6 +143,44 @@ beforeEach(() => {
   // fs デフォルト: パスは存在し、rm は成功する
   vi.mocked(fs.existsSync).mockReturnValue(true);
   vi.mocked(fs.promises.rm).mockResolvedValue(undefined);
+});
+
+describe("isWorktreeNameAvailable", () => {
+  function rules(opts: { local?: boolean; remote?: boolean }): ExecRule[] {
+    return [
+      ...baseRules(),
+      {
+        match: /show-ref --verify --quiet "refs\/heads\/doc"/,
+        respond: () => (opts.local ? { stdout: "" } : execError("missing")),
+      },
+      {
+        match: /for-each-ref .*"refs\/remotes\/\*\/doc"/,
+        respond: () => ({
+          stdout: opts.remote ? "refs/remotes/origin/doc\n" : "",
+        }),
+      },
+    ];
+  }
+
+  it("作成先もローカル・リモートの同名ブランチも無ければ使える", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    execRules = rules({});
+    expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(true);
+  });
+
+  it("作成先のディレクトリがあれば使えない", async () => {
+    vi.mocked(fs.existsSync).mockImplementation(p => p === WT);
+    execRules = rules({});
+    expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(false);
+  });
+
+  it("ローカルかリモートに同名のブランチがあれば使えない", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    execRules = rules({ local: true });
+    expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(false);
+    execRules = rules({ remote: true });
+    expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(false);
+  });
 });
 
 describe("createWorktree", () => {

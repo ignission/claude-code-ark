@@ -250,7 +250,7 @@ export function SessionSectionList({
           sessionId: session.id,
           worktree: worktree ?? undefined,
         });
-    } else if (worktree && !worktree.isMain && onDeleteWorktree) {
+    } else if (worktree && onDeleteWorktree) {
       onDelete = () => setDeleteTarget({ kind: "worktree", worktree });
     }
 
