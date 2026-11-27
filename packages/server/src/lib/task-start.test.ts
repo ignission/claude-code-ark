@@ -210,6 +210,46 @@ describe("startTask", () => {
     expect(deps.setDisplayName).toHaveBeenCalledWith("/r/app-fix", "fix log");
   });
 
+  it("同じリポジトリで名前を省いた起動が重なっても、別々の空いている名前を選ぶ", async () => {
+    const deps = fakeDeps([state(), state()]);
+    const created = new Set<string>();
+    vi.mocked(deps.isNameAvailable).mockImplementation(
+      async (_repo, name) => !created.has(name)
+    );
+    vi.mocked(deps.createWorktree).mockImplementation(async (_repo, name) => {
+      // 作るのに時間がかかる間に、もう一方の起動が空きを確かめに来る
+      await new Promise(resolve => setTimeout(resolve, 5));
+      created.add(name);
+      return {
+        id: name,
+        path: `/r/app-${name}`,
+        branch: name,
+        commit: "abc",
+        isMain: false,
+        isBare: false,
+      };
+    });
+    await Promise.all([
+      startTask(deps, { repoPath: "/r/app", prompt: "fix" }, WAIT),
+      startTask(deps, { repoPath: "/r/app", prompt: "fix" }, WAIT),
+    ]);
+    expect(
+      vi.mocked(deps.createWorktree).mock.calls.map(call => call[1])
+    ).toEqual(["fix", "fix-2"]);
+  });
+
+  it("名前を選ぶ途中で失敗しても、次の起動は止まらない", async () => {
+    const deps = fakeDeps([state(), state()]);
+    vi.mocked(deps.createWorktree)
+      .mockRejectedValueOnce(new Error("壊れた"))
+      .mockImplementation(fakeDeps([]).createWorktree);
+    const results = await Promise.allSettled([
+      startTask(deps, { repoPath: "/r/app", prompt: "fix" }, WAIT),
+      startTask(deps, { repoPath: "/r/app", prompt: "fix" }, WAIT),
+    ]);
+    expect(results.map(r => r.status)).toEqual(["rejected", "fulfilled"]);
+  });
+
   it("名前を渡したときは、空きを調べず表示名も付けない", async () => {
     const deps = fakeDeps([state(), state()]);
     await startTask(

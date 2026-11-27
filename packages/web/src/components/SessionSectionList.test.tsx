@@ -667,6 +667,40 @@ describe("SessionSectionListのリポジトリの見出しのメニュー", () =
     expect(headingMenuOf("app").onSetHome).toBeUndefined();
   });
 
+  it("入れ子のリポジトリは、それぞれの見出しに自分のmainを渡す", () => {
+    const innerPath = `${repoPath}/tools/plugin`;
+    const innerMain: Worktree = {
+      ...makeWorktree("inner"),
+      path: innerPath,
+      branch: "main",
+      isMain: true,
+    };
+    const onSetHome = vi.fn();
+    mountList(
+      listProps({
+        worktrees: [innerMain, mainWorktree],
+        sessions: new Map(),
+        repoList: [repoPath, innerPath],
+        onSetHome,
+      })
+    );
+    act(() => headingMenuOf("app").onSetHome?.());
+    act(() => headingMenuOf("plugin").onSetHome?.());
+    expect(onSetHome.mock.calls).toEqual([[repoPath], [innerPath]]);
+  });
+
+  it("リポジトリとして登録したlinked worktreeは、パスが同じでもmainではないので行に出す", () => {
+    const linked = makeWorktree("linked");
+    const { container } = mountList(
+      listProps({
+        worktrees: [linked],
+        sessions: new Map(),
+        repoList: [linked.path],
+      })
+    );
+    expect(sequence(container)).toEqual(["# linked", "wt:linked"]);
+  });
+
   it("mainのworktreeがまだ届いていなければ「mainをホームにする」を出さない", () => {
     mountList(listProps({ onSetHome: vi.fn() }));
     expect(headingMenuOf("app").onSetHome).toBeUndefined();

@@ -146,40 +146,51 @@ beforeEach(() => {
 });
 
 describe("isWorktreeNameAvailable", () => {
-  function rules(opts: { local?: boolean; remote?: boolean }): ExecRule[] {
+  /** for-each-ref が返す ref (無ければ空) */
+  function rules(found: string): ExecRule[] {
     return [
       ...baseRules(),
       {
-        match: /show-ref --verify --quiet "refs\/heads\/doc"/,
-        respond: () => (opts.local ? { stdout: "" } : execError("missing")),
-      },
-      {
-        match: /for-each-ref .*"refs\/remotes\/\*\/doc"/,
-        respond: () => ({
-          stdout: opts.remote ? "refs/remotes/origin/doc\n" : "",
-        }),
+        match: /for-each-ref /,
+        respond: () => ({ stdout: found ? `${found}\n` : "" }),
       },
     ];
   }
 
   it("作成先もローカル・リモートの同名ブランチも無ければ使える", async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
-    execRules = rules({});
+    execRules = rules("");
     expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(true);
+  });
+
+  it("ローカルの同名と配下、リモートの同名と配下のブランチを1回で探す", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    execRules = rules("");
+    await isWorktreeNameAvailable(REPO, "doc");
+    const call = execCalls.find(c => c.includes("for-each-ref"));
+    // ワイルドカードの無いパターンは refs/heads/doc/... にも当たる (git の for-each-ref の決まり)
+    expect(call).toContain('"refs/heads/doc"');
+    expect(call).toContain('"refs/remotes/*/doc"');
+    expect(call).toContain('"refs/remotes/*/doc/**"');
   });
 
   it("作成先のディレクトリがあれば使えない", async () => {
     vi.mocked(fs.existsSync).mockImplementation(p => p === WT);
-    execRules = rules({});
+    execRules = rules("");
     expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(false);
   });
 
-  it("ローカルかリモートに同名のブランチがあれば使えない", async () => {
+  it("同名か配下のブランチが見つかれば使えない", async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
-    execRules = rules({ local: true });
-    expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(false);
-    execRules = rules({ remote: true });
-    expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(false);
+    for (const ref of [
+      "refs/heads/doc",
+      "refs/heads/doc/ui",
+      "refs/remotes/origin/doc",
+      "refs/remotes/origin/doc/ui",
+    ]) {
+      execRules = rules(ref);
+      expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(false);
+    }
   });
 });
 

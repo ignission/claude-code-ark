@@ -26,7 +26,8 @@
  * 人が新しいタスクのダイアログで名前を空にしたら、プロンプトの先頭の行から名前を作る (deriveTaskName)。
  * ブランチ名は英数字と . _ - / だけなので、英数字の語を拾い、無ければ (日本語だけのプロンプトなど)
  * `task-<月日>-<時分>` にする。同名のブランチがあると既存のブランチに付けて作業を引き継いでしまうので、
- * 空いている名前になるまで末尾に `-2`、`-3` を付ける。ブランチ名だけでは中身が分からないので、
+ * 空いている名前になるまで末尾に `-2`、`-3` を付ける。同じリポジトリで名前を省いた起動が重なったときは、
+ * 名前を選んで worktree を作るまでを1つずつ通す (空きを見てから作るまでの間に同じ名前を選ばないため)。ブランチ名だけでは中身が分からないので、
  * プロンプトの先頭の行を worktree の表示名にする (deriveTaskTitle)。名前を渡したときは表示名を付けない。
  * 名前は機械で作る。claude に要約させない (Arkは `claude -p` を使わない)。
  *
@@ -226,6 +227,25 @@ export function deriveTaskTitle(prompt: string): string {
     : line;
 }
 
+/** リポジトリのパス → そのリポジトリで名前を選んで作っている最中の処理 (終わったら消す) */
+const repoLocks = new Map<string, Promise<unknown>>();
+
+/** 同じリポジトリの fn を、前のものが終わってから (失敗しても) 順に実行する */
+async function withRepoLock<T>(
+  repoPath: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const previous = repoLocks.get(repoPath) ?? Promise.resolve();
+  const run = previous.catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  repoLocks.set(repoPath, tail);
+  try {
+    return await run;
+  } finally {
+    if (repoLocks.get(repoPath) === tail) repoLocks.delete(repoPath);
+  }
+}
+
 /** 空いている名前の候補を試す回数 (`-2` から `-<この値>` まで) */
 const MAX_NAME_SUFFIX = 50;
 
@@ -255,18 +275,24 @@ export async function startTask(
   const validated = validateTaskInput(input);
   const { prompt } = validated;
   const autoNamed = validated.name === "";
-  const name = autoNamed
-    ? await pickAvailableName(
-        deps,
-        input.repoPath,
-        deriveTaskName(prompt, new Date(deps.now()))
+  const worktree = autoNamed
+    ? // 空きを確かめてから作るまでの間に、同じリポジトリの別の起動が同じ名前を選ばないよう順に通す
+      await withRepoLock(input.repoPath, async () =>
+        deps.createWorktree(
+          input.repoPath,
+          await pickAvailableName(
+            deps,
+            input.repoPath,
+            deriveTaskName(prompt, new Date(deps.now()))
+          ),
+          input.baseBranch
+        )
       )
-    : validated.name;
-  const worktree = await deps.createWorktree(
-    input.repoPath,
-    name,
-    input.baseBranch
-  );
+    : await deps.createWorktree(
+        input.repoPath,
+        validated.name,
+        input.baseBranch
+      );
   if (autoNamed) {
     try {
       deps.setDisplayName?.(worktree.path, deriveTaskTitle(prompt));

@@ -8,8 +8,9 @@
  * UIで表示する短縮名は repoName を用い、basenameが他repoと重複する場合は
  * 親ディレクトリsegmentを末尾から付与した disambiguator を併記する。
  *
- * mainのworktree (Worktree.isMain、またはworktreeのパスがリポジトリのパスと同じセッション) は
- * 行にしない。mainは人が作業しない場所で、作業は毎回新しいworktreeで始める。
+ * mainのworktree (Worktree.isMain。worktreeがまだ届いていないセッションは、パスがリポジトリの
+ * パスと同じもの) は行にしない。worktreeが届けば isMain で決める (worktreeのあるリポジトリとして
+ * 登録したlinked worktreeは、パスが同じでもmainではないので行に出す)。mainは人が作業しない場所で、作業は毎回新しいworktreeで始める。
  * 登録したリポジトリのグループは、行が1つも無くても作る (見出しのメニューから新しいタスクを始める)。
  */
 
@@ -95,7 +96,16 @@ export function useGroupedWorktreeItems(
     for (const wt of sortedWorktrees) {
       if (repoListEmpty) break;
       const session = sessionByWorktreeId.get(wt.id) ?? null;
-      const matchedRepo = repoList.find(repo => isPathWithin(wt.path, repo));
+      // 入れ子のリポジトリ (/work/app と /work/app/tools/plugin) は、いちばん深いものに入れる
+      const matchedRepo = repoList
+        .filter(repo => isPathWithin(wt.path, repo))
+        .reduce<string | undefined>(
+          (deepest, repo) =>
+            deepest === undefined || repo.length > deepest.length
+              ? repo
+              : deepest,
+          undefined
+        );
       const sessionRepoMatched = session?.repoPath
         ? repoList.includes(session.repoPath)
         : false;
@@ -107,7 +117,7 @@ export function useGroupedWorktreeItems(
         return wt.path.split("/.worktrees/")[0] || wt.path;
       })();
       const group = ensureGroup(repoPath);
-      if (wt.isMain || wt.path === repoPath) {
+      if (wt.isMain) {
         group.mainWorktreePath = wt.path;
         continue;
       }
@@ -137,7 +147,7 @@ export function useGroupedWorktreeItems(
           : null
       );
       if (!repo) continue;
-      // mainで動いているセッションも行にしない (worktreeが届く前でもパスで見分ける)
+      // worktreeがまだ届いていないmainのセッションも行にしない (届く前は isMain が無いのでパスで見分ける)
       if (session.worktreePath === repo) continue;
       const shown =
         repoList.includes(repo) ||
