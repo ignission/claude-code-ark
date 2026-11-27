@@ -2,6 +2,7 @@
  * SessionSectionList - PCサイドバーとモバイル一覧で共有するセッション一覧
  *
  * 行をリポジトリの見出しの下にまとめて並べる (並べ方は lib/session-sections.ts)。
+ * リポジトリの操作 (新しいタスク、ホームにする、除外など) は見出しの「+」と `…` に置く (RepoHeadingMenu.tsx)。
  * 見出しのつまみでリポジトリのかたまりを並べ替え、順はサーバーの設定に保存する
  * (hooks/useRepoReorder.ts)。状態では並べ替えないので、状態が変わっても行は動かない。
  * 行を押せる要素にdata-session-key、かたまりにdata-repo-groupを付ける (撮影のスクリプトが使う)。
@@ -32,13 +33,13 @@ import { m } from "@/lib/i18n";
 import { deleteSessionDescription } from "@/lib/session-header";
 import {
   buildSessionEntries,
-  countChildren,
   groupByRepo,
   type SessionListEntry,
 } from "@/lib/session-sections";
 import { collectActiveSessionIds } from "@/lib/unlisted-active-sessions";
 import { cn } from "@/lib/utils";
 import { getBaseName } from "@/utils/pathUtils";
+import { RepoHeadingMenu } from "./RepoHeadingMenu";
 import { SessionListRow } from "./SessionListRow";
 import type { SessionRowMenuProps } from "./SessionRowMenu";
 
@@ -85,6 +86,8 @@ export interface SessionSectionListProps {
     displayName: string | null
   ) => void;
   onCreateWorktreeForRepo?: (repoPath: string) => void;
+  /** そのリポジトリで新しいタスクのダイアログを開く (見出しの「+」) */
+  onNewTaskForRepo?: (repoPath: string) => void;
   /** その worktree を親にして子タスクを分離する (新しいタスクのダイアログを開く) */
   onSplitTask?: (target: SplitTaskTarget) => void;
   /** リポジトリの全セッションを並べて見る (RepoGridView)。PCだけ渡す */
@@ -103,7 +106,7 @@ export interface SessionSectionListProps {
    * (呼び出し側が一覧の上に固定の行で出す)
    */
   homeWorktreePath?: string | null;
-  /** 行のメニューから worktree をホームにする。無ければ項目を出さない */
+  /** 見出しのメニューから、そのリポジトリのmainのworktreeをホームにする。無ければ項目を出さない */
   onSetHome?: (worktreePath: string) => void;
 }
 
@@ -156,6 +159,7 @@ export function SessionSectionList({
   onSetSessionRested,
   onSetWorktreeDisplayName,
   onCreateWorktreeForRepo,
+  onNewTaskForRepo,
   onSplitTask,
   onSelectRepoGrid,
   onRemoveRepo,
@@ -183,8 +187,7 @@ export function SessionSectionList({
     repoList,
     activeSessionIds
   );
-  // ホームの行は一覧から外す。親をたどる対応表 (entryByPath) にも入らないので、
-  // ホームの子は親の表示を持たない普通の行になる (子は全部ホームの子なので、出すと全行に付く)
+  // ホームの行は一覧から外す (呼び出し側が一覧の上に固定の行で出す)
   const entries = useMemo(
     () =>
       buildSessionEntries(groupedItems, sessionStatuses).filter(
@@ -195,8 +198,8 @@ export function SessionSectionList({
     [groupedItems, sessionStatuses, homeWorktreePath]
   );
   const repoSections = useMemo(
-    () => groupByRepo(entries, repoOrder),
-    [entries, repoOrder]
+    () => groupByRepo(groupedItems, entries, repoList, repoOrder),
+    [groupedItems, entries, repoList, repoOrder]
   );
   const listRef = useRef<HTMLDivElement | null>(null);
   const {
@@ -228,17 +231,6 @@ export function SessionSectionList({
   useEffect(() => {
     onYourTurnCountChange?.(yourTurnCount);
   }, [yourTurnCount, onYourTurnCountChange]);
-  // 親子の表示: 親の行に出す子の数と、子の行から親をたどるための worktree のパス → 行
-  const childCounts = useMemo(() => countChildren(entries), [entries]);
-  const entryByPath = useMemo(() => {
-    const map = new Map<string, SessionListEntry>();
-    for (const entry of entries) {
-      const path = worktreePathOf(entry);
-      if (path) map.set(path, entry);
-    }
-    return map;
-  }, [entries]);
-
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [restartSessionId, setRestartSessionId] = useState<string | null>(null);
@@ -262,10 +254,6 @@ export function SessionSectionList({
       onDelete = () => setDeleteTarget({ kind: "worktree", worktree });
     }
 
-    const parentSession = entry.parentWorktreePath
-      ? (entryByPath.get(entry.parentWorktreePath)?.session ?? null)
-      : null;
-
     return {
       onOpen: () => {
         if (session) onOpenSession(session.id);
@@ -285,11 +273,6 @@ export function SessionSectionList({
               });
             }
           : undefined,
-      onOpenParent: parentSession
-        ? () => onOpenSession(parentSession.id)
-        : undefined,
-      onSetHome:
-        onSetHome && worktreePath ? () => onSetHome(worktreePath) : undefined,
       onStartRename:
         onSetWorktreeDisplayName && worktreePath
           ? () => setEditingKey(entry.key)
@@ -308,15 +291,6 @@ export function SessionSectionList({
         session && onRestartSession
           ? () => setRestartSessionId(session.id)
           : undefined,
-      onCreateWorktree: onCreateWorktreeForRepo
-        ? () => onCreateWorktreeForRepo(repoPath)
-        : undefined,
-      onOpenRepoGrid: onSelectRepoGrid
-        ? () => onSelectRepoGrid(repoPath)
-        : undefined,
-      onRemoveRepo: onRemoveRepo
-        ? () => setRemoveRepoPath(repoPath)
-        : undefined,
       onDelete,
     };
   };
@@ -335,43 +309,61 @@ export function SessionSectionList({
           {section.disambiguator}
         </span>
       )}
-      {canReorder && (
-        <button
-          type="button"
-          {...handleProps(section.repoPath)}
-          aria-label={m.session.list.reorderRepo(section.repoName)}
-          className={cn(
-            "ml-auto inline-flex shrink-0 cursor-grab touch-none items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing",
-            // sidebar はかたまりにポインタを載せたときだけ出す (行の … と同じ)。card は指で掴むので常に出す
-            variant === "sidebar"
-              ? "h-6 w-6 opacity-0 group-hover/repo:opacity-100 focus-visible:opacity-100"
-              : "-mr-1 h-9 w-9",
-            draggingRepoPath === section.repoPath && "opacity-100"
-          )}
-        >
-          <GripVertical className="size-4" aria-hidden="true" />
-        </button>
-      )}
+      <span className="ml-auto flex shrink-0 items-center gap-0.5">
+        <RepoHeadingMenu
+          variant={variant}
+          repoName={section.repoName}
+          onNewTask={
+            onNewTaskForRepo
+              ? () => onNewTaskForRepo(section.repoPath)
+              : undefined
+          }
+          onSetHome={
+            onSetHome &&
+            section.mainWorktreePath &&
+            section.mainWorktreePath !== homeWorktreePath
+              ? () => onSetHome(section.mainWorktreePath as string)
+              : undefined
+          }
+          onCreateWorktree={
+            onCreateWorktreeForRepo
+              ? () => onCreateWorktreeForRepo(section.repoPath)
+              : undefined
+          }
+          onOpenRepoGrid={
+            onSelectRepoGrid
+              ? () => onSelectRepoGrid(section.repoPath)
+              : undefined
+          }
+          onRemoveRepo={
+            onRemoveRepo ? () => setRemoveRepoPath(section.repoPath) : undefined
+          }
+        />
+        {canReorder && (
+          <button
+            type="button"
+            {...handleProps(section.repoPath)}
+            aria-label={m.session.list.reorderRepo(section.repoName)}
+            className={cn(
+              "inline-flex shrink-0 cursor-grab touch-none items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing",
+              // sidebar はかたまりにポインタを載せたときだけ出す (行の … と同じ)。card は指で掴むので常に出す
+              variant === "sidebar"
+                ? "h-6 w-6 opacity-0 group-hover/repo:opacity-100 focus-visible:opacity-100"
+                : "-mr-1 h-9 w-9",
+              draggingRepoPath === section.repoPath && "opacity-100"
+            )}
+          >
+            <GripVertical className="size-4" aria-hidden="true" />
+          </button>
+        )}
+      </span>
     </h2>
   );
-
-  const labelOf = (path: string): string => {
-    const entry = entryByPath.get(path);
-    return (
-      worktreeDisplayNames?.get(path)?.trim() ||
-      entry?.worktree?.branch ||
-      getBaseName(path)
-    );
-  };
 
   const renderRow = (entry: SessionListEntry) => {
     const worktreePath = worktreePathOf(entry);
     const displayName = worktreePath
       ? worktreeDisplayNames?.get(worktreePath)?.trim() || null
-      : null;
-    const parentPath = entry.parentWorktreePath;
-    const parentSession = parentPath
-      ? (entryByPath.get(parentPath)?.session ?? null)
       : null;
     return (
       <SessionListRow
@@ -386,15 +378,6 @@ export function SessionSectionList({
         }
         todoCount={
           entry.session ? (sessionTodoCounts?.get(entry.session.id) ?? 0) : 0
-        }
-        childCount={worktreePath ? (childCounts.get(worktreePath) ?? 0) : 0}
-        parentLabel={
-          parentPath && parentPath !== homeWorktreePath
-            ? labelOf(parentPath)
-            : null
-        }
-        onOpenParent={
-          parentSession ? () => onOpenSession(parentSession.id) : undefined
         }
         selected={
           entry.session !== null && entry.session.id === selectedSessionId

@@ -4,15 +4,16 @@
  * 行はリポジトリごとにまとめ、リポジトリの見出しの下に並べる。状態では並べ替えない
  * (会話が動くたびに行の場所が変わると、押そうとした行が逃げる)。
  *
+ * - 行はworktreeごとに1つで、どの行も同じ高さに並べる。mainのworktreeは行にしない
+ *   (useGroupedWorktreeItems)。task_start / task:start で起こした子も、親子で寄せたり字下げしたりしない。
+ *   親の記録 (session.parentWorktreePath) はサーバーの task_list と、TODOを完了にしたときの後片付けが使う
+ * - 登録したリポジトリは、行が1つも無くても見出しを出す。新しいタスクやホームにする操作は見出しのメニューにある
  * - リポジトリの順は、人がドラッグで決めた順 (設定 `sessionListRepoOrder`、サーバーに保存して
  *   PCとモバイルで共有) を先に置き、そこに無いリポジトリはリポジトリ名 → 絶対パスの順で後ろへ足す。
  *   保存値には、いま一覧に見えていないリポジトリのパスも残す (worktreeが届く前のリロード直後や、
  *   一時的に除外したリポジトリの位置を失わないため)。書き込むのは人が並べ替えたときだけ
  * - リポジトリの中は、worktreeのある行をworktreeのパス順に、worktreeの無いセッションを後ろに置く
  *   (useGroupedWorktreeItems が積んだ順のまま)
- * - task_start / task:start で起こした子 (セッションに parentWorktreePath がある行) は、
- *   親と同じリポジトリにいるときだけ親の直後に寄せる (nestChildEntries)。別のリポジトリへ
- *   切り出した子はそのリポジトリに残り、行の「↳ 親」で親をたどる
  * - 人が手動で休止にした行 (session.restedAt がある行) は、状態に関係なく状態の札を「休止」にする。
  *   位置は動かさない。いつ外すかはサーバーが決める (server の session-rest.ts)
  */
@@ -41,16 +42,14 @@ export interface SessionListEntry {
   manuallyRested: boolean;
   /** あなたの番 (確認待ち・問題・入力待ち) で、手動で休止にしていない行か */
   yourTurn: boolean;
-  /** 子の行なら親の worktree のパス。親の行や普通の行は null */
-  parentWorktreePath: string | null;
-  /** 親の直後に寄せた子の行 (字下げして出す) */
-  nested: boolean;
 }
 
 export interface SessionRepoSection {
   repoPath: string;
   repoName: string;
   disambiguator: string | null;
+  /** mainのworktreeのパス (見出しの「ホームにする」)。worktreeが届く前はnull */
+  mainWorktreePath: string | null;
   entries: SessionListEntry[];
 }
 
@@ -77,16 +76,10 @@ export function buildSessionEntries(
         statusKey: manuallyRested ? "RESTED" : liveStatusKey,
         manuallyRested,
         yourTurn: !manuallyRested && presentStatus(liveStatusKey).yourTurn,
-        parentWorktreePath: session?.parentWorktreePath ?? null,
-        nested: false,
       });
     }
   }
   return entries;
-}
-
-function itemPath(entry: SessionListEntry): string {
-  return entry.worktree?.path ?? entry.session?.worktreePath ?? "";
 }
 
 /** 設定から読んだ値を repoPath の配列に揃える (壊れた値は空、重複は先の方を残す) */
@@ -146,82 +139,36 @@ export function resolveDropIndex(
 }
 
 /**
- * 行をリポジトリのかたまりにまとめ、保存した順に並べる。行の無いリポジトリは出さない。
- * entries は useGroupedWorktreeItems の順 (リポジトリ名 → パス、中はworktreeのパス順) のまま渡す
+ * 行をリポジトリのかたまりにまとめ、保存した順に並べる。登録したリポジトリ (repoList) は
+ * 行が無くてもかたまりを作る。登録していないリポジトリは、行があるときだけ出す。
+ * entries は buildSessionEntries の順 (リポジトリ名 → パス、中はworktreeのパス順) のまま渡す
  */
 export function groupByRepo(
+  groupedItems: Map<string, RepoGroup>,
   entries: readonly SessionListEntry[],
+  repoList: readonly string[],
   savedOrder: readonly string[]
 ): SessionRepoSection[] {
   const byRepo = new Map<string, SessionRepoSection>();
-  for (const entry of entries) {
-    let section = byRepo.get(entry.repoPath);
-    if (!section) {
-      section = {
-        repoPath: entry.repoPath,
-        repoName: entry.repoName,
-        disambiguator: entry.disambiguator,
-        entries: [],
-      };
-      byRepo.set(entry.repoPath, section);
-    }
-    section.entries.push(entry);
+  for (const [repoPath, group] of groupedItems) {
+    byRepo.set(repoPath, {
+      repoPath,
+      repoName: group.repoName,
+      disambiguator: group.disambiguator,
+      mainWorktreePath: group.mainWorktreePath,
+      entries: [],
+    });
   }
-  return orderRepoPaths([...byRepo.keys()], savedOrder).map(path => {
-    const section = byRepo.get(path) as SessionRepoSection;
-    return { ...section, entries: nestChildEntries(section.entries) };
-  });
-}
-
-/**
- * 1つのリポジトリの (並べ替え済みの) 行で、親が同じリポジトリにいる子を親の直後へ寄せる。
- * 子どうしの順は元の並びのまま。孫も同じ規則でたどる (親子が輪になっていても止まる)
- */
-export function nestChildEntries(
-  entries: SessionListEntry[]
-): SessionListEntry[] {
-  const pathOf = new Map<string, SessionListEntry>();
   for (const entry of entries) {
-    const path = itemPath(entry);
-    if (path) pathOf.set(path, entry);
+    byRepo.get(entry.repoPath)?.entries.push(entry);
   }
-  const childrenOf = new Map<string, SessionListEntry[]>();
-  const roots: SessionListEntry[] = [];
-  for (const entry of entries) {
-    const parent = entry.parentWorktreePath;
-    if (parent && parent !== itemPath(entry) && pathOf.has(parent)) {
-      const list = childrenOf.get(parent) ?? [];
-      list.push(entry);
-      childrenOf.set(parent, list);
-    } else {
-      roots.push(entry);
+  const listed = new Set(repoList);
+  for (const [repoPath, section] of byRepo) {
+    if (section.entries.length === 0 && !listed.has(repoPath)) {
+      byRepo.delete(repoPath);
     }
   }
-  const result: SessionListEntry[] = [];
-  const placed = new Set<SessionListEntry>();
-  const place = (entry: SessionListEntry, nested: boolean) => {
-    if (placed.has(entry)) return;
-    placed.add(entry);
-    result.push(entry.nested === nested ? entry : { ...entry, nested });
-    for (const child of childrenOf.get(itemPath(entry)) ?? []) {
-      place(child, true);
-    }
-  };
-  for (const root of roots) place(root, false);
-  // 親子が輪になっていて根にたどり着けない行も落とさない
-  for (const entry of entries) place(entry, false);
-  return result;
-}
-
-/** worktree のパス → そのパスを親に持つ行の数 (リポジトリをまたいで数える) */
-export function countChildren(
-  entries: readonly SessionListEntry[]
-): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const entry of entries) {
-    const parent = entry.parentWorktreePath;
-    if (!parent) continue;
-    counts.set(parent, (counts.get(parent) ?? 0) + 1);
-  }
-  return counts;
+  return orderRepoPaths([...byRepo.keys()], savedOrder).map(
+    path => byRepo.get(path) as SessionRepoSection
+  );
 }

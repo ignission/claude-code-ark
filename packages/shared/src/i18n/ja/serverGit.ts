@@ -64,7 +64,8 @@ export const serverGit = {
   },
   /** 新しいタスク */
   task: {
-    nameEmpty: "タスク名が空です",
+    noAvailableName: (base: string) =>
+      `タスク名 '${base}' に空きが見つかりません。名前を入れて起動してください`,
     nameInvalid:
       "タスク名は英数字と . _ - / だけで書いてください (ブランチ名になります)",
     promptEmpty: "プロンプトが空です",

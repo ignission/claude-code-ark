@@ -9,6 +9,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { presentStatus } from "@/lib/status-tone";
+import type { RepoHeadingMenuProps } from "./RepoHeadingMenu";
 import type { SessionRowMenuProps } from "./SessionRowMenu";
 import {
   SessionSectionList,
@@ -17,6 +18,14 @@ import {
 
 const testDoubles = vi.hoisted(() => ({
   menuProps: new Map<string, unknown>(),
+  headingMenuProps: new Map<string, unknown>(),
+}));
+
+vi.mock("./RepoHeadingMenu", () => ({
+  RepoHeadingMenu: (props: { repoName: string }) => {
+    testDoubles.headingMenuProps.set(props.repoName, props);
+    return null;
+  },
 }));
 
 vi.mock("./SessionRowMenu", () => ({
@@ -181,6 +190,12 @@ function pointer(
   });
 }
 
+function headingMenuOf(repoName: string): RepoHeadingMenuProps {
+  const props = testDoubles.headingMenuProps.get(repoName);
+  expect(props).toBeDefined();
+  return props as RepoHeadingMenuProps;
+}
+
 function menuOf(key: string): SessionRowMenuProps {
   const props = testDoubles.menuProps.get(key);
   expect(props).toBeDefined();
@@ -190,6 +205,7 @@ function menuOf(key: string): SessionRowMenuProps {
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   testDoubles.menuProps.clear();
+  testDoubles.headingMenuProps.clear();
 });
 
 afterEach(() => {
@@ -389,11 +405,68 @@ describe("SessionSectionListの並べ方", () => {
     expect(onRepoOrderChange).not.toHaveBeenCalled();
   });
 
-  it("ホームの行を外して行が無くなったリポジトリは、見出しも出さない", () => {
+  it("ホームの行を外して行が無くなっても、登録したリポジトリの見出しは残す", () => {
     const { container } = mountList(
       twoRepoProps({ homeWorktreePath: zetaWorktree.path })
     );
+    expect(sequence(container)).toEqual([
+      "# app",
+      "wt:a",
+      "wt:b",
+      "wt:c",
+      "# zeta",
+    ]);
+  });
+
+  it("mainのworktreeは、セッションがあってもなくても行にしない", () => {
+    const mainWorktree: Worktree = {
+      ...makeWorktree("main"),
+      path: repoPath,
+      branch: "main",
+      isMain: true,
+    };
+    const zetaMain: Worktree = {
+      ...makeWorktree("zmain", zetaRepoPath),
+      path: zetaRepoPath,
+      branch: "main",
+      isMain: true,
+    };
+    const mainSession = makeSession(mainWorktree);
+    // worktree がまだ届いていない main のセッション (パスがリポジトリと同じ)
+    const zetaMainSession = {
+      ...makeSession(zetaMain, zetaRepoPath),
+      worktreeId: "not-loaded",
+    };
+    const { container } = mountList(
+      listProps({
+        worktrees: [mainWorktree, ...worktrees],
+        sessions: new Map([
+          ...sessions,
+          [mainSession.id, mainSession],
+          [zetaMainSession.id, zetaMainSession],
+        ]),
+        repoList: [repoPath, zetaRepoPath],
+      })
+    );
+    expect(sequence(container)).toEqual([
+      "# app",
+      "wt:a",
+      "wt:b",
+      "wt:c",
+      "# zeta",
+    ]);
+  });
+
+  it("task_start で起こした子も、字下げせずに他の行と同じ高さに並べる", () => {
+    const child = {
+      ...makeSession(worktrees[2] as Worktree),
+      parentWorktreePath: (worktrees[0] as Worktree).path,
+    };
+    const { container } = mountList(
+      listProps({ sessions: new Map([...sessions, [child.id, child]]) })
+    );
     expect(sequence(container)).toEqual(["# app", "wt:a", "wt:b", "wt:c"]);
+    expect(container.innerHTML).not.toContain("ml-4");
   });
 
   it("リポジトリが未登録でも、動いているセッションと会話が直近に動いたセッションは出す", () => {
@@ -538,15 +611,84 @@ describe("SessionSectionListの行メニューの配線", () => {
     expect(onDeleteSession).toHaveBeenCalledWith("session-b", worktrees[1]);
   });
 
-  it("RepoGridViewへの導線は、渡したときだけ行メニューに出す", () => {
+  it("RepoGridViewへの導線は、渡したときだけ見出しのメニューに出す", () => {
     const onSelectRepoGrid = vi.fn();
     mountList(listProps({ onSelectRepoGrid }));
 
-    act(() => menuOf("wt:a").onOpenRepoGrid?.());
+    act(() => headingMenuOf("app").onOpenRepoGrid?.());
     expect(onSelectRepoGrid).toHaveBeenCalledWith(repoPath);
 
-    testDoubles.menuProps.clear();
+    testDoubles.headingMenuProps.clear();
     mountList(listProps());
-    expect(menuOf("wt:a").onOpenRepoGrid).toBeUndefined();
+    expect(headingMenuOf("app").onOpenRepoGrid).toBeUndefined();
+  });
+});
+
+describe("SessionSectionListのリポジトリの見出しのメニュー", () => {
+  const mainWorktree: Worktree = {
+    ...makeWorktree("main"),
+    path: repoPath,
+    branch: "main",
+    isMain: true,
+  };
+
+  it("行の無いリポジトリでも、見出しの「+」でそのリポジトリの新しいタスクを開ける", () => {
+    const onNewTaskForRepo = vi.fn();
+    mountList(
+      listProps({
+        worktrees: [mainWorktree],
+        sessions: new Map(),
+        onNewTaskForRepo,
+      })
+    );
+
+    act(() => headingMenuOf("app").onNewTask?.());
+    expect(onNewTaskForRepo).toHaveBeenCalledWith(repoPath);
+  });
+
+  it("「mainをホームにする」はmainのworktreeのパスを渡し、mainが既にホームなら出さない", () => {
+    const onSetHome = vi.fn();
+    mountList(
+      listProps({ worktrees: [mainWorktree, ...worktrees], onSetHome })
+    );
+    act(() => headingMenuOf("app").onSetHome?.());
+    expect(onSetHome).toHaveBeenCalledWith(repoPath);
+    // 行のメニューには出さない
+    expect(menuOf("wt:a")).not.toHaveProperty("onSetHome");
+
+    testDoubles.headingMenuProps.clear();
+    mountList(
+      listProps({
+        worktrees: [mainWorktree, ...worktrees],
+        onSetHome,
+        homeWorktreePath: repoPath,
+      })
+    );
+    expect(headingMenuOf("app").onSetHome).toBeUndefined();
+  });
+
+  it("mainのworktreeがまだ届いていなければ「mainをホームにする」を出さない", () => {
+    mountList(listProps({ onSetHome: vi.fn() }));
+    expect(headingMenuOf("app").onSetHome).toBeUndefined();
+  });
+
+  it("新規worktreeの作成とサイドバーからの除外は、見出しのメニューから呼ぶ", () => {
+    const onCreateWorktreeForRepo = vi.fn();
+    const onRemoveRepo = vi.fn();
+    const { container } = mountList(
+      listProps({ onCreateWorktreeForRepo, onRemoveRepo })
+    );
+
+    act(() => headingMenuOf("app").onCreateWorktree?.());
+    expect(onCreateWorktreeForRepo).toHaveBeenCalledWith(repoPath);
+    // 除外は確認ダイアログを挟む
+    act(() => headingMenuOf("app").onRemoveRepo?.());
+    const confirm = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button")
+    ).find(button => button.textContent === "除外");
+    expect(confirm).toBeDefined();
+    act(() => confirm?.click());
+    expect(onRemoveRepo).toHaveBeenCalledWith(repoPath);
+    expect(container).toBeDefined();
   });
 });

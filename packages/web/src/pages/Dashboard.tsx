@@ -1125,6 +1125,11 @@ export default function Dashboard() {
     setNewTaskInitial({ repoPath: repoPath ?? repoList[0] ?? null });
   };
 
+  // 一覧のリポジトリの見出しの「+」。親なしで、そのリポジトリに作る
+  const handleNewTaskForRepo = (targetRepoPath: string) => {
+    setNewTaskInitial({ repoPath: targetRepoPath });
+  };
+
   // 行メニューの「子タスクを分離」。その worktree を親にし、ベースは今のブランチ
   const handleSplitTask = (target: SplitTaskTarget) => {
     setNewTaskInitial({
@@ -1244,6 +1249,7 @@ export default function Dashboard() {
           worktreeDisplayNames={worktreeDisplayNames}
           onSetWorktreeDisplayName={setWorktreeDisplayName}
           onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
+          onNewTaskForRepo={handleNewTaskForRepo}
           onRemoveRepo={handleRemoveRepo}
           home={homeRow}
           homeWorktreePath={homeWorktreePath}
@@ -1272,6 +1278,7 @@ export default function Dashboard() {
               onSetSessionRested={setSessionRested}
               onSetWorktreeDisplayName={setWorktreeDisplayName}
               onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
+              onNewTaskForRepo={handleNewTaskForRepo}
               onSelectRepoGrid={handleSelectRepoGrid}
               onRemoveRepo={handleRemoveRepo}
               onNewSession={handleNewSession}

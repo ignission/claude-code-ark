@@ -1,6 +1,8 @@
 import type { ManagedSession, Worktree } from "@ark/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
+  deriveTaskName,
+  deriveTaskTitle,
   describeDelivery,
   type LaunchState,
   looksReadyForPrompt,
@@ -43,6 +45,8 @@ function fakeDeps(states: Array<LaunchState | null>) {
     }),
     sendMessage: vi.fn(),
     recordTodoStarted: vi.fn(),
+    isNameAvailable: vi.fn(async () => true),
+    setDisplayName: vi.fn(),
     sleep: vi.fn(async (ms: number) => {
       now += ms;
     }),
@@ -116,9 +120,20 @@ describe("validateTaskInput", () => {
     ).toEqual({ name: "fix-log-format", prompt: "直して" });
   });
 
-  it("空の名前・プロンプト、ブランチ名に使えない文字は拒否する", () => {
-    expect(() => validateTaskInput({ name: "", prompt: "x" })).toThrow(
-      "タスク名が空です"
+  it("名前は空でもよい (startTask がプロンプトから作る)", () => {
+    expect(validateTaskInput({ name: " ", prompt: "x" })).toEqual({
+      name: "",
+      prompt: "x",
+    });
+    expect(validateTaskInput({ prompt: "x" })).toEqual({
+      name: "",
+      prompt: "x",
+    });
+  });
+
+  it("空のプロンプトと、ブランチ名に使えない文字は拒否する", () => {
+    expect(() => validateTaskInput({ name: "", prompt: " " })).toThrow(
+      "プロンプトが空です"
     );
     expect(() => validateTaskInput({ name: "a", prompt: " " })).toThrow(
       "プロンプトが空です"
@@ -132,7 +147,89 @@ describe("validateTaskInput", () => {
   });
 });
 
+describe("deriveTaskName", () => {
+  const now = new Date(2026, 10, 27, 9, 5);
+
+  it("先頭の行の英数字の語を小文字にしてハイフンでつなぐ", () => {
+    expect(deriveTaskName("Fix the log format\n詳しくは下に", now)).toBe(
+      "fix-the-log-format"
+    );
+    expect(deriveTaskName("\n  PR #12 の CI を直す", now)).toBe("pr-12-ci");
+    // 全角の英数字も拾う
+    expect(deriveTaskName("ＡＢＣ－１２３の見積もり", now)).toBe("abc-123");
+  });
+
+  it("語は5つまで、長さは40文字までに切る", () => {
+    expect(deriveTaskName("one two three four five six seven", now)).toBe(
+      "one-two-three-four-five"
+    );
+    const long = deriveTaskName(`${"a".repeat(30)} ${"b".repeat(30)}`, now);
+    expect(long).toBe("a".repeat(30));
+  });
+
+  it("英数字が無ければ (日本語だけのプロンプト) task-<月日>-<時分> にする", () => {
+    expect(deriveTaskName("ログの形式を直して", now)).toBe("task-1127-0905");
+  });
+
+  it("作った名前はブランチ名の検証を通る", () => {
+    for (const prompt of ["ログを直す", "Fix: a/b..c", "--rm -rf"]) {
+      const { name } = validateTaskInput({
+        name: deriveTaskName(prompt, now),
+        prompt,
+      });
+      expect(name).toMatch(/^[a-z0-9][a-z0-9-]*$/);
+    }
+  });
+});
+
+describe("deriveTaskTitle", () => {
+  it("先頭の空でない行を、40文字で切って表示名にする", () => {
+    expect(deriveTaskTitle("\n  ログの   形式を直す \n二行目")).toBe(
+      "ログの 形式を直す"
+    );
+    expect(deriveTaskTitle("あ".repeat(50))).toBe(`${"あ".repeat(40)}…`);
+  });
+});
+
 describe("startTask", () => {
+  it("名前を省くと、プロンプトから空いている名前を作り、プロンプトの先頭を表示名にする", async () => {
+    const deps = fakeDeps([state(), state()]);
+    vi.mocked(deps.isNameAvailable).mockImplementation(
+      async (_repo, name) => name !== "fix-log" && name !== "fix-log-2"
+    );
+    await startTask(
+      deps,
+      { repoPath: "/r/app", name: "", prompt: "fix log\n詳細" },
+      WAIT
+    );
+    expect(deps.createWorktree).toHaveBeenCalledWith(
+      "/r/app",
+      "fix-log-3",
+      undefined
+    );
+    expect(deps.setDisplayName).toHaveBeenCalledWith("/r/app-fix", "fix log");
+  });
+
+  it("名前を渡したときは、空きを調べず表示名も付けない", async () => {
+    const deps = fakeDeps([state(), state()]);
+    await startTask(
+      deps,
+      { repoPath: "/r/app", name: "fix", prompt: "直して" },
+      WAIT
+    );
+    expect(deps.isNameAvailable).not.toHaveBeenCalled();
+    expect(deps.setDisplayName).not.toHaveBeenCalled();
+  });
+
+  it("空いている名前が見つからなければ worktree を作らない", async () => {
+    const deps = fakeDeps([state()]);
+    vi.mocked(deps.isNameAvailable).mockResolvedValue(false);
+    await expect(
+      startTask(deps, { repoPath: "/r/app", prompt: "fix" }, WAIT)
+    ).rejects.toThrow("空きが見つかりません");
+    expect(deps.createWorktree).not.toHaveBeenCalled();
+  });
+
   it("worktree を作り、親つきで起動し、起動を待ってから prompt を送る", async () => {
     const deps = fakeDeps([state({ cliState: null }), state(), state()]);
     const started = await startTask(

@@ -2,8 +2,12 @@
  * 新しいタスクのダイアログ。名前とプロンプトだけで、worktree の作成 → セッションの起動 →
  * 最初の文の送信をサーバーの task:start に1回で頼む (実装は server の task-start.ts)。
  *
+ * 名前は省ける。空ならサーバーがプロンプトの先頭からブランチ名を作り、プロンプトの先頭の行を
+ * worktree の表示名にする (server の task-start.ts。日本語だけのプロンプトでも使えるブランチ名にする)。
+ *
  * 開く入口は3つ。
- * - サイドバー・モバイルの一覧の見出しの「新しいタスク」: 親なし。リポジトリはここで選び、
+ * - サイドバー・モバイルの一覧の上の「新しいタスク」と、リポジトリの見出しの「+」: 親なし。
+ *   リポジトリはここで選び (見出しから開いたときはそのリポジトリが入る)、
  *   ベースは空 (サーバーがリポジトリの既定のブランチを使う)
  * - セッション一覧の行メニューの「子タスクを分離」: その worktree が親、ベースは今のブランチ
  * - 分岐TODOの「新しいworktreeで始める」: 元の worktree が親
@@ -85,11 +89,7 @@ export function NewTaskDialog({
     setError(null);
   }, [open]);
 
-  const canSubmit =
-    !submitting &&
-    repoPath !== "" &&
-    name.trim() !== "" &&
-    prompt.trim() !== "";
+  const canSubmit = !submitting && repoPath !== "" && prompt.trim() !== "";
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) return;
@@ -98,7 +98,7 @@ export function NewTaskDialog({
     const { initial: init } = initialRef.current;
     const response = await onStartTask({
       repoPath,
-      name: name.trim(),
+      ...(name.trim() ? { name: name.trim() } : {}),
       prompt: prompt.trim(),
       ...(baseBranch.trim() ? { baseBranch: baseBranch.trim() } : {}),
       ...(init.parentWorktreePath
@@ -192,7 +192,7 @@ export function NewTaskDialog({
             <Label htmlFor="new-task-name">{m.dialogs.newTask.taskName}</Label>
             <Input
               id="new-task-name"
-              placeholder="fix-log-format"
+              placeholder={m.dialogs.newTask.taskNamePlaceholder}
               value={name}
               onChange={e => setName(e.target.value)}
               onKeyDown={handleNameKeyDown}

@@ -171,8 +171,10 @@ interface MobileLayoutProps {
     worktreePath: string,
     displayName: string | null
   ) => void;
-  /** 行メニューの「リポジトリ」の操作 */
+  /** 一覧のリポジトリの見出しのメニューの操作 */
   onCreateWorktreeForRepo?: (repoPath: string) => void;
+  /** そのリポジトリで新しいタスクのダイアログを開く (一覧の見出しの「+」) */
+  onNewTaskForRepo?: (repoPath: string) => void;
   onRemoveRepo?: (repoPath: string) => void;
   /** 一覧の上に固定で出すホームの行と、ホームの worktree のパス (lib/home-session.ts) */
   home?: ReactNode;
@@ -240,6 +242,7 @@ export function MobileLayout({
   worktreeDisplayNames,
   onSetWorktreeDisplayName,
   onCreateWorktreeForRepo,
+  onNewTaskForRepo,
   onRemoveRepo,
   home,
   homeWorktreePath,
@@ -416,6 +419,7 @@ export function MobileLayout({
           onSetSessionRested={onSetSessionRested}
           onSetWorktreeDisplayName={onSetWorktreeDisplayName}
           onCreateWorktreeForRepo={onCreateWorktreeForRepo}
+          onNewTaskForRepo={onNewTaskForRepo}
           onRemoveRepo={onRemoveRepo}
           onNewSession={onNewSession}
           onNewTask={onNewTask}

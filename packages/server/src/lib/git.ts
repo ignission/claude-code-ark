@@ -442,6 +442,30 @@ async function cleanupLocalBranch(
   );
 }
 
+/** createWorktree が作る worktree の場所 (リポジトリと同じ階層の `<repo>-<branch>`) */
+function siblingWorktreePath(gitRoot: string, branch: string): string {
+  const repoName = path.basename(gitRoot);
+  return path.join(
+    path.dirname(gitRoot),
+    `${repoName}-${branch.replace(/\//g, "-")}`
+  );
+}
+
+/**
+ * その名前で新しい worktree を作れば、まっさらなブランチになるか。
+ * 同名のブランチがあると createWorktree は既存のブランチに付けて作業を引き継ぐので、
+ * 名前を機械で作るとき (新しいタスクで名前を省いたとき) は、ブランチも作成先も無い名前を選ぶ
+ */
+export async function isWorktreeNameAvailable(
+  repoPath: string,
+  branchName: string
+): Promise<boolean> {
+  const safeBranch = validateBranchName(branchName);
+  const gitRoot = await getGitRoot(validatePath(repoPath));
+  if (fs.existsSync(siblingWorktreePath(gitRoot, safeBranch))) return false;
+  return !(await branchExists(gitRoot, safeBranch));
+}
+
 // Create a new worktree
 export async function createWorktree(
   repoPath: string,
@@ -453,14 +477,7 @@ export async function createWorktree(
 
   // Get the repository root
   const gitRoot = await getGitRoot(safePath);
-
-  // Generate worktree path (sibling directory)
-  const repoName = path.basename(gitRoot);
-  const parentDir = path.dirname(gitRoot);
-  const worktreePath = path.join(
-    parentDir,
-    `${repoName}-${safeBranch.replace(/\//g, "-")}`
-  );
+  const worktreePath = siblingWorktreePath(gitRoot, safeBranch);
 
   // Check if path already exists
   if (fs.existsSync(worktreePath)) {

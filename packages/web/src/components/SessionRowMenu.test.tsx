@@ -12,9 +12,6 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuGroup: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  DropdownMenuLabel: ({ children }: { children?: ReactNode }) => (
-    <div data-menu-label="">{children}</div>
-  ),
   DropdownMenuSeparator: () => <hr />,
   DropdownMenuItem: ({
     children,
@@ -41,9 +38,6 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 vi.mock("@/components/ui/context-menu", () => ({
   ContextMenuGroup: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
-  ),
-  ContextMenuLabel: ({ children }: { children?: ReactNode }) => (
-    <div data-menu-label="">{children}</div>
   ),
   ContextMenuSeparator: () => <hr />,
   ContextMenuItem: ({
@@ -132,9 +126,6 @@ function fullMenuProps(): Omit<SessionRowMenuProps, "variant"> {
     onOpen: vi.fn(),
     onStartRename: vi.fn(),
     onRestart: vi.fn(),
-    onCreateWorktree: vi.fn(),
-    onOpenRepoGrid: vi.fn(),
-    onRemoveRepo: vi.fn(),
     onDelete: vi.fn(),
   };
 }
@@ -151,7 +142,7 @@ afterEach(() => {
 });
 
 describe("SessionRowMenu", () => {
-  it("セッションのある行: 開く・表示名・再起動、リポジトリの操作、最下段に赤い削除を並べる", () => {
+  it("セッションのある行: 開く・表示名・再起動、最下段に赤い削除を並べる (リポジトリの操作は見出しにある)", () => {
     const container = mount(
       <SessionRowMenu variant="dropdown" {...fullMenuProps()} />
     );
@@ -160,14 +151,8 @@ describe("SessionRowMenu", () => {
       "開く",
       "表示名を変更",
       "再起動",
-      "新規worktreeを作成",
-      "このリポジトリの全セッションを並べて見る",
-      "サイドバーから除外",
       "セッションを削除",
     ]);
-    expect(container.querySelector("[data-menu-label]")?.textContent).toBe(
-      "リポジトリ"
-    );
     expect(
       container.querySelector('[data-menu-item][data-variant="destructive"]')
         ?.textContent
@@ -183,20 +168,16 @@ describe("SessionRowMenu", () => {
       "開く",
       "表示名を変更",
       "再起動",
-      "新規worktreeを作成",
-      "このリポジトリの全セッションを並べて見る",
-      "サイドバーから除外",
       "セッションを削除",
     ]);
   });
 
-  it("操作が渡されなかった項目とリポジトリの見出しは出さない", () => {
+  it("操作が渡されなかった項目と区切りは出さない", () => {
     const container = mount(
       <SessionRowMenu variant="dropdown" entry={entryOf()} onOpen={vi.fn()} />
     );
 
     expect(itemLabels(container)).toEqual(["開く"]);
-    expect(container.querySelector("[data-menu-label]")).toBeNull();
     expect(container.querySelector("hr")).toBeNull();
   });
 
@@ -225,29 +206,21 @@ describe("SessionRowMenu", () => {
 
     clickItem(container, "表示名を変更");
     clickItem(container, "再起動");
-    clickItem(container, "新規worktreeを作成");
-    clickItem(container, "このリポジトリの全セッションを並べて見る");
-    clickItem(container, "サイドバーから除外");
     clickItem(container, "セッションを削除");
 
     expect(props.onStartRename).toHaveBeenCalledTimes(1);
     expect(props.onRestart).toHaveBeenCalledTimes(1);
-    expect(props.onCreateWorktree).toHaveBeenCalledTimes(1);
-    expect(props.onOpenRepoGrid).toHaveBeenCalledTimes(1);
-    expect(props.onRemoveRepo).toHaveBeenCalledTimes(1);
     expect(props.onDelete).toHaveBeenCalledTimes(1);
   });
 
-  it("子タスクの分離と親を開くは「開く」の直後に出し、選ぶと呼ぶ", () => {
+  it("子タスクの分離は「開く」の直後に出し、選ぶと呼ぶ", () => {
     const onSplitTask = vi.fn();
-    const onOpenParent = vi.fn();
     const container = mount(
       <SessionRowMenu
         variant="context"
         entry={entryOf()}
         onOpen={vi.fn()}
         onSplitTask={onSplitTask}
-        onOpenParent={onOpenParent}
         onStartRename={vi.fn()}
       />
     );
@@ -255,13 +228,10 @@ describe("SessionRowMenu", () => {
     expect(itemLabels(container)).toEqual([
       "開く",
       "子タスクを分離...",
-      "親を開く",
       "表示名を変更",
     ]);
     clickItem(container, "子タスクを分離...");
-    clickItem(container, "親を開く");
     expect(onSplitTask).toHaveBeenCalledTimes(1);
-    expect(onOpenParent).toHaveBeenCalledTimes(1);
   });
 });
 

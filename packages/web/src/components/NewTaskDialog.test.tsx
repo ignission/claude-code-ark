@@ -103,14 +103,27 @@ const ok: TaskStartResponse = {
 };
 
 describe("NewTaskDialog", () => {
-  it("名前とプロンプトが無いうちは起動できない", () => {
+  it("プロンプトが無いうちは起動できない (名前は省ける)", () => {
     const { render, type, submitButton } = setup(ok);
     render({ repoPath: "/r/app" });
     expect(submitButton().disabled).toBe(true);
     type("new-task-name", "fix");
     expect(submitButton().disabled).toBe(true);
+    type("new-task-name", "");
     type("new-task-prompt", "直して");
     expect(submitButton().disabled).toBe(false);
+  });
+
+  it("名前を空にして起動すると、名前を送らない (サーバーがプロンプトから作る)", async () => {
+    const { render, type, submit, onStartTask } = setup(ok);
+    render({ repoPath: "/r/app" });
+    type("new-task-name", "  ");
+    type("new-task-prompt", "ログの形式を直して");
+    await submit();
+    expect(onStartTask).toHaveBeenCalledWith({
+      repoPath: "/r/app",
+      prompt: "ログの形式を直して",
+    });
   });
 
   it("起動すると task:start の要求を送り、閉じて onStarted を呼ぶ", async () => {

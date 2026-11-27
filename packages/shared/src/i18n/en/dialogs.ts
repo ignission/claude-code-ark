@@ -43,7 +43,8 @@ export const dialogs: Messages["dialogs"] = {
     description:
       "Starts a session in a new worktree and sends the prompt as the first message.",
     repository: "Repository",
-    taskName: "Task name",
+    taskName: "Task name (optional)",
+    taskNamePlaceholder: "Made from the prompt when empty",
     prompt: "Prompt",
     promptPlaceholder: "First message to send",
     baseBranch: "Base branch (optional)",

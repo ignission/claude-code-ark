@@ -7,12 +7,12 @@
  * 行はリポジトリの見出しの下に並ぶので、主ラベルにリポジトリ名は出さない。表示名があれば表示名
  * (2行目にブランチ)、無ければブランチ。行のtitleはリポジトリの絶対パス。
  * 行メニューはsidebarでは右クリックと `…`、cardでは `⋮` で開き、中身は同じ。
- * task_start で起こした子の行は、親の直後に寄せたときだけ字下げし、2行目の先頭に「↳ 親」を出す
- * (押すと親を開く)。親の行には子の数を出す。
+ * どの行も同じ高さに並べる。task_start で起こした子の行も字下げせず、親の名前や子の数は出さない
+ * (親子の違いを一覧で見分けさせない。mainは一覧に出さないので、親はたいてい一覧にいない)。
  */
 
 import type { SessionPrStatus } from "@ark/shared";
-import { CornerDownRight, Ellipsis, MoreVertical } from "lucide-react";
+import { Ellipsis, MoreVertical } from "lucide-react";
 import {
   Fragment,
   type KeyboardEvent,
@@ -56,12 +56,6 @@ export interface SessionListRowProps {
   prStatus: SessionPrStatus | null;
   /** 未完了の分岐TODOの件数。0なら出さない */
   todoCount?: number;
-  /** この worktree から起こした子の数。0なら出さない */
-  childCount?: number;
-  /** 子の行なら親の名前。親の行や普通の行は null */
-  parentLabel?: string | null;
-  /** 親を開く。親のセッションが無ければ undefined (名前だけ出す) */
-  onOpenParent?: () => void;
   selected: boolean;
   /** 表示名を編集中か。どの行を編集するかは一覧が持つ */
   editing: boolean;
@@ -77,9 +71,6 @@ export function SessionListRow({
   displayName,
   prStatus,
   todoCount = 0,
-  childCount = 0,
-  parentLabel = null,
-  onOpenParent,
   selected,
   editing,
   onEditingChange,
@@ -172,7 +163,6 @@ export function SessionListRow({
       ref={rowRef}
       className={cn(
         "group rounded-md border transition-colors",
-        entry.nested && (variant === "sidebar" ? "ml-4" : "ml-5"),
         // sidebar の行は地に置き、選んだ行だけを面と線で示す (影は付けない)。
         // 選んだ行の左には、上のタブの印と同じ色の線を引いて、タブと行を見比べられるようにする
         // card (モバイル) は指で押す的なので、行ごとの面を残す
@@ -256,11 +246,7 @@ export function SessionListRow({
               </span>
             )}
           </div>
-          {(badge ||
-            todoCount > 0 ||
-            childCount > 0 ||
-            parentLabel !== null ||
-            detailSegments.length > 0) && (
+          {(badge || todoCount > 0 || detailSegments.length > 0) && (
             <div
               className={cn(
                 "flex min-w-0 items-center gap-1.5 text-muted-foreground",
@@ -269,29 +255,6 @@ export function SessionListRow({
                   : "mt-1 text-[13px]"
               )}
             >
-              {parentLabel !== null && (
-                <button
-                  type="button"
-                  data-testid="session-row-parent"
-                  title={m.session.row.parentTitle(parentLabel)}
-                  aria-label={m.session.row.openParentLabel(parentLabel)}
-                  disabled={!onOpenParent}
-                  // 行を押したときの動き (行を開く・フォーカスを外す) を起こさない
-                  onClick={event => {
-                    event.stopPropagation();
-                    onOpenParent?.();
-                  }}
-                  onMouseDown={event => event.stopPropagation()}
-                  onKeyDown={event => event.stopPropagation()}
-                  className="inline-flex h-5 max-w-[8rem] shrink-0 items-center gap-0.5 rounded-sm bg-muted px-1.5 text-xs text-muted-foreground enabled:hover:text-foreground"
-                >
-                  <CornerDownRight
-                    className="size-3 shrink-0"
-                    aria-hidden="true"
-                  />
-                  <span className="truncate">{parentLabel}</span>
-                </button>
-              )}
               {badge && prStatus && (
                 <a
                   href={prStatus.url}
@@ -311,18 +274,6 @@ export function SessionListRow({
                 >
                   {badge.text}
                 </a>
-              )}
-              {childCount > 0 && (
-                <span
-                  role="img"
-                  data-testid="session-row-children"
-                  aria-label={m.session.row.childTasks(childCount)}
-                  title={m.session.row.childTasks(childCount)}
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded-sm bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
-                >
-                  <CornerDownRight className="size-3" aria-hidden="true" />
-                  {childCount}
-                </span>
               )}
               {todoCount > 0 && (
                 <span

@@ -72,6 +72,7 @@ import {
   getAttachedBranch,
   getLatestDefaultBase,
   isGitRepository,
+  isWorktreeNameAvailable,
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
@@ -715,6 +716,17 @@ export async function startServer(
         todoId,
         worktreePath
       ),
+    isNameAvailable: (repoPath, name) =>
+      isWorktreeNameAvailable(repoPath, name),
+    // worktree:set-display-name と同じく、実体のパスを鍵にして保存と配信をそろえる
+    setDisplayName(worktreePath, displayName) {
+      const canonical = fs.realpathSync(worktreePath);
+      db.setWorktreeDisplayName(canonical, displayName);
+      io.emit("worktree:display-name-changed", {
+        worktreePath: canonical,
+        displayName,
+      });
+    },
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     now: () => Date.now(),
   };

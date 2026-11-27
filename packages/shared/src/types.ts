@@ -908,8 +908,11 @@ export interface Todo {
 /** task:start で送るもの */
 export interface TaskStartRequest {
   repoPath: string;
-  /** タスク名。ブランチ名と worktree のディレクトリ名の元になる */
-  name: string;
+  /**
+   * タスク名。ブランチ名と worktree のディレクトリ名の元になる。空ならサーバーがプロンプトの先頭から作り、
+   * プロンプトの先頭の行を worktree の表示名にする (server の task-start.ts)
+   */
+  name?: string;
   /** 子セッションに最初に送る文 */
   prompt: string;
   /** 省略時はリポジトリの既定のブランチ */

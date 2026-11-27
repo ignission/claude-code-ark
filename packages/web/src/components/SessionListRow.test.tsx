@@ -74,8 +74,6 @@ function entryOf(overrides: Partial<SessionListEntry> = {}): SessionListEntry {
     statusKey: "IDLE",
     manuallyRested: false,
     yourTurn: true,
-    parentWorktreePath: null,
-    nested: false,
     ...overrides,
   };
 }

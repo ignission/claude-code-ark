@@ -76,10 +76,6 @@ export const session: Messages["session"] = {
   },
   row: {
     editDisplayName: "Edit display name",
-    parentTitle: (parent: string) => `Parent: ${parent}`,
-    openParentLabel: (parent: string) => `Open parent ${parent}`,
-    childTasks: (count: number) =>
-      `${count} child ${plural(count, "task", "tasks")}`,
     openTodos: (count: number) =>
       `${count} open ${plural(count, "TODO", "TODOs")}`,
     menuLabel: (name: string, branch: string | null | undefined) =>
@@ -89,12 +85,15 @@ export const session: Messages["session"] = {
     open: "Open",
     startSession: "Start session",
     splitTask: "Split off a child task...",
-    openParent: "Open parent",
-    setHome: "Set as home",
     rename: "Rename",
     rest: "Move to resting",
     unrest: "Move back from resting",
-    repository: "Repository",
+  },
+  repoMenu: {
+    label: (repoName: string) => `Menu for ${repoName}`,
+    newTask: "New task...",
+    newTaskLabel: (repoName: string) => `New task in ${repoName}`,
+    setHome: "Set main as home",
     newWorktree: "New worktree",
     openRepoGrid: "View all sessions in this repository side by side",
     removeFromSidebar: "Remove from sidebar",
