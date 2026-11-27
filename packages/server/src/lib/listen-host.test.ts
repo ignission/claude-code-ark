@@ -5,12 +5,13 @@ import {
   DEFAULT_LISTEN_HOST,
   isLoopbackHost,
   listenOn,
+  originUrl,
   resolveListenHost,
 } from "./listen-host.js";
 
 describe("resolveListenHost", () => {
   it("指定が無ければ 127.0.0.1", () => {
-    expect(resolveListenHost(undefined, undefined)).toBe("127.0.0.1");
+    expect(resolveListenHost(undefined, "")).toBe("127.0.0.1");
     expect(DEFAULT_LISTEN_HOST).toBe("127.0.0.1");
   });
 
@@ -40,6 +41,19 @@ describe("isLoopbackHost", () => {
   });
 });
 
+describe("originUrl", () => {
+  it("待ち受けアドレスへ接続する URL を作る", () => {
+    expect(originUrl("127.0.0.1", 4001)).toBe("http://127.0.0.1:4001");
+    expect(originUrl("192.168.64.3", 4001)).toBe("http://192.168.64.3:4001");
+    expect(originUrl("::1", 4001)).toBe("http://[::1]:4001");
+  });
+
+  it("全インターフェースはループバックへ読み替える", () => {
+    expect(originUrl("0.0.0.0", 4001)).toBe("http://127.0.0.1:4001");
+    expect(originUrl("::", 4001)).toBe("http://[::1]:4001");
+  });
+});
+
 describe("listenOn", () => {
   let server: Server | undefined;
 
@@ -52,7 +66,7 @@ describe("listenOn", () => {
 
   it("既定のアドレスで待ち受けると 127.0.0.1 だけに bind する", async () => {
     server = createServer();
-    await listenOn(server, 0, resolveListenHost(undefined, undefined));
+    await listenOn(server, 0, resolveListenHost(undefined, ""));
     const address = server.address() as AddressInfo;
     expect(address.address).toBe("127.0.0.1");
     expect(address.family).toBe("IPv4");

@@ -91,6 +91,7 @@ import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
   isLoopbackHost,
   listenOn,
+  originUrl,
   resolveListenHost,
 } from "./lib/listen-host.js";
 import {
@@ -909,6 +910,9 @@ export async function startServer(
     activeTunnel = new TunnelManager({
       localPort: targetPort,
       mode: "quick",
+      // Ark 自身は待ち受けアドレスへ向ける。ほかのポート (開発サーバーなど) は
+      // どこで待ち受けているか分からないので、従来どおり localhost に任せる
+      ...(targetPort === port ? { originUrl: originUrl(host, port) } : {}),
     });
 
     const publicUrl = await activeTunnel.start();

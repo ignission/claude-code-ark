@@ -236,6 +236,8 @@ Arkがホームのセッションへ指示を足すことはありません。�
 | `ARK_PUBLIC_DOMAIN`         | Named Tunnel用の固定ドメイン                      |
 | `ARK_TUNNEL_NAME`           | Named Tunnelの名前 (既定: `claude-code-ark`)      |
 
+Named Tunnelの転送先は、cloudflaredの設定 (`~/.cloudflared/config.yml` のingress) で決まります。Arkは既定で127.0.0.1だけで待ち受けるので、転送先は `http://127.0.0.1:4001` と書きます。`localhost` は環境によって `::1` に解決され、届かないことがあります。
+
 ## 分かっている制限
 
 - **1人用です。** セッション単位の権限は無く、足す計画もありません。

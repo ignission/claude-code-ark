@@ -236,6 +236,8 @@ Ark never adds instructions to the home session. What home does is decided by th
 | `ARK_PUBLIC_DOMAIN`         | Fixed domain for the Named Tunnel                                 |
 | `ARK_TUNNEL_NAME`           | Named Tunnel name (default: `claude-code-ark`)                    |
 
+A Named Tunnel forwards to the origin in your cloudflared config (the ingress in `~/.cloudflared/config.yml`). Ark listens on 127.0.0.1 by default, so set the origin to `http://127.0.0.1:4001`. `localhost` can resolve to `::1` and miss it.
+
 ## Known limitations
 
 - **One user only.** There are no per-session permissions, and there is no plan to add them.

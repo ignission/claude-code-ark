@@ -4,8 +4,9 @@
  * 既定は 127.0.0.1。Arkがトークンを確かめるのは Quick Tunnel 経由のアクセスだけで
  * (`auth.ts`)、サーバーへ直接届くアクセスは素通しになる。全インターフェースで
  * 待ち受けると、同じネットワークの相手がターミナルとセッションを操作できてしまう。
- * Named Tunnel と Quick Tunnel の cloudflared は 127.0.0.1 へ接続するので、
- * 絞ってもトンネルの経路は変わらない。
+ * Quick Tunnel の cloudflared は `originUrl()` で待ち受けアドレスへ接続する。
+ * Named Tunnel の接続先は利用者の cloudflared の設定 (`~/.cloudflared/config.yml`
+ * の ingress) が決めるので、`http://127.0.0.1:<port>` を書いておく (README)。
  *
  * LANから直接使うときだけ `ARK_HOST` (例: `0.0.0.0`) で広げる。`HOST` は
  * シェルや他の道具が書き出していることがあり、意図せず広がるので読まない。
@@ -49,4 +50,18 @@ export function listenOn(
       resolve();
     });
   });
+}
+
+/**
+ * 待ち受けアドレスへ同じ機械から接続するときの URL。全インターフェース
+ * (`0.0.0.0` / `::`) はループバックへ読み替え、IPv6 は角括弧で囲む
+ */
+export function originUrl(listenHost: string, port: number): string {
+  const host =
+    listenHost === "0.0.0.0"
+      ? "127.0.0.1"
+      : listenHost === "::"
+        ? "::1"
+        : listenHost;
+  return `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
 }
