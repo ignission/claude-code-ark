@@ -89,6 +89,12 @@ import {
 } from "./lib/i18n.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
+  isLoopbackHost,
+  listenOn,
+  originUrl,
+  resolveListenHost,
+} from "./lib/listen-host.js";
+import {
   checkManagedWorktree,
   describeWorktreeFailure,
   resolveWorktreeRealPath,
@@ -180,6 +186,8 @@ export {
  */
 export interface StartServerOptions {
   port?: number;
+  /** 待ち受けアドレス。未指定なら `ARK_HOST`、それも無ければ 127.0.0.1 (`listen-host.ts`) */
+  host?: string;
   enableRemote?: boolean;
   enableQuick?: boolean;
   skipPermissions?: boolean;
@@ -286,6 +294,7 @@ export async function startServer(
   const app = express();
   const server = createServer(app);
   const port = options.port ?? (Number(process.env.PORT) || 4001);
+  const host = resolveListenHost(options.host);
 
   // ===== オプション展開 =====
   // CLI から呼ばれた場合は cli.ts で argv → options に変換済み。
@@ -901,6 +910,9 @@ export async function startServer(
     activeTunnel = new TunnelManager({
       localPort: targetPort,
       mode: "quick",
+      // Ark 自身は待ち受けアドレスへ向ける。ほかのポート (開発サーバーなど) は
+      // どこで待ち受けているか分からないので、従来どおり localhost に任せる
+      ...(targetPort === port ? { originUrl: originUrl(host, port) } : {}),
     });
 
     const publicUrl = await activeTunnel.start();
@@ -3125,15 +3137,15 @@ export async function startServer(
   // server.listen を Promise 化し、リスニング開始まで startServer を解決しない。
   // これにより呼び出し側 (cli.ts / Electron) は「ポートが開いた」状態を確実に
   // 得てから次の処理 (UI 表示等) に進める。
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
+  await listenOn(server, port, host);
 
-  console.log(`Ark server running on http://localhost:${port}/`);
+  const displayHost = host.includes(":") ? `[${host}]` : host;
+  console.log(`Ark server running on http://${displayHost}:${port}/`);
+  if (!isLoopbackHost(host)) {
+    console.warn(
+      `[Server] Listening on ${host}: requests that reach the server directly are not authenticated by Ark (only Quick Tunnel requests are)`
+    );
+  }
 
   // Board SessionStart / AskUserQuestion hooks 入りの claude 用 settings を
   // 書き出し、以降のセッション起動コマンドに --settings として注入する

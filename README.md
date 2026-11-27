@@ -21,7 +21,7 @@ It drives the real interactive `claude` CLI inside tmux, so your plan, your sett
 </p>
 
 > [!WARNING]
-> Ark is experimental and built for **one user**. Anyone who gets past authentication can reach every session, and Ark only asks for its token on requests that come through a Quick Tunnel. Requests that reach the server directly (localhost, your LAN) are not authenticated by Ark, and a Named Tunnel relies on Cloudflare Access. Do not share an Ark instance with other people, and be careful when you expose it through a tunnel.
+> Ark is experimental and built for **one user**. Anyone who gets past authentication can reach every session, and Ark only asks for its token on requests that come through a Quick Tunnel. Requests that reach the server directly are not authenticated by Ark, so by default it listens on 127.0.0.1 only. If you widen it with `ARK_HOST`, anyone on your LAN can use it without authentication. A Named Tunnel relies on Cloudflare Access. Do not share an Ark instance with other people, and be careful when you expose it through a tunnel.
 
 ## Quickstart
 
@@ -231,9 +231,12 @@ Ark never adds instructions to the home session. What home does is decided by th
 | Environment variable        | Description                                                       |
 | --------------------------- | ----------------------------------------------------------------- |
 | `PORT`                      | Server port (default: 4001)                                       |
+| `ARK_HOST`                  | Address to listen on (default: `127.0.0.1`)                       |
 | `SKIP_PERMISSIONS`          | `true` to skip permission prompts                                 |
 | `ARK_PUBLIC_DOMAIN`         | Fixed domain for the Named Tunnel                                 |
 | `ARK_TUNNEL_NAME`           | Named Tunnel name (default: `claude-code-ark`)                    |
+
+A Named Tunnel forwards to the origin in your cloudflared config (the ingress in `~/.cloudflared/config.yml`). Ark listens on 127.0.0.1 by default, so set the origin to `http://127.0.0.1:4001`. `localhost` can resolve to `::1` and miss it.
 
 ## Known limitations
 

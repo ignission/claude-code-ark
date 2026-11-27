@@ -41,6 +41,11 @@ export interface TunnelHealthCheckOptions {
 export interface TunnelManagerOptions {
   /** ローカルポート番号 */
   localPort: number;
+  /**
+   * Quick Tunnel の転送先の URL。未指定なら `http://localhost:<localPort>`。
+   * Ark 自身を公開するときは待ち受けアドレスに合わせたもの (`originUrl()`) を渡す
+   */
+  originUrl?: string;
   /** トンネルモード（デフォルト: 'quick'） */
   mode?: TunnelMode;
   /** Named Tunnel用のオプション（mode='named'の場合に必須） */
@@ -70,6 +75,7 @@ export class TunnelManager extends EventEmitter {
   private process: ChildProcess | null = null;
   private publicUrl: string | null = null;
   private localPort: number;
+  private originUrlOverride?: string;
   private mode: TunnelMode;
   private namedTunnelOptions?: NamedTunnelOptions;
   private cloudflaredPathOverride?: string;
@@ -95,6 +101,7 @@ export class TunnelManager extends EventEmitter {
       this.unhealthyThresholdMs = DEFAULT_UNHEALTHY_THRESHOLD_MS;
     } else {
       this.localPort = options.localPort;
+      this.originUrlOverride = options.originUrl;
       this.mode = options.mode ?? "quick";
       this.namedTunnelOptions = options.namedTunnelOptions;
       this.cloudflaredPathOverride = options.cloudflaredPath;
@@ -148,7 +155,7 @@ export class TunnelManager extends EventEmitter {
         "--config",
         "/dev/null",
         "--url",
-        `http://localhost:${this.localPort}`,
+        this.originUrlOverride ?? `http://localhost:${this.localPort}`,
       ]);
       this.process = child;
 
