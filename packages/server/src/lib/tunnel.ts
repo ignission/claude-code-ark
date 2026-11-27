@@ -148,7 +148,7 @@ export class TunnelManager extends EventEmitter {
         "--config",
         "/dev/null",
         "--url",
-        `http://localhost:${this.localPort}`,
+        `http://127.0.0.1:${this.localPort}`,
       ]);
       this.process = child;
 

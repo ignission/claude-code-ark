@@ -42,6 +42,8 @@ Options:
 
 Environment:
   PORT                  Port to listen on (default: 4001)
+  ARK_HOST              Address to listen on (default: 127.0.0.1).
+                        Direct requests are not authenticated
   ARK_DATA_DIR          Where Ark keeps its data (default: ./data)
 `;
 
