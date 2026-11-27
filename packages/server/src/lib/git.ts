@@ -442,6 +442,38 @@ async function cleanupLocalBranch(
   );
 }
 
+/** createWorktree が作る worktree の場所 (リポジトリと同じ階層の `<repo>-<branch>`) */
+function siblingWorktreePath(gitRoot: string, branch: string): string {
+  const repoName = path.basename(gitRoot);
+  return path.join(
+    path.dirname(gitRoot),
+    `${repoName}-${branch.replace(/\//g, "-")}`
+  );
+}
+
+/**
+ * その名前で新しい worktree を作れば、まっさらなブランチになるか。
+ * 同名のブランチがあると createWorktree は既存のブランチに付けて作業を引き継ぐので、
+ * 名前を機械で作るとき (新しいタスクで名前を省いたとき) は、ローカルにもリモートにも
+ * 同名のブランチが無く、作成先も無い名前を選ぶ。`<名前>/...` のブランチがあると git は
+ * `<名前>` を作れないので、配下のブランチも見る (リモートは最初の push が拒まれる)
+ */
+export async function isWorktreeNameAvailable(
+  repoPath: string,
+  branchName: string
+): Promise<boolean> {
+  const safeBranch = validateBranchName(branchName);
+  const gitRoot = await getGitRoot(validatePath(repoPath));
+  if (fs.existsSync(siblingWorktreePath(gitRoot, safeBranch))) return false;
+  // ワイルドカードの無いパターンは、同名と配下 (`<名前>/...`) の両方に当たる。
+  // ワイルドカードのあるパターンは全体の一致なので、配下を別に書く
+  const { stdout } = await execAsync(
+    `git for-each-ref --count=1 --format="%(refname)" "refs/heads/${safeBranch}" "refs/remotes/*/${safeBranch}" "refs/remotes/*/${safeBranch}/**"`,
+    { cwd: gitRoot }
+  );
+  return stdout.trim() === "";
+}
+
 // Create a new worktree
 export async function createWorktree(
   repoPath: string,
@@ -453,14 +485,7 @@ export async function createWorktree(
 
   // Get the repository root
   const gitRoot = await getGitRoot(safePath);
-
-  // Generate worktree path (sibling directory)
-  const repoName = path.basename(gitRoot);
-  const parentDir = path.dirname(gitRoot);
-  const worktreePath = path.join(
-    parentDir,
-    `${repoName}-${safeBranch.replace(/\//g, "-")}`
-  );
+  const worktreePath = siblingWorktreePath(gitRoot, safeBranch);
 
   // Check if path already exists
   if (fs.existsSync(worktreePath)) {

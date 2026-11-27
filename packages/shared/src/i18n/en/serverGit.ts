@@ -59,7 +59,8 @@ export const serverGit: Messages["serverGit"] = {
       `Branch '${branch}' is already checked out in another worktree: ${worktreePath}`,
   },
   task: {
-    nameEmpty: "Task name is empty",
+    noAvailableName: (base: string) =>
+      `No free task name was found for '${base}'. Enter a name and start again`,
     nameInvalid:
       "Use only letters, digits, and . _ - / in the task name (it becomes the branch name)",
     promptEmpty: "Prompt is empty",

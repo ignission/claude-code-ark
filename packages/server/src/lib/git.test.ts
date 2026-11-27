@@ -30,6 +30,7 @@ import {
   deleteWorktree,
   getDefaultBranch,
   getLatestDefaultBase,
+  isWorktreeNameAvailable,
 } from "./git.js";
 
 const mockedExec = vi.mocked(exec);
@@ -142,6 +143,55 @@ beforeEach(() => {
   // fs デフォルト: パスは存在し、rm は成功する
   vi.mocked(fs.existsSync).mockReturnValue(true);
   vi.mocked(fs.promises.rm).mockResolvedValue(undefined);
+});
+
+describe("isWorktreeNameAvailable", () => {
+  /** for-each-ref が返す ref (無ければ空) */
+  function rules(found: string): ExecRule[] {
+    return [
+      ...baseRules(),
+      {
+        match: /for-each-ref /,
+        respond: () => ({ stdout: found ? `${found}\n` : "" }),
+      },
+    ];
+  }
+
+  it("作成先もローカル・リモートの同名ブランチも無ければ使える", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    execRules = rules("");
+    expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(true);
+  });
+
+  it("ローカルの同名と配下、リモートの同名と配下のブランチを1回で探す", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    execRules = rules("");
+    await isWorktreeNameAvailable(REPO, "doc");
+    const call = execCalls.find(c => c.includes("for-each-ref"));
+    // ワイルドカードの無いパターンは refs/heads/doc/... にも当たる (git の for-each-ref の決まり)
+    expect(call).toContain('"refs/heads/doc"');
+    expect(call).toContain('"refs/remotes/*/doc"');
+    expect(call).toContain('"refs/remotes/*/doc/**"');
+  });
+
+  it("作成先のディレクトリがあれば使えない", async () => {
+    vi.mocked(fs.existsSync).mockImplementation(p => p === WT);
+    execRules = rules("");
+    expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(false);
+  });
+
+  it("同名か配下のブランチが見つかれば使えない", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    for (const ref of [
+      "refs/heads/doc",
+      "refs/heads/doc/ui",
+      "refs/remotes/origin/doc",
+      "refs/remotes/origin/doc/ui",
+    ]) {
+      execRules = rules(ref);
+      expect(await isWorktreeNameAvailable(REPO, "doc")).toBe(false);
+    }
+  });
 });
 
 describe("createWorktree", () => {

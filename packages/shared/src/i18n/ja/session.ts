@@ -82,9 +82,6 @@ export const session = {
   /** 一覧の行 */
   row: {
     editDisplayName: "表示名を編集",
-    parentTitle: (parent: string) => `親: ${parent}`,
-    openParentLabel: (parent: string) => `親 ${parent} を開く`,
-    childTasks: (count: number) => `子のタスク ${count} 件`,
     openTodos: (count: number) => `未完了の TODO ${count} 件`,
     menuLabel: (name: string, branch: string | null | undefined) =>
       branch ? `${name} (${branch}) のメニュー` : `${name}のメニュー`,
@@ -94,12 +91,16 @@ export const session = {
     open: "開く",
     startSession: "セッションを起動",
     splitTask: "子タスクを分離...",
-    openParent: "親を開く",
-    setHome: "ホームにする",
     rename: "表示名を変更",
     rest: "休止にする",
     unrest: "休止から戻す",
-    repository: "リポジトリ",
+  },
+  /** 一覧のリポジトリの見出しのメニュー */
+  repoMenu: {
+    label: (repoName: string) => `${repoName}のメニュー`,
+    newTask: "新しいタスク...",
+    newTaskLabel: (repoName: string) => `${repoName}で新しいタスク`,
+    setHome: "mainをホームにする",
     newWorktree: "新規worktreeを作成",
     openRepoGrid: "このリポジトリの全セッションを並べて見る",
     removeFromSidebar: "サイドバーから除外",

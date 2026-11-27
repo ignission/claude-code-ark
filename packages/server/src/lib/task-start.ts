@@ -21,6 +21,16 @@
  * では起動を確かめられないので、待たずに送らない。どちらの場合も worktree とセッションは
  * 消さない (起動したところまでは成功している。文は人か親の Claude が送り直せる)。
  *
+ * ## 名前を省いたとき
+ *
+ * 人が新しいタスクのダイアログで名前を空にしたら、プロンプトの先頭の行から名前を作る (deriveTaskName)。
+ * ブランチ名は英数字と . _ - / だけなので、英数字の語を拾い、無ければ (日本語だけのプロンプトなど)
+ * `task-<月日>-<時分>` にする。同名のブランチがあると既存のブランチに付けて作業を引き継いでしまうので、
+ * 空いている名前になるまで末尾に `-2`、`-3` を付ける。同じリポジトリで名前を省いた起動が重なったときは、
+ * 名前を選んで worktree を作るまでを1つずつ通す (空きを見てから作るまでの間に同じ名前を選ばないため)。ブランチ名だけでは中身が分からないので、
+ * プロンプトの先頭の行を worktree の表示名にする (deriveTaskTitle)。名前を渡したときは表示名を付けない。
+ * 名前は機械で作る。claude に要約させない (Arkは `claude -p` を使わない)。
+ *
  * ## 親子
  *
  * 親の worktree はセッションの行に記録するだけで、子の結果を親へ届ける仕組みは持たない
@@ -69,13 +79,21 @@ export interface TaskStartDeps {
   sendMessage(sessionId: string, message: string): void;
   /** 分岐TODOから起こしたとき、始めた先を記録する (失敗しても続ける) */
   recordTodoStarted?(todoId: string, worktreePath: string): void;
+  /**
+   * その名前で作るとまっさらなブランチになるか (同名のブランチも作成先も無い)。
+   * 名前を省いたときに、空いている名前を選ぶのに使う
+   */
+  isNameAvailable(repoPath: string, name: string): Promise<boolean>;
+  /** worktree の表示名を付ける (名前を省いたときだけ。失敗しても続ける) */
+  setDisplayName?(worktreePath: string, displayName: string): void;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
 
 export interface TaskStartInput {
   repoPath: string;
-  name: string;
+  /** 空ならプロンプトから作る */
+  name?: string;
   prompt: string;
   /** 解決済みのベースブランチ。undefined なら git の HEAD */
   baseBranch?: string;
@@ -143,9 +161,10 @@ export async function waitForPromptReady(
 
 /**
  * タスク名とプロンプトを確かめる。タスク名はブランチ名になるので、空白はハイフンに寄せ
- * (作成ダイアログの入力と同じ)、git のブランチ名に使える文字だけを許す
+ * (作成ダイアログの入力と同じ)、git のブランチ名に使える文字だけを許す。名前は空でもよい
+ * (startTask がプロンプトから作る)
  */
-export function validateTaskInput(input: { name: unknown; prompt: unknown }): {
+export function validateTaskInput(input: { name?: unknown; prompt: unknown }): {
   name: string;
   prompt: string;
 } {
@@ -154,12 +173,94 @@ export function validateTaskInput(input: { name: unknown; prompt: unknown }): {
       ? input.name.trim().replace(/\s+/g, "-")
       : "";
   const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
-  if (!name) throw new Error(m().serverGit.task.nameEmpty);
-  if (!/^[a-zA-Z0-9._\-/]+$/.test(name) || name.startsWith("-")) {
+  if (!prompt) throw new Error(m().serverGit.task.promptEmpty);
+  if (name && (!/^[a-zA-Z0-9._\-/]+$/.test(name) || name.startsWith("-"))) {
     throw new Error(m().serverGit.task.nameInvalid);
   }
-  if (!prompt) throw new Error(m().serverGit.task.promptEmpty);
   return { name, prompt };
+}
+
+/** 名前に使う語の数と長さの上限 */
+const MAX_NAME_WORDS = 5;
+const MAX_NAME_LENGTH = 40;
+/** 表示名にするプロンプトの先頭の長さ */
+const MAX_TITLE_LENGTH = 40;
+
+function firstLine(prompt: string): string {
+  return (
+    prompt
+      .split("\n")
+      .map(line => line.trim())
+      .find(line => line !== "") ?? ""
+  );
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * プロンプトの先頭の行からタスク名 (ブランチ名) を作る。英数字の語を小文字にしてハイフンでつなぎ、
+ * 語が無ければ `task-<月日>-<時分>` (サーバーの時計) にする
+ */
+export function deriveTaskName(prompt: string, now: Date): string {
+  const words = firstLine(prompt)
+    // 全角の英数字を半角に寄せる
+    .normalize("NFKC")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(word => word !== "");
+  let name = "";
+  for (const word of words.slice(0, MAX_NAME_WORDS)) {
+    const next = name ? `${name}-${word}` : word;
+    if (next.length > MAX_NAME_LENGTH) break;
+    name = next;
+  }
+  if (name) return name;
+  return `task-${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}`;
+}
+
+/** プロンプトの先頭の行を、worktree の表示名の長さに切る */
+export function deriveTaskTitle(prompt: string): string {
+  const line = firstLine(prompt).replace(/\s+/g, " ");
+  const chars = Array.from(line);
+  return chars.length > MAX_TITLE_LENGTH
+    ? `${chars.slice(0, MAX_TITLE_LENGTH).join("")}…`
+    : line;
+}
+
+/** リポジトリのパス → そのリポジトリで名前を選んで作っている最中の処理 (終わったら消す) */
+const repoLocks = new Map<string, Promise<unknown>>();
+
+/** 同じリポジトリの fn を、前のものが終わってから (失敗しても) 順に実行する */
+async function withRepoLock<T>(
+  repoPath: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const previous = repoLocks.get(repoPath) ?? Promise.resolve();
+  const run = previous.catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  repoLocks.set(repoPath, tail);
+  try {
+    return await run;
+  } finally {
+    if (repoLocks.get(repoPath) === tail) repoLocks.delete(repoPath);
+  }
+}
+
+/** 空いている名前の候補を試す回数 (`-2` から `-<この値>` まで) */
+const MAX_NAME_SUFFIX = 50;
+
+/** base が使われていれば `-2`、`-3` と末尾を変え、空いている名前を返す */
+export async function pickAvailableName(
+  deps: Pick<TaskStartDeps, "isNameAvailable">,
+  repoPath: string,
+  base: string
+): Promise<string> {
+  if (await deps.isNameAvailable(repoPath, base)) return base;
+  for (let n = 2; n <= MAX_NAME_SUFFIX; n++) {
+    const candidate = `${base}-${n}`;
+    if (await deps.isNameAvailable(repoPath, candidate)) return candidate;
+  }
+  throw new Error(m().serverGit.task.noAvailableName(base));
 }
 
 /**
@@ -171,12 +272,34 @@ export async function startTask(
   input: TaskStartInput,
   options: WaitOptions = DEFAULT_WAIT
 ): Promise<TaskStarted> {
-  const { name, prompt } = validateTaskInput(input);
-  const worktree = await deps.createWorktree(
-    input.repoPath,
-    name,
-    input.baseBranch
-  );
+  const validated = validateTaskInput(input);
+  const { prompt } = validated;
+  const autoNamed = validated.name === "";
+  const worktree = autoNamed
+    ? // 空きを確かめてから作るまでの間に、同じリポジトリの別の起動が同じ名前を選ばないよう順に通す
+      await withRepoLock(input.repoPath, async () =>
+        deps.createWorktree(
+          input.repoPath,
+          await pickAvailableName(
+            deps,
+            input.repoPath,
+            deriveTaskName(prompt, new Date(deps.now()))
+          ),
+          input.baseBranch
+        )
+      )
+    : await deps.createWorktree(
+        input.repoPath,
+        validated.name,
+        input.baseBranch
+      );
+  if (autoNamed) {
+    try {
+      deps.setDisplayName?.(worktree.path, deriveTaskTitle(prompt));
+    } catch {
+      // 表示名はおまけ。起動は続ける
+    }
+  }
   if (input.todoId) {
     try {
       deps.recordTodoStarted?.(input.todoId, worktree.path);

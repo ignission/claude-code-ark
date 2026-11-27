@@ -341,7 +341,7 @@ export function createBoardMcpServer(
     {
       description:
         "Start a child task in a separate git worktree. Creates a worktree on a new branch with the caller's worktree as its parent, " +
-        "starts an Ark session, waits for it to start, and sends prompt as the first message. The child appears under its parent in Ark's list. " +
+        "starts an Ark session, waits for it to start, and sends prompt as the first message. The child appears as its own row in Ark's list. " +
         "By default the worktree is created in the caller's repository; pass repo to start the task in another repository. " +
         "The child's result is not returned, and this tool does not wait for it (the user watches the progress in Ark; call task_list when you need the current state of your children). " +
         "Returns the new worktree's path and branch name, and whether prompt was sent (promptSent).",

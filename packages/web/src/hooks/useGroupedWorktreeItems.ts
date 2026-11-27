@@ -7,6 +7,11 @@
  * `/work/a/app` と `/work/b/app`）が衝突しないようにするため、
  * UIで表示する短縮名は repoName を用い、basenameが他repoと重複する場合は
  * 親ディレクトリsegmentを末尾から付与した disambiguator を併記する。
+ *
+ * mainのworktree (Worktree.isMain。worktreeがまだ届いていないセッションは、パスがリポジトリの
+ * パスと同じもの) は行にしない。worktreeが届けば isMain で決める (worktreeのあるリポジトリとして
+ * 登録したlinked worktreeは、パスが同じでもmainではないので行に出す)。mainは人が作業しない場所で、作業は毎回新しいworktreeで始める。
+ * 登録したリポジトリのグループは、行が1つも無くても作る (見出しのメニューから新しいタスクを始める)。
  */
 
 import type { ManagedSession, Worktree } from "@ark/shared";
@@ -28,8 +33,10 @@ export type RepoGroup = {
    * 重複がない場合はnull。UI側でrepoName横に括弧書きで表示する想定。
    */
   disambiguator: string | null;
-  /** グループ配下のworktree/sessionアイテム */
+  /** グループ配下のworktree/sessionアイテム (mainのworktreeは含めない) */
   items: GroupedItem[];
+  /** mainのworktreeのパス。見出しの「ホームにする」に使う。worktreeが届く前はnull */
+  mainWorktreePath: string | null;
 };
 
 function getBaseName(repoPath: string): string {
@@ -74,10 +81,13 @@ export function useGroupedWorktreeItems(
         repoName: getBaseName(repoPath),
         disambiguator: null,
         items: [],
+        mainWorktreePath: null,
       };
       groups.set(repoPath, created);
       return created;
     };
+
+    for (const repo of repoList) ensureGroup(repo);
 
     // worktreePath昇順で処理することでリロード間の並び順を安定させる
     const sortedWorktrees = [...worktrees].sort((a, b) =>
@@ -86,7 +96,16 @@ export function useGroupedWorktreeItems(
     for (const wt of sortedWorktrees) {
       if (repoListEmpty) break;
       const session = sessionByWorktreeId.get(wt.id) ?? null;
-      const matchedRepo = repoList.find(repo => isPathWithin(wt.path, repo));
+      // 入れ子のリポジトリ (/work/app と /work/app/tools/plugin) は、いちばん深いものに入れる
+      const matchedRepo = repoList
+        .filter(repo => isPathWithin(wt.path, repo))
+        .reduce<string | undefined>(
+          (deepest, repo) =>
+            deepest === undefined || repo.length > deepest.length
+              ? repo
+              : deepest,
+          undefined
+        );
       const sessionRepoMatched = session?.repoPath
         ? repoList.includes(session.repoPath)
         : false;
@@ -97,7 +116,12 @@ export function useGroupedWorktreeItems(
         if (matchedRepo) return matchedRepo;
         return wt.path.split("/.worktrees/")[0] || wt.path;
       })();
-      ensureGroup(repoPath).items.push({ worktree: wt, session });
+      const group = ensureGroup(repoPath);
+      if (wt.isMain) {
+        group.mainWorktreePath = wt.path;
+        continue;
+      }
+      group.items.push({ worktree: wt, session });
     }
 
     const sortedSessions = Array.from(sessions.values()).sort((a, b) =>
@@ -123,6 +147,8 @@ export function useGroupedWorktreeItems(
           : null
       );
       if (!repo) continue;
+      // worktreeがまだ届いていないmainのセッションも行にしない (届く前は isMain が無いのでパスで見分ける)
+      if (session.worktreePath === repo) continue;
       const shown =
         repoList.includes(repo) ||
         crossRepoChild ||

@@ -7,14 +7,11 @@ import { describe, expect, it } from "vitest";
 import type { RepoGroup } from "@/hooks/useGroupedWorktreeItems";
 import {
   buildSessionEntries,
-  countChildren,
   groupByRepo,
   moveRepo,
-  nestChildEntries,
   normalizeRepoOrder,
   orderRepoPaths,
   resolveDropIndex,
-  type SessionListEntry,
 } from "./session-sections";
 
 function worktree(id: string, path: string): Worktree {
@@ -34,7 +31,7 @@ function group(
   items: RepoGroup["items"],
   disambiguator: string | null = null
 ): RepoGroup {
-  return { repoName, disambiguator, items };
+  return { repoName, disambiguator, items, mainWorktreePath: null };
 }
 
 describe("buildSessionEntries", () => {
@@ -137,7 +134,12 @@ describe("リポジトリの並び順", () => {
       ["sa9", "READY"],
       ["sg1", "AWAITING"],
     ]);
-    const sections = groupByRepo(buildSessionEntries(groups, statuses), []);
+    const sections = groupByRepo(
+      groups,
+      buildSessionEntries(groups, statuses),
+      [],
+      []
+    );
     expect(sections.map(s => [s.repoPath, s.entries.map(e => e.key)])).toEqual([
       ["/a/alpha", ["wt:a1", "s:sa9"]],
       ["/b/beta", ["wt:b1"]],
@@ -146,11 +148,16 @@ describe("リポジトリの並び順", () => {
   });
 
   it("保存した順を先に置き、そこに無いリポジトリは既定の順で後ろに足す", () => {
-    const sections = groupByRepo(buildSessionEntries(groups, new Map()), [
-      "/c/gamma",
-      "/gone/repo", // いま見えていないパスは無視する
-      "/a/alpha",
-    ]);
+    const sections = groupByRepo(
+      groups,
+      buildSessionEntries(groups, new Map()),
+      [],
+      [
+        "/c/gamma",
+        "/gone/repo", // いま見えていないパスは無視する
+        "/a/alpha",
+      ]
+    );
     expect(sections.map(s => s.repoPath)).toEqual([
       "/c/gamma",
       "/a/alpha",
@@ -158,14 +165,34 @@ describe("リポジトリの並び順", () => {
     ]);
   });
 
-  it("行の無いリポジトリは出さない", () => {
+  it("登録したリポジトリは行が無くても出し、mainのパスを見出しに渡す", () => {
+    const withMain = new Map(groups);
+    withMain.set("/b/beta", {
+      ...group("beta", []),
+      mainWorktreePath: "/b/beta",
+    });
+    const sections = groupByRepo(
+      withMain,
+      buildSessionEntries(withMain, new Map()),
+      ["/a/alpha", "/b/beta", "/c/gamma"],
+      []
+    );
+    expect(
+      sections.map(s => [s.repoPath, s.entries.length, s.mainWorktreePath])
+    ).toEqual([
+      ["/a/alpha", 2, null],
+      ["/b/beta", 0, "/b/beta"],
+      ["/c/gamma", 1, null],
+    ]);
+  });
+
+  it("登録していないリポジトリは、行が無くなったら出さない", () => {
     const entries = buildSessionEntries(groups, new Map()).filter(
       e => e.repoPath !== "/b/beta"
     );
-    expect(groupByRepo(entries, []).map(s => s.repoPath)).toEqual([
-      "/a/alpha",
-      "/c/gamma",
-    ]);
+    expect(
+      groupByRepo(groups, entries, ["/a/alpha"], []).map(s => s.repoPath)
+    ).toEqual(["/a/alpha", "/c/gamma"]);
   });
 
   it("orderRepoPaths は保存順に無いものの既定の順を保つ", () => {
@@ -207,98 +234,28 @@ describe("リポジトリの並び順", () => {
   });
 });
 
-describe("親子の並び (task_start で起こした子)", () => {
-  function childSession(
-    id: string,
-    worktreeId: string,
-    worktreePath: string,
-    parentWorktreePath: string
-  ): ManagedSession {
-    return {
-      id,
-      worktreeId,
-      worktreePath,
-      parentWorktreePath,
+describe("task_start で起こした子", () => {
+  it("親の直後に寄せず、worktree のパス順のまま並べる", () => {
+    const child = {
+      ...session("sc", "c", "/r/app-c"),
+      parentWorktreePath: "/r/app-z",
     } as ManagedSession;
-  }
-
-  const groups = new Map<string, RepoGroup>([
-    [
-      "/r/app",
-      group("app", [
-        {
-          worktree: worktree("p", "/r/app"),
-          session: session("sp", "p", "/r/app"),
-        },
-        {
-          worktree: worktree("a", "/r/app-a"),
-          session: session("sa", "a", "/r/app-a"),
-        },
-        {
-          worktree: worktree("c1", "/r/app-c1"),
-          session: childSession("sc1", "c1", "/r/app-c1", "/r/app"),
-        },
-        {
-          worktree: worktree("c2", "/r/app-c2"),
-          session: childSession("sc2", "c2", "/r/app-c2", "/r/app"),
-        },
-      ]),
-    ],
-  ]);
-
-  it("同じリポジトリの子は、状態に関係なく親の直後に寄せ、字下げの印を付ける", () => {
-    const statuses = new Map<string, BridgeSessionStatus>([
-      ["sp", "IDLE"],
-      ["sa", "IDLE"],
-      ["sc1", "TOOL"],
-      ["sc2", "IDLE"],
-    ]);
-    const [app] = groupByRepo(buildSessionEntries(groups, statuses), []);
-    expect(app?.entries.map(e => [e.key, e.nested])).toEqual([
-      ["wt:p", false],
-      ["wt:c1", true],
-      ["wt:c2", true],
-      ["wt:a", false],
-    ]);
-  });
-
-  it("親と別のリポジトリの子は、自分のリポジトリに字下げせずに残る", () => {
-    const crossRepo = new Map<string, RepoGroup>([
-      ...groups,
+    const groups = new Map<string, RepoGroup>([
       [
-        "/r/lib",
-        group("lib", [
-          {
-            worktree: null,
-            session: childSession("sx", "x", "/r/lib-x", "/r/app"),
-          },
+        "/r/app",
+        group("app", [
+          { worktree: worktree("a", "/r/app-a"), session: null },
+          { worktree: worktree("c", "/r/app-c"), session: child },
+          { worktree: worktree("z", "/r/app-z"), session: null },
         ]),
       ],
     ]);
-    const sections = groupByRepo(buildSessionEntries(crossRepo, new Map()), []);
-    expect(sections.at(-1)?.entries.map(e => [e.key, e.nested])).toEqual([
-      ["s:sx", false],
-    ]);
-    expect(countChildren(buildSessionEntries(crossRepo, new Map()))).toEqual(
-      new Map([["/r/app", 3]])
+    const [app] = groupByRepo(
+      groups,
+      buildSessionEntries(groups, new Map()),
+      ["/r/app"],
+      []
     );
-  });
-
-  it("子の数を親の worktree のパスごとに数える", () => {
-    const entries = buildSessionEntries(groups, new Map());
-    expect(countChildren(entries)).toEqual(new Map([["/r/app", 2]]));
-  });
-
-  it("親子が輪になっていても行を落とさない", () => {
-    const entry = (path: string, parent: string): SessionListEntry =>
-      ({
-        key: path,
-        worktree: worktree(path, path),
-        session: null,
-        parentWorktreePath: parent,
-        nested: false,
-      }) as unknown as SessionListEntry;
-    const result = nestChildEntries([entry("/x", "/y"), entry("/y", "/x")]);
-    expect(result.map(e => e.key).sort()).toEqual(["/x", "/y"]);
+    expect(app?.entries.map(e => e.key)).toEqual(["wt:a", "wt:c", "wt:z"]);
   });
 });

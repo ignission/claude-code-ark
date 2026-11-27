@@ -40,7 +40,8 @@ export const dialogs = {
     description:
       "新しいworktreeでセッションを起動し、プロンプトを最初の文として送ります。",
     repository: "リポジトリ",
-    taskName: "タスク名",
+    taskName: "タスク名 (省略可)",
+    taskNamePlaceholder: "空ならプロンプトから作ります",
     prompt: "プロンプト",
     promptPlaceholder: "最初に送る文",
     baseBranch: "ベースブランチ (省略可)",
